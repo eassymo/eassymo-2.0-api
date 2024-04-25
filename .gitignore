@@ -141,3 +141,7 @@ cython_debug/
 
 # FastAPI specific
 # none specific, but consider excluding any configuration files containing sensitive information
+branch_structure.json
+temp_auto_push.bat
+temp_interactive_push.bat
+.gitignore

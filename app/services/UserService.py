@@ -10,7 +10,7 @@ def create_user(user: UserSchema):
     if user_exists != None:
         return user_exists
 
-    user = jsonable_encoder(user)
+    user = {**jsonable_encoder(user), "groups": []}
     userRepository.insert_user(user)
     created_user = userRepository.find_by_uid(user["uid"])
     return created_user

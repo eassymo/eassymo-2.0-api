@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field
 from enum import Enum
 from app.schemas.Census import CensusSchema
+from datetime import datetime
 
 class InvitationStatus(Enum):
     SENT=1
@@ -20,3 +21,5 @@ class InvitationsSchema(BaseModel):
     type: InvitationType = Field(None, description="Type of communication method used")
     finalContactInfo: str = Field(None, description="Final contact information used in the invite")
     censusId: str = Field(None, description="Id of the census user")
+    createdAt: datetime = Field(None, description="Timestamp of created time")
+    lastSent: datetime = Field(None, description="Timestamp of when the invite was last sent")
