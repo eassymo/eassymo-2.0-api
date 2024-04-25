@@ -11,6 +11,7 @@ censusRouter = APIRouter(prefix="/census")
 
 @censusRouter.get("", response_description="Service for listing the census items", response_model=List[CensusSchema], tags=["Census", "list"])
 def find(
+    userUid: Optional[str] = Query(None, title="userUid", description="User uid"),
     Entity_Name: Optional[str] = Query(
         None, title="Entity_Name", description="Entity name in collection"),
     Entity_Address_City: Optional[str] = Query(
@@ -19,6 +20,7 @@ def find(
         None, title="Entity_Location_State", description="State of entity")
 ):
     parameters = {
+        "userUid": userUid,
         "Entity_Name": Entity_Name,
         "Entity_Address_City": Entity_Address_City,
         "Entity_Location_State": Entity_Location_State
