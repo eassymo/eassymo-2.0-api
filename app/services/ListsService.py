@@ -22,6 +22,16 @@ def create_list(data: ListsSchema):
 def get_lists_by_user(user_uid: str):
     try:
         user_lists = list(listsRepository.find_by_user(user_uid))
+        user_lists = format_lists(user_lists)
         return {"body": user_lists}
     except PyMongoError as error:
         raise InternalServerError(str(error))
+    
+def format_lists(user_lists):
+    lists = []
+    for user_list in user_lists:
+        lists.append({
+            **user_list,
+            "_id": str(user_list["_id"])
+        })
+    return lists
