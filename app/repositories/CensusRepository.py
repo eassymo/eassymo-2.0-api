@@ -7,7 +7,7 @@ def insert(data):
     return database.db["Census"].insert_one(data)
 
 
-def find(filters):
+def find(filters, limit = 20):
     census_filters = {
         **filters,
         "Entity_Visible": "Y",
