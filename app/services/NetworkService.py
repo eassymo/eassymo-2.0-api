@@ -3,10 +3,11 @@ import requests
 from dotenv import load_dotenv
 import os
 from app.schemas.Invitations import InvitationsSchema
-from app.schemas.Census import CensusSchema
 from app.repositories import InvitationRepository as invitationRepository
+from app.repositories import ListsRepository as listRepository
 from pymongo.errors import PyMongoError
 from datetime import datetime
+from typing import List
 
 load_dotenv()
 
@@ -65,7 +66,7 @@ def sendNetworkInvitationMessage(id: str, inviteData: InvitationsSchema):
             "lastSent": datetime.utcnow()
         }
 
-        if(id != None):
+        if (id != None):
             invite_data = {**invite_data, "createdAt": inviteData.createdAt}
             invitationRepository.edit(id, invite_data)
             return {"message": "ok", "body": response.json()}
@@ -82,3 +83,40 @@ def get_user_invites(id: str):
         return {"message": "ok", "body": invites}
     except PyMongoError as e:
         raise HTTPException(status_code=500, detail="Item not found")
+
+
+def get_user_network(user_uid: str):
+    try:
+        invites = list(invitationRepository.find_user_invites(user_uid))
+        user_network = list(
+            listRepository.find_lists_by_users_with_groups_info(user_uid))
+
+        invites = format_invites(invites)
+        user_network = format_user_network(user_network)
+
+        return {"invites": invites, "lists": user_network}
+
+    except PyMongoError as e:
+        raise HTTPException(
+            status_code=500, detail="Error while building user network")
+
+
+def format_invites(invites):
+    formatted_list = []
+    for invite in invites:
+        formatted_list.append({
+            **invite,
+            "_id": str(invite["_id"])
+        })
+    return formatted_list
+
+
+def format_user_network(user_network):
+    formatted_list = []
+    for network in user_network:
+        formatted_list.append({
+            **network,
+            "_id": str(network["_id"]),
+            "groups": [{**group, "_id": str(group["_id"])} for group in network["groups"]]
+        })
+    return formatted_list
