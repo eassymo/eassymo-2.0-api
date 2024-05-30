@@ -7,13 +7,22 @@ def insert(data):
     return database.db["Census"].insert_one(data)
 
 
-def find(filters, limit = 20):
+def find(filters, limit=20):
     census_filters = {
         **filters,
         "Entity_Visible": "Y",
         "Entity_Active": "Y"
     }
     return database.db["Census"].find(census_filters).limit(20).sort('Entity_Name', pymongo.ASCENDING)
+
+
+def count(filters):
+    census_filters = {
+        **filters,
+        "Entity_Visible": "Y",
+        "Entity_Active": "Y"
+    }
+    return database.db["Census"].count_documents(census_filters)
 
 
 def find_by_id(id):
