@@ -12,7 +12,8 @@ def find(filters):
         filters = build_filters(filters)
         results = list(censusRepository.find(filters))
         results = check_census_status(user_uid, results)
-        return {"message": "ok", "body": results}
+        count = censusRepository.count(filters)
+        return {"message": "ok", "body": results, "count": count}
     except PyMongoError as err:
         return {"message": f'Error getting items from census'}
 
@@ -26,6 +27,8 @@ def build_filters(parameters):
         filters["Entity_Address_City"] = parameters["Entity_Address_City"]
     if parameters["Entity_Location_State"] is not None:
         filters["Entity_Location_State"] = parameters["Entity_Location_State"]
+    if parameters["Entity_Type"] is not None:
+        filters["Entity_Type"] = parameters["Entity_Type"]
     return filters
 
 
@@ -56,7 +59,8 @@ def check_census_status(user_uid: str, census_items):
         census_items[index]["can_send_invite"] = True
         for invite in found_invites:
             if invite["censusId"] == str(census_item["_id"]):
-                can_send_invite = validate_if_invite_canbe_resent(invite["lastSent"])
+                can_send_invite = validate_if_invite_canbe_resent(
+                    invite["lastSent"])
                 census_items[index]["can_send_invite"] = can_send_invite
                 census_items[index]["census_status"] = "INVITED"
                 census_items[index]["invite_id"] = str(invite["_id"])
