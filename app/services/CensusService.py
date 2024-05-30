@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta
 from app.repositories import CensusRepository as censusRepository
 from pymongo.errors import PyMongoError
 
@@ -52,15 +53,25 @@ def check_census_status(user_uid: str, census_items):
     if len(user_groups_in_lists) > 0:
         all_groups_in_lists = user_groups_in_lists[0]["all_groups"]
     for index, census_item in enumerate(census_items):
+        census_items[index]["can_send_invite"] = True
         for invite in found_invites:
             if invite["censusId"] == str(census_item["_id"]):
+                can_send_invite = validate_if_invite_canbe_resent(invite["lastSent"])
+                census_items[index]["can_send_invite"] = can_send_invite
                 census_items[index]["census_status"] = "INVITED"
                 census_items[index]["invite_id"] = str(invite["_id"])
         if "group_reference_id" in census_item and census_item["group_reference_id"] is not None:
             census_items[index]["census_status"] = "CAN_CONNECT"
+            census_items[index]["can_send_invite"] = False
         for group_in_list in all_groups_in_lists:
             if "group_reference_id" in census_item:
                 if group_in_list == census_item["group_reference_id"]:
                     census_items[index]["census_status"] = "CONNECTED"
 
     return census_items
+
+
+def validate_if_invite_canbe_resent(last_sent: datetime):
+    current_date = datetime.now()
+    difference = current_date - last_sent
+    return difference >= timedelta(days=7)
