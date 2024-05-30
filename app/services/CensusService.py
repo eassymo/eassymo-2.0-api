@@ -27,7 +27,7 @@ def build_filters(parameters):
         filters["Entity_Address_City"] = parameters["Entity_Address_City"]
     if parameters["Entity_Location_State"] is not None:
         filters["Entity_Location_State"] = parameters["Entity_Location_State"]
-    if parameters["Entity_Type"] is not None:
+    if "Entity_Type" in parameters and parameters["Entity_Type"] is not None:
         filters["Entity_Type"] = parameters["Entity_Type"]
     return filters
 
