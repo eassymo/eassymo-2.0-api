@@ -12,8 +12,10 @@ def find(filters):
         filters = build_filters(filters)
         results = list(censusRepository.find(filters))
         results = check_census_status(user_uid, results)
-        count = censusRepository.count(filters)
-        return {"message": "ok", "body": results, "count": count}
+        counts = censusRepository.count(filters)
+        total_count = counts["total_count"]
+        group_count = counts["group_count"]
+        return {"message": "ok", "body": results, "count": total_count, "group_count": group_count}
     except PyMongoError as err:
         return {"message": f'Error getting items from census'}
 
@@ -52,6 +54,7 @@ def check_census_status(user_uid: str, census_items):
     found_invites = list(invitationRepository.find_user_invites(user_uid))
     user_groups_in_lists = list(
         listRepository.find_all_groups_in_user_lists(user_uid))
+
     all_groups_in_lists = []
     if len(user_groups_in_lists) > 0:
         all_groups_in_lists = user_groups_in_lists[0]["all_groups"]
