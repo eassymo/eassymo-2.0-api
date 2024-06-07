@@ -6,6 +6,7 @@ from app.routers import NetworkRouter as networkRouter
 from app.routers import GroupRouter as groupRouter
 from app.routers import ListsRouter as listRouter
 from app.routers import GroupCarRouter as groupCarRouter
+from app.routers import PartRequestRouter as partRequestRouter
 from fastapi.middleware.cors import CORSMiddleware
 
 app = fastapi.FastAPI()
@@ -25,3 +26,4 @@ app.include_router(networkRouter.networkRouter)
 app.include_router(groupRouter.groupRouter)
 app.include_router(listRouter.listRouter)
 app.include_router(groupCarRouter.groupCarRouter)
+app.include_router(partRequestRouter.partRequestRouter)

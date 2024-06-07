@@ -13,7 +13,10 @@ def find(filters, limit=20):
         "Entity_Visible": "Y",
         "Entity_Active": "Y"
     }
-    return database.db["Census"].find(census_filters).limit(20).sort('Entity_Name', pymongo.ASCENDING)
+    return database.db["Census"].find(census_filters).limit(20).sort([
+        ('group_reference_id', pymongo.DESCENDING),
+        ('Entity_Name', pymongo.ASCENDING)
+    ])
 
 
 def count(filters):
@@ -22,7 +25,14 @@ def count(filters):
         "Entity_Visible": "Y",
         "Entity_Active": "Y"
     }
-    return database.db["Census"].count_documents(census_filters)
+
+    total_count = database.db["Census"].count_documents(census_filters)
+    group_count = database.db["Census"].count_documents(
+        {**census_filters, "group_reference_id": {"$exists": True}})
+    return {
+        "total_count": total_count,
+        "group_count": group_count
+    }
 
 
 def find_by_id(id):
