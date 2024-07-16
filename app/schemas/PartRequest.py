@@ -28,3 +28,4 @@ class PartRequest(BaseModel):
     isActive: bool = Field(
         default=True, description="This determines if the request is Active")
     part: Optional[object] = Field(default={}, description="Part description")
+    partList: Optional[List[object]] = Field(description="Optional part list")

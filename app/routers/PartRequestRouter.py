@@ -31,3 +31,28 @@ def find(
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except Exception as e:
         return JSONResponse(content=get_unsuccessful_response(e))
+
+
+@partRequestRouter.get("/grouped", response_description="part requests grouped by group")
+def find_grouped(
+    group_id: Optional[str] = Query(None, title="group_id", description="")
+):
+    try:
+        part_requests = partRequestService.find_grouped(group_id)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(part_requests))
+    except Exception as e:
+        return JSONResponse(content=get_unsuccessful_response(e))
+
+
+@partRequestRouter.get("/{id}", response_description="Will return the specific part response")
+def find_by_id(id: str):
+    try:
+        response = partRequestService.find_by_id(id)
+        response = {
+            **response,
+            "createdAt": str(response["createdAt"]),
+            "updatedAt": str(response["updatedAt"])
+        }
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+    except Exception as e:
+        return JSONResponse(content=get_unsuccessful_response(e))

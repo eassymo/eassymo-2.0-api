@@ -10,18 +10,29 @@ def find(filters):
     try:
         user_uid = filters["userUid"]
         filters = build_filters(filters)
-        results = list(censusRepository.find(filters))
+        results = list(censusRepository.find(
+            filters, filters["limit"], filters["page"]))
         results = check_census_status(user_uid, results)
         counts = censusRepository.count(filters)
         total_count = counts["total_count"]
         group_count = counts["group_count"]
-        return {"message": "ok", "body": results, "count": total_count, "group_count": group_count}
+        return {"message": "ok", "body": results, "count": total_count, "group_count": group_count, "page": filters["page"], "limit": filters["limit"]}
     except PyMongoError as err:
         return {"message": f'Error getting items from census'}
 
 
 def build_filters(parameters):
     filters = {}
+    if parameters["limit"] is not None:
+        filters["limit"] = parameters["limit"]
+    else:
+        filters["limit"] = 20
+
+    if parameters["page"] is not None:
+        filters["page"] = parameters["page"]
+    else:
+        filters["page"] = 1
+
     if parameters["Entity_Name"] is not None:
         filters["Entity_Name"] = {
             "$regex": parameters["Entity_Name"], "$options": "i"}
@@ -30,6 +41,10 @@ def build_filters(parameters):
     if parameters["Entity_Location_State"] is not None:
         filters["Entity_Location_State"] = parameters["Entity_Location_State"]
     if "Entity_Type" in parameters and parameters["Entity_Type"] is not None:
+        if parameters["Entity_Type"] == "Refaccionaria":
+            parameters["Entity_Type"] = 1
+        if parameters["Entity_Type"] == "Taller":
+            parameters["Entity_Type"] = 2
         filters["Entity_Type"] = parameters["Entity_Type"]
     return filters
 
