@@ -2,7 +2,31 @@ from app.config import database
 
 
 def find_by_uid(uid: str):
-    return database.db["Users"].find_one({"uid": uid})
+    return database.db["Users"].aggregate([
+        {
+            "$match": {"uid": uid}
+        },
+        {
+            "$lookup": {
+                "from": "groups",
+                "let": {"group_ids":  "$groups"},
+                "pipeline": [
+                    {
+                        "$match": {
+                            "$expr": {
+                                "$in": ["$_id", {"$map": {
+                                    "input": "$$group_ids",
+                                    "as": "groupId",
+                                    "in": {"$toObjectId": "$$groupId"}
+                                }}]
+                            }
+                        }
+                    }
+                ],
+                "as": "groups"
+            }
+        },
+    ])
 
 
 def insert_user(user):

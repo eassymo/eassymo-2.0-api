@@ -4,8 +4,8 @@ from datetime import datetime
 from typing import Optional, List
 
 class GroupType(Enum):
-    SELLER=2
-    BUYER=1
+    CAR_SHOP=2
+    PARTS_STORE=1
 
 class GroupSchema(BaseModel):
     name: str = Field(None, min_length=3, max_length=100, description="Name of the group")
