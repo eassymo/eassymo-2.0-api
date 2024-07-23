@@ -56,3 +56,12 @@ def find_by_id(id: str):
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
         return JSONResponse(content=get_unsuccessful_response(e))
+
+
+@partRequestRouter.get("/search/reduced", response_description="Will return the reduced description")
+def search(search_argument: Optional[str] = Query(None, title="search_argument")):
+    try:
+        reduced_part_requests = partRequestService.search(search_argument)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(reduced_part_requests))
+    except Exception as e:
+        return JSONResponse(content=get_unsuccessful_response(e))
