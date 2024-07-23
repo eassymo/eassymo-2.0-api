@@ -9,4 +9,4 @@ class Guarantee(BaseModel):
         description="This is the label that will be injected in the autocomplete items")
     user_uid: str = Field(description="Creator of this label")
     created_at: Optional[datetime] = Field(
-        default=datetime.now(ZoneInfo('utc')))
+        default=datetime.now(ZoneInfo('UTC')))

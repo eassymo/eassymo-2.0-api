@@ -111,10 +111,13 @@ def find_grouped(group_id: str):
     try:
         filters = __format_grouped_filters(group_id)
         part_requests = list(partRequestRepository.find_grouped(filters))
+        print(part_requests)
         if len(part_requests) > 0:
             found_offers = __find_offers_for_requests(part_requests)
             __format_offers_with_found_requests(
                 requests=part_requests, offers=found_offers)
+            __format_grouped_part_requests(part_requests)
+
         return part_requests
     except Exception as e:
         raise HTTPException(
@@ -124,8 +127,7 @@ def find_grouped(group_id: str):
 def __find_offers_for_requests(requests):
     request_ids = []
     for request in requests:
-        for partRequestData in request["partRequests"]:
-            request_ids.append(partRequestData["_id"])
+        request_ids.append(str(request["_id"]))
 
     offers_found = list(offerRepository.find_by_request_ids(request_ids))
     return offers_found
@@ -133,13 +135,23 @@ def __find_offers_for_requests(requests):
 
 def __format_offers_with_found_requests(requests, offers):
     for request in requests:
-        for partRequestData in request["partRequests"]:
-            offers_found = __filter_part_offer_by_request_id(
-                offers, partRequestData["_id"])
-            if len(offers_found) > 0:
-                partRequestData["offers"] = offers_found
-            else:
-                partRequestData["offers"] = []
+        offers_found = __filter_part_offer_by_request_id(
+            offers, str(request["_id"]))
+        if len(offers_found) > 0:
+            request["offers"] = offers_found
+        else:
+            request["offers"] = []
+
+
+def __format_grouped_part_requests(part_requests):
+    for part_request in part_requests:
+        part_request["_id"] = str(part_request["_id"])
+        part_request["creatorGroup"]["_id"] = str(
+            part_request["creatorGroup"]["_id"])
+        part_request["vehicleInformation"]["_id"] = str(
+            part_request["vehicleInformation"]["_id"])
+        part_request["createdAt"] = str(part_request["createdAt"])
+        part_request["updatedAt"] = str(part_request["updatedAt"])
 
 
 def __filter_part_offer_by_request_id(offers, requestId):
@@ -159,3 +171,53 @@ def __format_grouped_filters(group_id: str):
     if group_id is not None:
         filters["subscribedSellers"] = group_id
     return filters
+
+
+def search(search_argument: str):
+    try: 
+        filters = __format_search_arguments(search_argument)
+        reduced_part_requests = list(partRequestRepository.search_reduced(filters))
+        __format_reduced_requests(reduced_part_requests)
+        return reduced_part_requests
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f'Error finding reduced requests {e}')
+
+
+def __format_search_arguments(search_argument: str):
+    applied_filters = {
+        "$or": [
+            {
+                "part.tipoParteDescripcion": {
+                    "$regex": search_argument,
+                    "$options": "i"
+                }
+            },
+            {
+                "vehicleInformation.maker": {
+                    "$regex": search_argument,
+                    "$options": "i"
+                }
+            },
+            {
+                "vehicleInformation.model": {
+                    "$regex": search_argument,
+                    "$options": "i"
+                }
+            },
+            {
+                "vehicleInformation.subModel": {
+                    "$regex": search_argument,
+                    "$options": "i"
+                }
+            }
+        ]
+    }
+    return applied_filters
+
+
+def __format_reduced_requests(part_requests):
+    for part_request in part_requests:
+        part_request["_id"] = str(part_request["_id"])
+        part_request["vehicleInformation"]["_id"] = str(part_request["vehicleInformation"]["_id"])
+        part_request["createdAt"] = str(part_request["createdAt"])

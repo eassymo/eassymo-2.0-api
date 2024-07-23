@@ -10,5 +10,5 @@ class PhotoSchema(BaseModel):
     userId: str = Field(description="id of the user that uploaded this")
     url: str = Field(description="Address")
     createdAt = Optional[datetime] = Field(
-        default=datetime.now(ZoneInfo('utc')))
+        default=datetime.now(ZoneInfo('UTC')))
     fileName: str = Field(description="File name")
