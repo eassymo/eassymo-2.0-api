@@ -6,14 +6,14 @@ from pymongo.errors import PyMongoError
 
 def create_user(user: UserSchema):
     user_exists = validate_if_users_exists(user.uid)
-
+    print(user_exists)
     if user_exists != None:
         return user_exists
 
-    user = {**jsonable_encoder(user), "groups": [], "_id": str(user["_id"])}
+    user = {**jsonable_encoder(user), "groups": []}
     userRepository.insert_user(user)
     created_user = userRepository.find_by_uid(user["uid"])
-    return created_user
+    return created_user[0] if len(created_user) > 0 else None
 
 
 def find_user(uid: str):
@@ -66,6 +66,8 @@ def validate_if_users_exists(uid: str):
                 **foundUser,
                 "groups": __format_groups(foundUser["groups"])
             }
+        else:
+            return None
     except PyMongoError as e:
         print(f"MongoDB Error: {e}")
     return foundUser
