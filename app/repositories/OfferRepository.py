@@ -1,6 +1,6 @@
 from app.config import database
 from app.schemas.Offer import Offer
-from bson import ObjectId
+from typing import List
 
 
 def insert(payload: Offer):
@@ -60,10 +60,15 @@ def find_by_request_id_and_group(request_id: str, group_id: str):
     ])
 
 
-def find_by_request_ids(request_ids):
-    return database.db["Offers"].find({
+def find_by_request_ids(request_ids, group_id):
+    filters = {
         "request_id": {"$in": request_ids}
-    })
+    }
+
+    if group_id is not None and len(group_id) > 0:
+        filters["group_id"] = group_id
+
+    return database.db["Offers"].find(filters)
 
 
 def build_filter(propName):

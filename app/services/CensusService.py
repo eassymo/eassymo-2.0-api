@@ -37,9 +37,11 @@ def build_filters(parameters):
         filters["Entity_Name"] = {
             "$regex": parameters["Entity_Name"], "$options": "i"}
     if parameters["Entity_Address_City"] is not None:
-        filters["Entity_Address_City"] = parameters["Entity_Address_City"]
+        filters["Entity_Address_City"] = {
+            "$regex": parameters["Entity_Address_City"], "$options": "i"}
     if parameters["Entity_Location_State"] is not None:
-        filters["Entity_Location_State"] = parameters["Entity_Location_State"]
+        filters["Entity_Location_State"] = {
+            "$regex": parameters["Entity_Location_State"], "$options": "i"}
     if "Entity_Type" in parameters and parameters["Entity_Type"] is not None:
         if parameters["Entity_Type"] == "Refaccionaria":
             parameters["Entity_Type"] = 1
