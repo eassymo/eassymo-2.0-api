@@ -6,6 +6,10 @@ def insert(part_request):
     return database.db["PartRequests"].insert_one(part_request)
 
 
+def find(filters, projection):
+    return database.db["PartRequests"].find(filters, projection)
+
+
 def find_by_group_and_user(user_uid, group_uid):
     return database.db["PartRequests"].find(
         {
@@ -74,8 +78,84 @@ def find_grouped(filters):
                 "preserveNullAndEmptyArrays": True
             }
         },
+        {
+            "$sort": {
+                "createdAt": -1
+            }
+        }
     ])
 
 
 def search_reduced(filters):
-    return database.db["PartRequests"].find({**filters, "isActive": True}, {"part": 1, "vehicleInformation": 1, "createdAt": 1, "_id": 1})
+
+    aggregation = [
+        {
+            "$match": filters
+        },
+        {
+            "$lookup": {
+                "from": "groups",
+                "let": {"creatorGroupId": {"$toObjectId": "$creatorGroup"}},
+                "pipeline": [
+                    {
+                        "$match": {
+                            "$expr": {"$eq": ["$_id", "$$creatorGroupId"]}
+                        }
+                    }
+                ],
+                "as": "group_info"
+            }
+        },
+        {
+            "$unwind": {
+                "path": "$group_info",
+                "preserveNullAndEmptyArrays": True
+            }
+        },
+        {
+            "$project": {
+                "_id": 1,
+                "part": 1,
+                "vehicleInformation": 1,
+                "createdAt": 1,
+                "group_info": 1,
+            }
+        }
+    ]
+
+    return database.db["PartRequests"].aggregate(aggregation)
+
+
+def build_filter(propName):
+    return database.db["PartRequests"].distinct(propName)
+
+
+def distinct_by_vehicle():
+    return database.db["PartRequests"].aggregate([
+        {
+            "$group": {
+                "_id": "$vehicleInformation.model",
+                "subModel": {"$first": "$vehicleInformation.subModel"},
+                "maker": {"$first": "$vehicleInformation.maker"},
+                "year": {"$first": "$vehicleInformation.year"},
+                "engine": {"$first": "$vehicleInformation.engine"},
+            }
+        },
+        {
+            "$project": {
+                "name": {
+                    "$concat": [
+                        {"$ifNull": ["$maker", ""]},
+                        " ",
+                        "$_id",
+                        " ",
+                        {"$ifNull": ["$subModel", ""]},
+                        " ",
+                        {"$ifNull": ["$year", ""]},
+                        " ",
+                        {"$ifNull": ["$engine", ""]}
+                    ]
+                }
+            }
+        }
+    ])
