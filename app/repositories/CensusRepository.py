@@ -7,13 +7,40 @@ def insert(data):
     return database.db["Census"].insert_one(data)
 
 
-def find(filters, limit = 20):
+def find(filters, limit=20, skip=0):
     census_filters = {
         **filters,
         "Entity_Visible": "Y",
         "Entity_Active": "Y"
     }
-    return database.db["Census"].find(census_filters).limit(20).sort('Entity_Name', pymongo.ASCENDING)
+
+    census_filters.pop("limit")
+    census_filters.pop("page")
+
+    skip = limit * (skip - 1)
+    return database.db["Census"].find(census_filters).limit(limit).skip(skip).sort([
+        ('group_reference_id', pymongo.DESCENDING),
+        ('Entity_Name', pymongo.ASCENDING)
+    ])
+
+
+def count(filters):
+    census_filters = {
+        **filters,
+        "Entity_Visible": "Y",
+        "Entity_Active": "Y"
+    }
+
+    census_filters.pop("limit")
+    census_filters.pop("page")
+
+    total_count = database.db["Census"].count_documents(census_filters)
+    group_count = database.db["Census"].count_documents(
+        {**census_filters, "group_reference_id": {"$exists": True}})
+    return {
+        "total_count": total_count,
+        "group_count": group_count
+    }
 
 
 def find_by_id(id):
