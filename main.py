@@ -10,11 +10,16 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app = fastapi.FastAPI()
 
+origins = [
+    "https://eassymo-2-0-client.vercel.app",
+    "https://eassymo-2-0-client-nw5q0qylv-fernando-francos-projects-1618c379.vercel.app"
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Adjust this to your needs
+    allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],  # Or specify just the methods your API uses
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
