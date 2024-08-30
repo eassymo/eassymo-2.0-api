@@ -3,13 +3,13 @@ from app.schemas.PartRequest import PartRequest
 from app.repositories import GroupCarRepository as groupCarRepository
 from app.repositories import GroupRepository as groupRepository
 from app.repositories import OfferRepository as offerRepository
-from app.schemas.Groups import GroupType
+from app.schemas.Groups import GroupType, GroupSchema
+from app.schemas.Offer import Offer
 from fastapi import HTTPException
 from uuid import uuid4
 from bson import ObjectId
 from typing import List
 from datetime import datetime
-from zoneinfo import ZoneInfo
 
 
 def insert(part_request: PartRequest):
@@ -235,7 +235,8 @@ def __format_grouped_filters(
     if created_at != None:
         created_at_array = created_at.split(',')
 
-        created_at_dates = list(map(lambda created: datetime.strptime(created, "%Y-%m-%d %H:%M:%S.%f"), created_at_array))
+        created_at_dates = list(map(lambda created: datetime.strptime(
+            created, "%Y-%m-%d %H:%M:%S.%f"), created_at_array))
         filters["$and"].append(
             {
                 "createdAt": {"$in": created_at_dates}
@@ -371,7 +372,7 @@ def build_filter(prop_name: str):
 
         if (prop_name == "createdAt"):
             filter_options = list(map(lambda filter_option: {
-                              "label": filter_option["value"].strftime('%d-%m-%Y'), "value": str(filter_option["value"])}, filter_options))
+                "label": filter_option["value"].strftime('%d-%m-%Y'), "value": str(filter_option["value"])}, filter_options))
 
         return filter_options
     except Exception as e:
@@ -382,3 +383,38 @@ def build_filter(prop_name: str):
 def __find_groups_and_format(group_ids: List[ObjectId]):
     found_groups = list(groupRepository.find_by_id_list(group_ids))
     return list(map(lambda group: {"label": group["name"], "value": str(group["_id"])}, found_groups))
+
+
+def find_sibling_requests_with_offers(
+    parent_request_uid: str,
+    offer_owner_group: str
+):
+    sibling_part_requests = list(partRequestRepository.find(
+        {"parent_request_uid": parent_request_uid}, {}))
+
+    part_requests_with_offers = []
+
+    for part_request_data in sibling_part_requests:
+        part_request_dict = PartRequest(**part_request_data).toJson()
+
+        offer_filters = {
+            "request_id": part_request_dict.get("_id")
+        }
+
+        if offer_owner_group != None and len(offer_owner_group) > 0:
+            offer_filters["group_id"] = offer_owner_group
+
+        part_request_offers = list(offerRepository.find(offer_filters))
+
+        offers = []
+        for offer_data in part_request_offers:
+            offer_json = Offer(**offer_data).toJson()
+            group_info = groupRepository.find_by_id(offer_json["group_id"])
+            group = GroupSchema(**group_info)
+            offer_json["group_info"] = group.toJson()
+            offers.append(offer_json)
+        part_request_dict["offers"] = offers
+
+        part_requests_with_offers.append(part_request_dict)
+
+    return part_requests_with_offers

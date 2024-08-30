@@ -1,8 +1,10 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, root_validator
 from typing import Optional, List
 from enum import Enum
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from bson import ObjectId
+from app.schemas.Groups import GroupSchema
 
 # TODO: THE BRANDS ARE A DIFFERENT COLLECTION
 
@@ -13,6 +15,8 @@ class Offer(BaseModel):
 
     class OfferStatus(Enum):
         created = "Created"
+    
+    id: Optional[str] = Field(None, alias="_id")
     request_id: str = Field(
         description="This is the request that is the owner of this offer")
     user_uid: str = Field(description="Creator user of the offer")
@@ -28,10 +32,10 @@ class Offer(BaseModel):
         default=datetime.now(ZoneInfo('UTC')))
     code: Optional[str] = Field(description="code of item")
     location: Optional[object] = Field(
-        default= None,
+        default=None,
         description="this will be the location of the part")
     photos: Optional[List[str]] = Field(
-        default= [],
+        default=[],
         description="List of urls of the pictures")
     internalComments: Optional[str] = Field(
         description="Comments to be only displayed to the offer creator group")
@@ -41,3 +45,23 @@ class Offer(BaseModel):
     status: OfferStatus = Field(
         default=OfferStatus.created.value, description="Status of the offer")
     type: OfferType = Field(default=OfferType.partOffer.value)
+    group_info: Optional[GroupSchema] = Field(default=None)
+
+    @root_validator(pre=True)
+    def convert_objectId(cls, values):
+        if "_id" in values and isinstance(values["_id"], ObjectId):
+            values["_id"] = str(values["_id"])
+        return values
+
+    def toJson(self):
+        data = self.model_dump(by_alias=True)
+
+        if (data.get("to_be_delivered_time") != None):
+            data["to_be_delivered_time"] = str(data["to_be_delivered_time"])
+
+        if data.get("status") != None:
+            data["status"] = self.status.value
+
+        if data.get("type") != None:
+            data["type"] = self.type.value
+        return data

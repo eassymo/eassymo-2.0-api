@@ -52,3 +52,12 @@ def find(
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
         return JSONResponse(content=get_unsuccessful_response(e))
+
+
+@offerRouter.get("/offers-by-groups/{request_id}", description="Get offers by groups")
+def get_offers_by_groups(request_id: str):
+    try:
+        response = offerService.find_request_offers_by_groups(request_id)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+    except Exception as e:
+        return JSONResponse(content=get_unsuccessful_response(e))

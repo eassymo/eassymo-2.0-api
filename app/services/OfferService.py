@@ -6,6 +6,8 @@ from app.services import GuaranteeService as guaranteeService
 from app.schemas.Offer import Offer
 from app.schemas.Brand import Brand
 from app.schemas.Guarantee import Guarantee
+from app.schemas.PartRequest import PartRequest
+from app.schemas.Groups import GroupSchema
 from fastapi import HTTPException
 from uuid import uuid4
 from typing import List
@@ -45,6 +47,7 @@ def find_by_request_id_and_group(part_request_id: str, group_id: str):
     try:
         found_offers = offerRepository.find_by_request_id_and_group(
             part_request_id, group_id)
+        print(found_offers)
         found_offers = list(found_offers)
 
         if len(found_offers) == 0:
@@ -135,3 +138,36 @@ def __format_offer_list(offer_list):
         formatted_offers.append(offer)
 
     return formatted_offers
+
+
+def find_request_offers_by_groups(request_id: str):
+    part_request_data = partRequestRepository.find_one_by_id(request_id)
+    part_request = PartRequest(**part_request_data)
+    subscribed_sellers = part_request.subscribedSellers
+
+    groups_found = []
+
+    have_offered_qty = 0
+
+    seller_dict = list(map(lambda seller_id: {
+                       "seller_id": seller_id, "has_offered": False}, subscribed_sellers))
+
+    for seller in seller_dict:
+        offers = list(offerRepository.find_by_request_id_and_group(
+            request_id, seller["seller_id"]))
+        if len(offers) > 0:
+            seller["has_offered"] = True
+            have_offered_qty += 1
+
+    for seller in seller_dict:
+        group_data = groupRepository.find_by_id(seller["seller_id"])
+        if group_data == None:
+            continue
+
+        group_item = GroupSchema(**group_data)
+
+        group_json = group_item.toJson()
+        group_json["has_offered"] = seller["has_offered"]
+        groups_found.append(group_json)
+
+    return {"groups_found": groups_found, "have_offered": have_offered_qty, "have_not_offered": len(seller_dict) - have_offered_qty}

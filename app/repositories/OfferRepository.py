@@ -17,9 +17,17 @@ def find(filters):
 
 
 def find_by_request_id_and_group(request_id: str, group_id: str):
+
+    filters = {
+        "request_id": request_id
+    }
+
+    if group_id != None:
+        filters["group_id"] = group_id
+
     return database.db["Offers"].aggregate([
         {
-            "$match": {"request_id": request_id, "group_id": group_id}
+            "$match": filters
         },
         {
             "$lookup": {

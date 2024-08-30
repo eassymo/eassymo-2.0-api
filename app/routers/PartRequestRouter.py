@@ -113,3 +113,16 @@ def build_filter(prop_name: Optional[str] = Query(None, title="prop_name")):
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(filter_options))
     except Exception as e:
         return JSONResponse(content=get_unsuccessful_response(e))
+
+
+@partRequestRouter.get("/sibling-requests-with-offers/{parent_request_uid}", response_description="part request with offers")
+def find_sibling_requests_with_offers(
+    parent_request_uid: str,
+    offer_owner_group: Optional[str] = Query(None, title="offer_owner_group")
+):
+    try:
+        part_requests_with_offers = partRequestService.find_sibling_requests_with_offers(
+            parent_request_uid, offer_owner_group)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(part_requests_with_offers))
+    except Exception as e:
+        return JSONResponse(content=get_unsuccessful_response(e))
