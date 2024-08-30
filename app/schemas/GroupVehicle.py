@@ -1,10 +1,12 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, root_validator
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import Optional
+from bson import ObjectId
 
 
 class GroupVehicle(BaseModel):
+    id: Optional[str] = Field(None, alias="_id")
     year: str = Field(
         description="This indicates the production year of the car")
     maker: str = Field(description="This indicates the maker of the car")
@@ -17,3 +19,15 @@ class GroupVehicle(BaseModel):
         default=True, description="Field to determine if its active")
     createdAt: Optional[datetime] = Field(
         default=datetime.now(ZoneInfo('UTC')))
+    
+    @root_validator(pre=True)
+    def convert_objectId(cls, values):
+        if "_id" in values and isinstance(values["_id"], ObjectId):
+            values["_id"] = str(values["_id"])
+        return values
+
+    def toJson(self):
+        data = self.model_dump(by_alias=True)
+
+        data["createdAt"] = str(data["createdAt"])
+        return data

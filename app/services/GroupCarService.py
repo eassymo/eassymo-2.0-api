@@ -7,7 +7,7 @@ from fastapi.encoders import jsonable_encoder
 
 def insert(group_vehicle: GroupVehicle):
     try:
-        vehicle = jsonable_encoder(group_vehicle)
+        vehicle = group_vehicle.model_dump(by_alias=True)
         inserted_id = GroupCarRepository.insert(vehicle).inserted_id
         return str(inserted_id)
     except PyMongoError as err:
@@ -18,6 +18,7 @@ def insert(group_vehicle: GroupVehicle):
 def find_by_group(group_id: str):
     try:
         vehicle_list = list(GroupCarRepository.find_by_group(group_id))
+        print(vehicle_list)
         vehicle_list = format_vehicle_list(vehicle_list)
         return vehicle_list
     except PyMongoError as err:

@@ -1,14 +1,15 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, root_validator
 from typing import List
 from app.schemas.GroupVehicle import GroupVehicle
 from app.schemas.Location import Location
-from app.schemas.Groups import GroupSchema
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import Optional
+from bson import ObjectId
 
 
 class PartRequest(BaseModel):
+    id: Optional[str] = Field(None, alias="_id")
     creatorGroup: str = Field(
         description="This is used as the group that is owner of the request")
     creatorUser: str = Field(
@@ -28,4 +29,22 @@ class PartRequest(BaseModel):
     isActive: bool = Field(
         default=True, description="This determines if the request is Active")
     part: Optional[object] = Field(default={}, description="Part description")
-    partList: Optional[List[object]] = Field(description="Optional part list")
+    partList: Optional[List[object]] = Field(
+        [], description="Optional part list")
+
+    @root_validator(pre=True)
+    def convert_objectId(cls, values):
+        if '_id' in values and isinstance(values['_id'], ObjectId):
+            values["_id"] = str(values["_id"])
+        return values
+
+    def toJson(self):
+        data = self.model_dump(by_alias=True)
+
+        if self.vehicleInformation:
+            data["vehicleInformation"] = self.vehicleInformation.toJson()
+
+        data["createdAt"] = str(data["createdAt"])
+        data["updatedAt"] = str(data["updatedAt"])
+
+        return data

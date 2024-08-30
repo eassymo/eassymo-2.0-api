@@ -21,6 +21,10 @@ def find_by_group_and_user(user_uid, group_uid):
     )
 
 
+def find_one_by_id(id: str):
+    return database.db["PartRequests"].find_one({"_id": ObjectId(id)})
+
+
 def find_by_id(id: str):
     return database.db["PartRequests"].aggregate([
         {
