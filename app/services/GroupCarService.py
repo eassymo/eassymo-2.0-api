@@ -7,7 +7,8 @@ from fastapi.encoders import jsonable_encoder
 
 def insert(group_vehicle: GroupVehicle):
     try:
-        vehicle = group_vehicle.model_dump(by_alias=True)
+        vehicle = group_vehicle.model_dump()
+        print(vehicle)
         inserted_id = GroupCarRepository.insert(vehicle).inserted_id
         return str(inserted_id)
     except PyMongoError as err:

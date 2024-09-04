@@ -173,6 +173,8 @@ def __format_grouped_part_requests(part_requests):
             part_request["creatorGroup"]["_id"])
         part_request["vehicleInformation"]["_id"] = str(
             part_request["vehicleInformation"]["_id"])
+        part_request["vehicleInformation"]["createdAt"] = str(
+            part_request["vehicleInformation"]["createdAt"])
         part_request["createdAt"] = str(part_request["createdAt"])
         part_request["updatedAt"] = str(part_request["updatedAt"])
 
