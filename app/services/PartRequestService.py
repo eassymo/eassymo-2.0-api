@@ -53,7 +53,6 @@ def find(user_uid: str, group_id: str):
 def find_by_id(id):
     try:
         found_request = list(partRequestRepository.find_by_id(id))
-
         if found_request is not None and len(found_request) > 0:
             found_request = found_request[0]
 
@@ -61,9 +60,12 @@ def find_by_id(id):
             found_request = {
                 **found_request,
                 "_id": str(found_request["_id"]),
+                "createdAt": str(found_request["createdAt"]),
+                "updatedAt": str(found_request["updatedAt"]),
                 "vehicleInformation": {
                     **found_request["vehicleInformation"],
-                    "_id": str(found_request["_id"])
+                    "_id": str(found_request["_id"]),
+                    "createdAt": str(found_request["createdAt"])
                 },
                 "group_info": {
                     **found_request["group_info"],
@@ -73,6 +75,8 @@ def find_by_id(id):
 
         found_request["partList"] = __find_sister_part_list(
             found_request["parent_request_uid"])
+        
+        print(found_request)
 
         return found_request
     except Exception as e:
@@ -101,6 +105,7 @@ def __find_sister_part_list(parent_request_uid: str):
 
 def format_part_requests(part_requests):
     formatted_requests = []
+    print(part_requests)
     for part_request in part_requests:
         formatted_requests.append({
             **part_request,
