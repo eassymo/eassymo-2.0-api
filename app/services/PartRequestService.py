@@ -1,5 +1,5 @@
 from app.repositories import PartRequestRepository as partRequestRepository
-from app.schemas.PartRequest import PartRequest
+from app.schemas.PartRequest import PartRequest, PartRequestEdit
 from app.repositories import GroupCarRepository as groupCarRepository
 from app.repositories import GroupRepository as groupRepository
 from app.repositories import OfferRepository as offerRepository
@@ -75,7 +75,7 @@ def find_by_id(id):
 
         found_request["partList"] = __find_sister_part_list(
             found_request["parent_request_uid"])
-        
+
         print(found_request)
 
         return found_request
@@ -105,7 +105,6 @@ def __find_sister_part_list(parent_request_uid: str):
 
 def format_part_requests(part_requests):
     formatted_requests = []
-    print(part_requests)
     for part_request in part_requests:
         formatted_requests.append({
             **part_request,
@@ -136,11 +135,13 @@ def find_grouped(
             search_argument,
         )
         role = int(group_role)
+        print(role)
         part_requests = list(partRequestRepository.find_grouped(filters))
         print(part_requests)
         if len(part_requests) > 0:
             found_offers = __find_offers_for_requests(
                 part_requests, group_id if role == GroupType.CAR_SHOP.value else None)
+
             __format_offers_with_found_requests(
                 requests=part_requests, offers=found_offers)
             __format_grouped_part_requests(part_requests)
@@ -165,6 +166,7 @@ def __format_offers_with_found_requests(requests, offers):
     for request in requests:
         offers_found = __filter_part_offer_by_request_id(
             offers, str(request["_id"]))
+        print(offers_found)
         if len(offers_found) > 0:
             request["offers"] = offers_found
         else:
@@ -189,6 +191,8 @@ def __filter_part_offer_by_request_id(offers, requestId):
         offer for offer in offers
         if offer["request_id"] == requestId
     ]
+
+    print(matching_offers)
 
     for offer in matching_offers:
         offer["_id"] = str(offer["_id"])
@@ -425,3 +429,30 @@ def find_sibling_requests_with_offers(
         part_requests_with_offers.append(part_request_dict)
 
     return part_requests_with_offers
+
+
+def edit_part_request(part_request_data: List[PartRequestEdit]):
+    try:
+        edited_ids = []
+        for part_request_edit in part_request_data:
+            found_part_request = list(
+                partRequestRepository.find_by_id(part_request_edit.id))
+            if len(found_part_request) > 0:
+
+                current_part_request = PartRequest(**found_part_request[0])
+                part_request_json = {
+                    "part": {
+                        **current_part_request.part,
+                        "comment": part_request_edit.comment,
+                        "amount": part_request_edit.amount
+                    },
+                    "subscribedSellers": current_part_request.subscribedSellers + part_request_edit.subscribedSellers
+                }
+                edited_part_request = partRequestRepository.edit_part_request(
+                    part_request_edit.id, part_request_json)
+                edited_ids.append(str(edited_part_request["_id"]))
+
+        return edited_ids
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f'Error while editing part request {e}')

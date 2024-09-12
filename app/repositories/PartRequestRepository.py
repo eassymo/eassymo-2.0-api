@@ -1,5 +1,8 @@
 from app.config import database
 from bson import ObjectId
+from app.schemas.PartRequest import PartRequest
+from pymongo import ReturnDocument
+from typing import List
 
 
 def insert(part_request):
@@ -163,3 +166,10 @@ def distinct_by_vehicle():
             }
         }
     ])
+
+
+def edit_part_request(id: str, data):
+    part_request_id = ObjectId(id)
+    updated_part_request = database.db["PartRequests"].find_one_and_update(
+        {"_id": part_request_id}, {"$set": {**data}}, return_document=ReturnDocument.AFTER)
+    return updated_part_request

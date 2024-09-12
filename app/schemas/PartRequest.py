@@ -18,7 +18,8 @@ class PartRequest(BaseModel):
         description="Id of the vehicle, this will be used to fetch the vehicle info from db")
     vehicleInformation: Optional[GroupVehicle] = Field(None,
                                                        description="Info of vehicle")
-    location: Optional[Location] = Field(None)
+    """location: Optional[Location] = Field(
+       None) """
     createdAt: Optional[datetime] = Field(
         default=datetime.now(ZoneInfo('UTC')))
     photos: Optional[List[str]] = Field([], description="list of urls")
@@ -48,3 +49,13 @@ class PartRequest(BaseModel):
         data["updatedAt"] = str(data["updatedAt"])
 
         return data
+
+
+class PartRequestEdit(BaseModel):
+    id:Optional[str] = Field(None)
+    comment: Optional[str] = Field(None)
+    amount: Optional[int] = Field(None)
+    subscribedSellers: Optional[List[str]] = Field(None)
+
+    def toJson(self):
+        return self.model_dump(by_alias=True)
