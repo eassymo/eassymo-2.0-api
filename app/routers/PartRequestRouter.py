@@ -2,7 +2,8 @@ from fastapi.responses import JSONResponse
 from fastapi import APIRouter, Body, status, Query
 from app.services import PartRequestService as partRequestService
 from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response
-from app.schemas.PartRequest import PartRequest
+from app.schemas.PartRequest import PartRequest, PartRequestEdit
+from typing import List
 from fastapi.encoders import jsonable_encoder
 from typing import Optional
 
@@ -124,5 +125,16 @@ def find_sibling_requests_with_offers(
         part_requests_with_offers = partRequestService.find_sibling_requests_with_offers(
             parent_request_uid, offer_owner_group)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(part_requests_with_offers))
+    except Exception as e:
+        return JSONResponse(content=get_unsuccessful_response(e))
+
+
+@partRequestRouter.put("")
+def edit_part_request(
+    payload: List[PartRequestEdit]
+):
+    try:
+        edited_part_request = partRequestService.edit_part_request(payload)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(edited_part_request))
     except Exception as e:
         return JSONResponse(content=get_unsuccessful_response(e))
