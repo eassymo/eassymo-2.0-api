@@ -64,6 +64,26 @@ def find_by_request_id_and_group(request_id: str, group_id: str):
                 "user_info.uid": 1,
                 "user_info.name": 1,
             }
+        },
+        {
+            "$lookup": {
+                "from": "groups",
+                "let": {"group_id": {"$toObjectId": "$group_id"}},
+                "pipeline": [
+                    {
+                        "$match": {
+                            "$expr": {"$eq": ["$_id", "$$group_id"]}
+                        }
+                    }
+                ],
+                "as": "group_info"
+            }
+        },
+        {
+            "$unwind": {
+                "path": "$group_info",
+                "preserveNullAndEmptyArrays": True
+            }
         }
     ])
 

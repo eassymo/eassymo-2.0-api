@@ -443,7 +443,7 @@ def edit_part_request(part_request_data: List[PartRequestEdit]):
                 part_request_json = {
                     "part": {
                         **current_part_request.part,
-                        "comment": part_request_edit.comment,
+                        "comments": part_request_edit.comment,
                         "amount": part_request_edit.amount
                     },
                     "subscribedSellers": current_part_request.subscribedSellers + part_request_edit.subscribedSellers
