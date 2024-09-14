@@ -47,7 +47,7 @@ def find_by_request_id_and_group(part_request_id: str, group_id: str):
     try:
         found_offers = offerRepository.find_by_request_id_and_group(
             part_request_id, group_id)
-        print(found_offers)
+        
         found_offers = list(found_offers)
 
         if len(found_offers) == 0:
@@ -56,6 +56,10 @@ def find_by_request_id_and_group(part_request_id: str, group_id: str):
         for offer in found_offers:
             offer["_id"] = str(offer["_id"])
             offer["to_be_delivered_time"] = str(offer["to_be_delivered_time"])
+            offer["group_info"] = {
+                **offer["group_info"],
+                "_id": str(offer["group_info"]["_id"])
+            }
 
         return found_offers
 
