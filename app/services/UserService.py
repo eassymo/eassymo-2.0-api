@@ -57,9 +57,11 @@ def update_user(uid: str, user: UserSchema):
 
 
 def validate_if_users_exists(uid: str):
+    print(uid)
     foundUser = {}
     try:
         user = list(userRepository.find_by_uid(uid))
+        print(user)
         if (len(user) > 0):
             foundUser = user[0]
             foundUser = {

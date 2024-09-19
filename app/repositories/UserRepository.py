@@ -2,6 +2,7 @@ from app.config import database
 
 
 def find_by_uid(uid: str):
+    print(uid)
     return database.db["Users"].aggregate([
         {
             "$match": {"uid": uid}

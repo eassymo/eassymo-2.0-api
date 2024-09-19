@@ -15,7 +15,10 @@ from datetime import datetime
 def insert(part_request: PartRequest):
     try:
         inserted_ids = []
-        parent_request_uid = str(uuid4())
+        if part_request.parent_request_uid != None and len(part_request.parent_request_uid) > 0:
+            parent_request_uid = part_request.parent_request_uid
+        else:
+            parent_request_uid = str(uuid4())
         part_req = part_request.model_dump()
         vehicle_information = groupCarRepository.find_by_id(
             part_req["vehicleId"])

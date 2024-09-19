@@ -32,6 +32,7 @@ class PartRequest(BaseModel):
     part: Optional[object] = Field(default={}, description="Part description")
     partList: Optional[List[object]] = Field(
         [], description="Optional part list")
+    parent_request_uid: Optional[str] = Field("")
 
     @root_validator(pre=True)
     def convert_objectId(cls, values):
