@@ -11,7 +11,7 @@ class UserRoles(Enum):
 class UserSchema(BaseModel):
     name: str = Field(None, max_length=100,
                       description="Display name of the user")
-    email: EmailStr = Field(None, max_length=60,
+    email: EmailStr = Field("",
                             description="User Email address")
     phone: str = Field(None, max_length=13)
     phoneExtention: str = Field(None, max_length=4)

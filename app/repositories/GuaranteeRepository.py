@@ -3,7 +3,7 @@ from app.schemas.Guarantee import Guarantee
 
 
 def insert(guarantee: Guarantee):
-    payload = guarantee.model_dump()
+    payload = guarantee.dict()
     return database.db["Guarantees"].insert_one(payload)
 
 

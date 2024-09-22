@@ -47,7 +47,7 @@ def find_by_request_id_and_group(part_request_id: str, group_id: str):
     try:
         found_offers = offerRepository.find_by_request_id_and_group(
             part_request_id, group_id)
-        
+
         found_offers = list(found_offers)
 
         if len(found_offers) == 0:
@@ -175,3 +175,32 @@ def find_request_offers_by_groups(request_id: str):
         groups_found.append(group_json)
 
     return {"groups_found": groups_found, "have_offered": have_offered_qty, "have_not_offered": len(seller_dict) - have_offered_qty}
+
+
+def edit_offer(offer_uid: str, payload: Offer):
+    try:
+        edited_offer = offerRepository.edit_offer(offer_uid, payload)
+
+        brand_payload = Brand(label=payload.brand, user_uid=payload.user_uid)
+        brandService.insert(brand_payload)
+
+        guarantee_payload = Guarantee(
+            label=payload.guarantee, user_uid=payload.user_uid)
+        guaranteeService.insert(guarantee_payload)
+
+        edited_offer["_id"] = str(edited_offer["_id"])
+        return edited_offer
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f'Error while editing offer {e}')
+
+
+def find_offer_by_id(offer_uid: str):
+    try:
+        offer = offerRepository.find_offer_by_id(offer_uid)
+        offer["_id"] = str(offer["_id"])
+        offer["to_be_delivered_time"] = str(offer["to_be_delivered_time"])
+        return offer
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f'Error while fetching offer {e}')

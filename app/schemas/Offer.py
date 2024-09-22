@@ -15,6 +15,8 @@ class Offer(BaseModel):
 
     class OfferStatus(Enum):
         created = "Created"
+        accepted = "Accepted"
+        rejected = "Rejected"
     
     id: Optional[str] = Field(None, alias="_id")
     request_id: str = Field(
@@ -43,7 +45,7 @@ class Offer(BaseModel):
         description="Comments to be diaplayed to the user that created the request"
     )
     status: OfferStatus = Field(
-        default=OfferStatus.created.value, description="Status of the offer")
+        default=OfferStatus.created, description="Status of the offer")
     type: OfferType = Field(default=OfferType.partOffer.value)
     group_info: Optional[GroupSchema] = Field(default=None)
 
