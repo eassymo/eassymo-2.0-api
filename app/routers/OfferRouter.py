@@ -5,6 +5,7 @@ from app.services import OfferService as offerService
 from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response
 from fastapi.encoders import jsonable_encoder
 from typing import List
+from fastapi.encoders import jsonable_encoder
 
 offerRouter = APIRouter(prefix="/offer")
 
@@ -58,6 +59,23 @@ def find(
 def get_offers_by_groups(request_id: str):
     try:
         response = offerService.find_request_offers_by_groups(request_id)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+    except Exception as e:
+        return JSONResponse(content=get_unsuccessful_response(e))
+    
+@offerRouter.put("/edit-offer/{offer_uid}", description="Edit an offer")
+def edit_offer(offer_uid: str, payload: Offer = Body(...)):
+    try:
+        response = offerService.edit_offer(offer_uid, payload)
+        serialized_response = jsonable_encoder(response)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(serialized_response))
+    except Exception as e:
+        return JSONResponse(content=get_unsuccessful_response(e))
+    
+@offerRouter.get("/{id}", description="Find an offer by id")
+def find_offer_by_id(id: str):
+    try:
+        response = offerService.find_offer_by_id(id)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
         return JSONResponse(content=get_unsuccessful_response(e))

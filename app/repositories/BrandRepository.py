@@ -3,7 +3,7 @@ from app.schemas.Brand import Brand
 
 
 def insert(brand: Brand):
-    payload = brand.model_dump()
+    payload = brand.dict()
     return database.db["Brands"].insert_one(payload)
 
 

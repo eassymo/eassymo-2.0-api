@@ -1,14 +1,16 @@
 from app.config import database
 from app.schemas.Offer import Offer
 from typing import List
-
+from bson import ObjectId
+from pymongo import ReturnDocument
 
 def insert(payload: Offer):
     offer_payload = {
-        **payload.model_dump(),
-        "status": payload.status,
+        **payload.dict(),
+        "status": payload.status.value,
         "type": payload.type
     }
+    print(offer_payload)
     return database.db["Offers"].insert_one(offer_payload)
 
 
@@ -101,3 +103,22 @@ def find_by_request_ids(request_ids, group_id):
 
 def build_filter(propName):
     return database.db["Offers"].distinct(propName)
+
+
+def edit_offer(offer_uid: str, payload: Offer):
+    offer_id = ObjectId(offer_uid)
+    offer_data = payload.dict()
+
+    if 'status' in offer_data:
+        offer_data['status'] = offer_data['status'].value
+    if 'type' in offer_data:
+        offer_data['type'] = offer_data['type'].value
+
+    offer_data.pop('id', None)
+
+    return database.db["Offers"].find_one_and_update({"_id": offer_id}, {"$set": offer_data}, return_document=ReturnDocument.AFTER)
+
+
+def find_offer_by_id(offer_uid: str):
+    offer_id = ObjectId(offer_uid)
+    return database.db["Offers"].find_one({"_id": offer_id})
