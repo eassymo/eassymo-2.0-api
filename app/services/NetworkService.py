@@ -59,7 +59,7 @@ def sendNetworkInvitationMessage(id: str, inviteData: InvitationsSchema):
             "userName": inviteData.userName,
             "inviteStatus": inviteData.inviteStatus.value,
             "censusId": inviteData.censusId,
-            "censusUser": inviteData.censusUser.model_dump(),
+            "censusUser": inviteData.censusUser.dict(),
             "type": inviteData.type.value,
             "finalContactInfo": inviteData.finalContactInfo,
             "createdAt": datetime.utcnow(),

@@ -8,20 +8,29 @@ def insert(data):
 
 
 def find(filters, limit=20, skip=0):
-    census_filters = {
-        **filters,
-        "Entity_Visible": "Y",
-        "Entity_Active": "Y"
-    }
+    try:
+        census_filters = {
+            **filters,
+            "Entity_Visible": "Y",
+            "Entity_Active": "Y"
+        }
 
-    census_filters.pop("limit")
-    census_filters.pop("page")
+        if "show_only_census" in filters and filters["show_only_census"] is not None:
+            census_filters["group_reference_id"] = {"$exists": False}
 
-    skip = limit * (skip - 1)
-    return database.db["Census"].find(census_filters).limit(limit).skip(skip).sort([
-        ('group_reference_id', pymongo.DESCENDING),
-        ('Entity_Name', pymongo.ASCENDING)
-    ])
+        print(census_filters)
+        census_filters.pop("limit", None)
+        census_filters.pop("page", None)
+        census_filters.pop("show_only_census", None)
+
+        skip = limit * (skip - 1)
+        return database.db["Census"].find(census_filters).limit(limit).skip(skip).sort([
+            ('Entity_Name', pymongo.ASCENDING)
+        ])
+    except Exception as e:
+        print(f"An error occurred in find(): {str(e)}")
+        # You might want to log the error or handle it in a specific way
+        raise  # Re-raise the exception after logging
 
 
 def count(filters):

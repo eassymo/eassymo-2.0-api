@@ -27,7 +27,7 @@ class GroupVehicle(BaseModel):
         return values
 
     def toJson(self):
-        data = self.model_dump(by_alias=True)
+        data = self.dict(by_alias=True)
 
         data["createdAt"] = str(data["createdAt"])
         return data

@@ -6,7 +6,7 @@ from app.exceptions.InternalServerError import InternalServerError
 
 def create_list(data: ListsSchema):
     list_info = {
-        **data.model_dump()
+        **data.dict()
     }
     try:
         user_lists = list(listsRepository.find_by_user(data.user_uid))

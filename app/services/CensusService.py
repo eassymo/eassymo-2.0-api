@@ -48,6 +48,8 @@ def build_filters(parameters):
         if parameters["Entity_Type"] == "Taller":
             parameters["Entity_Type"] = 2
         filters["Entity_Type"] = parameters["Entity_Type"]
+    if "show_only_census" in parameters and parameters["show_only_census"] is not None:
+        filters["show_only_census"] = parameters["show_only_census"]
     return filters
 
 

@@ -2,18 +2,23 @@ from app.repositories import UserRepository as userRepository
 from app.schemas.Users import UserSchema
 from fastapi.encoders import jsonable_encoder
 from pymongo.errors import PyMongoError
+from fastapi import HTTPException
 
 
 def create_user(user: UserSchema):
-    user_exists = validate_if_users_exists(user.uid)
-    print(user_exists)
-    if user_exists != None:
-        return user_exists
+    try:
+        user_exists = validate_if_users_exists(user.uid)
+        print(user_exists)
+        if user_exists != None:
+            return user_exists
 
-    user = {**jsonable_encoder(user), "groups": []}
-    userRepository.insert_user(user)
-    created_user = userRepository.find_by_uid(user["uid"])
-    return created_user[0] if len(created_user) > 0 else None
+        user = {**jsonable_encoder(user), "groups": []}
+        userRepository.insert_user(user)
+        created_user = list(userRepository.find_by_uid(user["uid"]))
+        return created_user[0] if len(created_user)> 0 else None
+    except PyMongoError as e:
+        raise HTTPException(
+            status_code=500, detail="Error while creating user")
 
 
 def find_user(uid: str):
@@ -57,7 +62,6 @@ def update_user(uid: str, user: UserSchema):
 
 
 def validate_if_users_exists(uid: str):
-    print(uid)
     foundUser = {}
     try:
         user = list(userRepository.find_by_uid(uid))
@@ -68,11 +72,14 @@ def validate_if_users_exists(uid: str):
                 **foundUser,
                 "groups": __format_groups(foundUser["groups"])
             }
+            print(foundUser)
+            return foundUser
         else:
             return None
     except PyMongoError as e:
-        print(f"MongoDB Error: {e}")
-    return foundUser
+        raise HTTPException(
+            status_code=500, detail="Error while finding user")
+    
 
 
 def __format_groups(groups):
