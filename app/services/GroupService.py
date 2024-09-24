@@ -10,7 +10,7 @@ from fastapi import HTTPException
 def create_group(group: GroupSchema, censusReference: str, user_id: str):
 
     group_data = {
-        **group.model_dump(),
+        **group.dict(),
         "since": str(group.since),
         "censusReference": censusReference,
         "type": group.type,
@@ -29,8 +29,7 @@ def create_group(group: GroupSchema, censusReference: str, user_id: str):
         census_data.Entity_Status = "1"
         censusRepository.update(
             censusReference, {"group_reference_id": created_group_id})
-
-    if censusReference is None:
+    else:
         census_data = CensusSchema(
             Census_Country="Mexico",
             Entity_Address_City=group.city,
@@ -41,7 +40,7 @@ def create_group(group: GroupSchema, censusReference: str, user_id: str):
             Entity_Status="1",
             group_reference_id=created_group_id
         )
-        census_json = census_data.model_dump()
+        census_json = census_data.dict()
         censusRepository.insert(census_json)
 
     group_data["_id"] = str(group_data["_id"])
@@ -54,4 +53,5 @@ def find_by_user_id(uid: str):
         group_list = list(groupRepository.find_by_user(uid))
         return {"message": "ok", "body": group_list}
     except PyMongoError as err:
-        raise HTTPException(status_code=500, detail="Error while finding groups")
+        raise HTTPException(
+            status_code=500, detail="Error while finding groups")

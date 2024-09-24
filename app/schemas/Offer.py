@@ -56,7 +56,7 @@ class Offer(BaseModel):
         return values
 
     def toJson(self):
-        data = self.model_dump(by_alias=True)
+        data = self.dict(by_alias=True)
 
         if (data.get("to_be_delivered_time") != None):
             data["to_be_delivered_time"] = str(data["to_be_delivered_time"])

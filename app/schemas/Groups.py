@@ -43,5 +43,5 @@ class GroupSchema(BaseModel):
         return value
 
     def toJson(self):
-        data = self.model_dump(by_alias=True)
+        data = self.dict(by_alias=True)
         return data

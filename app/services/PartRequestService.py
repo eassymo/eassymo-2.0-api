@@ -19,7 +19,7 @@ def insert(part_request: PartRequest):
             parent_request_uid = part_request.parent_request_uid
         else:
             parent_request_uid = str(uuid4())
-        part_req = part_request.model_dump()
+        part_req = part_request.dict()
         vehicle_information = groupCarRepository.find_by_id(
             part_req["vehicleId"])
 

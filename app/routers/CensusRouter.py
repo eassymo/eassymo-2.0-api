@@ -21,14 +21,17 @@ def find(
         None, title="Entity_Address_City", description="City of entity"),
     Entity_Location_State: Optional[str] = Query(
         None, title="Entity_Location_State", description="State of entity"),
+    show_only_census: Optional[bool] = Query(
+        None, title="show_only_census", description="Show only census")
 ):
     parameters = {
         "userUid": userUid,
         "Entity_Name": Entity_Name,
         "Entity_Address_City": Entity_Address_City,
         "Entity_Location_State": Entity_Location_State,
-        "limit": params.model_dump()["size"],
-        "page":  params.model_dump()["page"]
+        "show_only_census": show_only_census,
+        "limit": params.dict()["size"],
+        "page":  params.dict()["page"]
     }
     census_items = typeUtilities.parse_json(censusService.find(parameters))
 

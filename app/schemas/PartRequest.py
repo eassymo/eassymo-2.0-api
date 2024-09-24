@@ -41,7 +41,7 @@ class PartRequest(BaseModel):
         return values
 
     def toJson(self):
-        data = self.model_dump(by_alias=True)
+        data = self.dict(by_alias=True)
 
         if self.vehicleInformation:
             data["vehicleInformation"] = self.vehicleInformation.toJson()
@@ -59,4 +59,4 @@ class PartRequestEdit(BaseModel):
     subscribedSellers: Optional[List[str]] = Field(None)
 
     def toJson(self):
-        return self.model_dump(by_alias=True)
+        return self.dict(by_alias=True)
