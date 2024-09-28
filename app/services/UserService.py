@@ -31,6 +31,7 @@ def find_user(uid: str):
 def update_user(uid: str, user: UserSchema):
     try:
         found_user = list(userRepository.find_by_uid(uid))
+
         if (user == None):
             return {"message": "No user was found with that uid"}
 
@@ -41,7 +42,7 @@ def update_user(uid: str, user: UserSchema):
 
         user_to_be_updated["name"] = user.name if user.name is not None else user_to_be_updated.get(
             "name", None)
-        user_to_be_updated["email"] = user.email if user.email is not None else user_to_be_updated.get(
+        user_to_be_updated["email"] = user.email if user.email is not None and user.email != "" else user_to_be_updated.get(
             "email", None)
         user_to_be_updated["phone"] = user.phone if user.phone is not None else user_to_be_updated.get(
             "phone", None)

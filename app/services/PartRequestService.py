@@ -33,13 +33,21 @@ def insert(part_request: PartRequest):
             del part_request_payload["partList"]
             part_request_id = partRequestRepository.insert(
                 part_request_payload).inserted_id
-            inserted_ids.append(str(part_request_id))
+            inserted_ids.append(part_request_id)
 
-        return inserted_ids
+        found_part_requests = list(partRequestRepository.find({"_id": { "$in": inserted_ids }}, {}))
+
+        found_part_requests = [__format_part_request(part_request) for part_request in found_part_requests]
+
+        return found_part_requests
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f'Error while inserting group vehicle {e}')
 
+
+def __format_part_request(part_request):
+    part_request = PartRequest(**part_request)
+    return part_request.toJson()
 
 def find(user_uid: str, group_id: str):
     try:

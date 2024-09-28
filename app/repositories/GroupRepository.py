@@ -27,3 +27,7 @@ def distinct_by_id():
         {"$match": {"_id": {"$in": group_ids}}},
         {"$project": {"_id": {"$toString": "$_id"}, "name": 1}}
     ])
+
+def find_users_by_group_id(group_id: str):
+    group_id = ObjectId(group_id)
+    return database.db["groups"].find_one({"_id": group_id}, {"users": 1})
