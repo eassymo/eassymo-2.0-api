@@ -3,6 +3,9 @@ from app.schemas.Groups import GroupSchema
 from typing import Optional
 from app.services import GroupService as groupService
 from fastapi.responses import JSONResponse
+from typing import List
+from fastapi.encoders import jsonable_encoder
+from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response
 
 groupRouter = APIRouter(prefix="/group")
 
@@ -16,6 +19,7 @@ def create(
     return JSONResponse(status_code=status.HTTP_201_CREATED, content=response)
 
 
-""" @groupRouter.get("/find-by-user/{userUid}", response_description="Groups that are linked to this user", tags=["Groups"])
-def find_by_user(userUid: str):
-     """
+@groupRouter.post("/users-from-group-ids", response_description="", tags=["Groups"])
+def find_users_from_group(payload: List[str] = Body(...)):
+    response = groupService.find_users_by_groups_ids(payload)
+    return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))

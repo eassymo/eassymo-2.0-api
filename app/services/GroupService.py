@@ -5,6 +5,7 @@ from app.schemas.Groups import GroupSchema
 from app.schemas.Census import CensusSchema
 from pymongo.errors import PyMongoError
 from fastapi import HTTPException
+from typing import List
 
 
 def create_group(group: GroupSchema, censusReference: str, user_id: str):
@@ -55,3 +56,16 @@ def find_by_user_id(uid: str):
     except PyMongoError as err:
         raise HTTPException(
             status_code=500, detail="Error while finding groups")
+
+
+def find_users_by_groups_ids(groups_ids: List[str]):
+    try:
+        user_string_ids = set()
+        for group_id in groups_ids:
+            users_from_group = groupRepository.find_users_by_group_id(group_id)
+            user_string_ids.update(users_from_group["users"])
+
+        return list(user_string_ids)
+    except PyMongoError as err:
+        raise HTTPException(
+            status_code=500, detail=f'Error while finding users {err}')
