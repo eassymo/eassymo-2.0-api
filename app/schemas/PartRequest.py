@@ -6,6 +6,12 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import Optional
 from bson import ObjectId
+from enum import Enum
+
+
+class PartRequestStatus(Enum):
+    CREATED = 1,
+    OFFER_SELECTED = 2,
 
 
 class PartRequest(BaseModel):
@@ -33,12 +39,17 @@ class PartRequest(BaseModel):
     partList: Optional[List[object]] = Field(
         [], description="Optional part list")
     parent_request_uid: Optional[str] = Field("")
+    status: PartRequestStatus = Field(PartRequestStatus.CREATED, description="Current status of part request")
 
     @root_validator(pre=True)
     def convert_objectId(cls, values):
         if '_id' in values and isinstance(values['_id'], ObjectId):
             values["_id"] = str(values["_id"])
         return values
+    
+    def update_status(self, new_status: PartRequestStatus):
+        self.status = new_status
+        self.updatedAt = datetime.now(ZoneInfo('UTC'))
 
     def toJson(self):
         data = self.dict(by_alias=True)
@@ -53,7 +64,7 @@ class PartRequest(BaseModel):
 
 
 class PartRequestEdit(BaseModel):
-    id:Optional[str] = Field(None)
+    id: Optional[str] = Field(None)
     comment: Optional[str] = Field(None)
     amount: Optional[int] = Field(None)
     subscribedSellers: Optional[List[str]] = Field(None)
