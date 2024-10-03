@@ -10,8 +10,8 @@ from enum import Enum
 
 
 class PartRequestStatus(Enum):
-    CREATED = 1,
-    OFFER_SELECTED = 2,
+    CREATED = "Created"
+    OFFER_SELECTED = "Offer_selected"
 
 
 class PartRequest(BaseModel):
@@ -39,7 +39,7 @@ class PartRequest(BaseModel):
     partList: Optional[List[object]] = Field(
         [], description="Optional part list")
     parent_request_uid: Optional[str] = Field("")
-    status: PartRequestStatus = Field(PartRequestStatus.CREATED, description="Current status of part request")
+    status: PartRequestStatus = Field(default=PartRequestStatus.CREATED.value, description="Current status of part request")
 
     @root_validator(pre=True)
     def convert_objectId(cls, values):
