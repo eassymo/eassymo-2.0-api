@@ -9,15 +9,18 @@ from app.schemas.Groups import GroupSchema
 # TODO: THE BRANDS ARE A DIFFERENT COLLECTION
 
 
-class Offer(BaseModel):
-    class OfferType(Enum):
-        partOffer = "PartOffer"
+class OfferType(Enum):
+    partOffer = "PartOffer"
 
-    class OfferStatus(Enum):
-        created = "Created"
-        accepted = "Accepted"
-        rejected = "Rejected"
-    
+
+class OfferStatus(Enum):
+    created = "Created"
+    accepted = "Accepted"
+    rejected = "Rejected"
+
+
+class Offer(BaseModel):
+
     id: Optional[str] = Field(None, alias="_id")
     request_id: str = Field(
         description="This is the request that is the owner of this offer")

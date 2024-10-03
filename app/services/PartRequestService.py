@@ -42,7 +42,7 @@ def insert(part_request: PartRequest):
         return found_part_requests
     except Exception as e:
         raise HTTPException(
-            status_code=500, detail=f'Error while inserting group vehicle {e}')
+            status_code=500, detail=f'Error while inserting part request {e}')
 
 
 def __format_part_request(part_request):
