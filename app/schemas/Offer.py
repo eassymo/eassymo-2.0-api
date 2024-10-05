@@ -15,9 +15,8 @@ class OfferType(Enum):
 
 class OfferStatus(Enum):
     created = "Created"
-    accepted = "Accepted"
+    selected = "Selected"
     rejected = "Rejected"
-
 
 class Offer(BaseModel):
 
@@ -48,15 +47,22 @@ class Offer(BaseModel):
         description="Comments to be diaplayed to the user that created the request"
     )
     status: OfferStatus = Field(
-        default=OfferStatus.created, description="Status of the offer")
+        default=OfferStatus.created.value, description="Status of the offer")
     type: OfferType = Field(default=OfferType.partOffer.value)
     group_info: Optional[GroupSchema] = Field(default=None)
+    updatedAt: Optional[datetime] = Field(
+        default=datetime.now(ZoneInfo('UTC')))
+    
 
     @root_validator(pre=True)
     def convert_objectId(cls, values):
         if "_id" in values and isinstance(values["_id"], ObjectId):
             values["_id"] = str(values["_id"])
         return values
+
+    def update_status(self, status: OfferStatus):
+        self.status = status
+        self.updatedAt = datetime.now(ZoneInfo('UTC'))
 
     def toJson(self):
         data = self.dict(by_alias=True)
@@ -69,4 +75,7 @@ class Offer(BaseModel):
 
         if data.get("type") != None:
             data["type"] = self.type.value
+
+        if data.get("updatedAt") != None:
+            data["updatedAt"] = str(self.updatedAt)
         return data

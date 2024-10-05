@@ -39,14 +39,15 @@ class PartRequest(BaseModel):
     partList: Optional[List[object]] = Field(
         [], description="Optional part list")
     parent_request_uid: Optional[str] = Field("")
-    status: PartRequestStatus = Field(default=PartRequestStatus.CREATED.value, description="Current status of part request")
+    status: PartRequestStatus = Field(
+        default=PartRequestStatus.CREATED.value, description="Current status of part request")
 
     @root_validator(pre=True)
     def convert_objectId(cls, values):
         if '_id' in values and isinstance(values['_id'], ObjectId):
             values["_id"] = str(values["_id"])
         return values
-    
+
     def update_status(self, new_status: PartRequestStatus):
         self.status = new_status
         self.updatedAt = datetime.now(ZoneInfo('UTC'))
@@ -59,6 +60,9 @@ class PartRequest(BaseModel):
 
         data["createdAt"] = str(data["createdAt"])
         data["updatedAt"] = str(data["updatedAt"])
+        
+        if data.get("status") != None:
+            data["status"] = self.status.value
 
         return data
 

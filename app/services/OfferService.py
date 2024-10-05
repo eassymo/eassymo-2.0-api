@@ -6,11 +6,11 @@ from app.services import GuaranteeService as guaranteeService
 from app.schemas.Offer import Offer
 from app.schemas.Brand import Brand
 from app.schemas.Guarantee import Guarantee
-from app.schemas.PartRequest import PartRequest
+from app.schemas.PartRequest import PartRequest, PartRequestStatus
 from app.schemas.Groups import GroupSchema
 from fastapi import HTTPException
 from uuid import uuid4
-from typing import List
+from app.schemas.Offer import OfferStatus
 
 
 def insert(payload: Offer):
@@ -18,6 +18,9 @@ def insert(payload: Offer):
         if payload.offer_group_uid == None:
             offer_group_uid = str(uuid4())
             payload.offer_group_uid = offer_group_uid
+
+        if isinstance(payload.status, str):
+            payload.status = OfferStatus[payload.status.lower()]
 
         brand_payload = Brand(label=payload.brand, user_uid=payload.user_uid)
         brandService.insert(brand_payload)
@@ -198,9 +201,52 @@ def edit_offer(offer_uid: str, payload: Offer):
 def find_offer_by_id(offer_uid: str):
     try:
         offer = offerRepository.find_offer_by_id(offer_uid)
-        offer["_id"] = str(offer["_id"])
-        offer["to_be_delivered_time"] = str(offer["to_be_delivered_time"])
-        return offer
+        if offer is not None:
+            offer = Offer(**offer)
+        offer_json = offer.toJson()
+        return offer_json
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f'Error while fetching offer {e}')
+
+
+def change_offer_status(request_id: str, offer_id: str, status: OfferStatus):
+    try:
+        part_request: PartRequest = _get_part_request_data(request_id)
+        offer: Offer = _get_offer_data(offer_id)
+        match status:
+            case status.selected:
+                part_request.update_status(PartRequestStatus.OFFER_SELECTED)
+                offer.update_status(OfferStatus.selected)
+
+        partRequestRepository.edit_part_request(
+            request_id, part_request.toJson())
+        offerRepository.edit_offer(offer_id, offer.toJson())
+
+        return {"ok": True}
+
+    except Exception as e:
+        HTTPException(
+            status_code=500, detail=f'Error while changing offer status {e}')
+
+
+def _get_part_request_data(request_id: str) -> PartRequest:
+    try:
+        part_request_data = partRequestRepository.find_by_id(request_id)
+        if (part_request_data is not None):
+            return PartRequest(**part_request_data)
+        return None
+    except Exception as e:
+        HTTPException(
+            status_code=500, detail=f'Error while fetching part request {e}')
+
+
+def _get_offer_data(offer_id: str) -> Offer:
+    try:
+        offer_data = offerRepository.find_offer_by_id(offer_id)
+        if (offer_data is not None):
+            return Offer(**offer_data)
+        return None
+    except Exception as e:
+        HTTPException(
+            status_code=500, detail=f'Error while fetching part offer {e}')
