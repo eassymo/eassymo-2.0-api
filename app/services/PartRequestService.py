@@ -28,7 +28,8 @@ def insert(part_request: PartRequest):
                 **part_req,
                 "part": car_part,
                 "vehicleInformation": vehicle_information,
-                "parent_request_uid": parent_request_uid
+                "parent_request_uid": parent_request_uid,
+                "status": part_request.status.value
             }
             del part_request_payload["partList"]
             part_request_id = partRequestRepository.insert(
