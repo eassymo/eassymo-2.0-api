@@ -62,7 +62,8 @@ def get_offers_by_groups(request_id: str):
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
         return JSONResponse(content=get_unsuccessful_response(e))
-    
+
+
 @offerRouter.put("/edit-offer/{offer_uid}", description="Edit an offer")
 def edit_offer(offer_uid: str, payload: Offer = Body(...)):
     try:
@@ -71,11 +72,22 @@ def edit_offer(offer_uid: str, payload: Offer = Body(...)):
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(serialized_response))
     except Exception as e:
         return JSONResponse(content=get_unsuccessful_response(e))
-    
+
+
 @offerRouter.get("/{id}", description="Find an offer by id")
 def find_offer_by_id(id: str):
     try:
         response = offerService.find_offer_by_id(id)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+    except Exception as e:
+        return JSONResponse(content=get_unsuccessful_response(e))
+
+
+@offerRouter.post("/change-offer-status")
+def change_offer_status(payload=Body(...)):
+    try:
+        response = offerService.change_offer_status(
+            request_id=payload["request_id"], offer_id=payload["offer_id"], status=payload["status"])
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
         return JSONResponse(content=get_unsuccessful_response(e))

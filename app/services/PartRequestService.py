@@ -81,7 +81,7 @@ def find_by_id(id):
                 "group_info": {
                     **found_request["group_info"],
                     "_id": str(found_request["_id"])
-                }
+                },
             }
 
         found_request["partList"] = __find_sister_part_list(
@@ -146,9 +146,9 @@ def find_grouped(
             search_argument,
         )
         role = int(group_role)
-        print(role)
+
         part_requests = list(partRequestRepository.find_grouped(filters))
-        print(part_requests)
+
         if len(part_requests) > 0:
             found_offers = __find_offers_for_requests(
                 part_requests, group_id if role == GroupType.CAR_SHOP.value else None)
@@ -208,6 +208,7 @@ def __filter_part_offer_by_request_id(offers, requestId):
     for offer in matching_offers:
         offer["_id"] = str(offer["_id"])
         offer["to_be_delivered_time"] = str(offer["to_be_delivered_time"])
+        offer["updatedAt"] = str(offer["updatedAt"])
     return matching_offers
 
 
@@ -457,7 +458,7 @@ def edit_part_request(part_request_data: List[PartRequestEdit]):
                         "comments": part_request_edit.comment,
                         "amount": part_request_edit.amount
                     },
-                    "subscribedSellers": current_part_request.subscribedSellers + part_request_edit.subscribedSellers
+                    "subscribedSellers": list(set(current_part_request.subscribedSellers + part_request_edit.subscribedSellers))
                 }
                 edited_part_request = partRequestRepository.edit_part_request(
                     part_request_edit.id, part_request_json)
