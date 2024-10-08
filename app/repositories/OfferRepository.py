@@ -4,6 +4,7 @@ from typing import List
 from bson import ObjectId
 from pymongo import ReturnDocument
 
+
 def insert(payload: Offer):
     offer_payload = {
         **payload.dict(),
@@ -105,16 +106,8 @@ def build_filter(propName):
     return database.db["Offers"].distinct(propName)
 
 
-def edit_offer(offer_uid: str, payload: Offer):
+def edit_offer(offer_uid: str, offer_data: dict):
     offer_id = ObjectId(offer_uid)
-    offer_data = payload.dict()
-
-    if 'status' in offer_data:
-        offer_data['status'] = offer_data['status'].value
-    if 'type' in offer_data:
-        offer_data['type'] = offer_data['type'].value
-
-    offer_data.pop('id', None)
 
     return database.db["Offers"].find_one_and_update({"_id": offer_id}, {"$set": offer_data}, return_document=ReturnDocument.AFTER)
 
@@ -122,3 +115,24 @@ def edit_offer(offer_uid: str, payload: Offer):
 def find_offer_by_id(offer_uid: str):
     offer_id = ObjectId(offer_uid)
     return database.db["Offers"].find_one({"_id": offer_id})
+
+
+def find_with_part_request(filters):
+
+    return database.db["Offers"].aggregate([
+        {
+            "$match": filters
+        },
+        {
+            "$lookup": {
+                "from": "PartRequests",
+                "let": {"request_id", {"$toObjectId": "$request_id"}},
+                "pipeline": [
+                    {
+                        "$match": {"$expr": {"$eq": ["$_id", "$$request_id"]}}
+                    }
+                ],
+                "as": "part_request"
+            }
+        }
+    ])

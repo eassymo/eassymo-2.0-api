@@ -11,6 +11,8 @@ from app.routers import OfferRouter as offerRouter
 from app.routers import BrandRouter as brandRouter
 from app.routers import GuaranteeRouter as guaranteeRouter
 from app.routers import PhotoRouter as photoRouter
+from app.routers import OrderRouter as orderRouter
+
 from fastapi.middleware.cors import CORSMiddleware
 
 app = fastapi.FastAPI()
@@ -40,3 +42,4 @@ app.include_router(offerRouter.offerRouter)
 app.include_router(brandRouter.brandRouter)
 app.include_router(guaranteeRouter.guaranteeRouter)
 app.include_router(photoRouter.photoRouter)
+app.include_router(orderRouter.orderRouter)

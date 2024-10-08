@@ -11,6 +11,8 @@ from app.schemas.Groups import GroupSchema
 from fastapi import HTTPException
 from uuid import uuid4
 from app.schemas.Offer import OfferStatus
+from app.repositories import OrderRepository as orderRepository
+from app.schemas.Order import Order, OrderStatus
 
 
 def insert(payload: Offer):
@@ -182,7 +184,10 @@ def find_request_offers_by_groups(request_id: str):
 
 def edit_offer(offer_uid: str, payload: Offer):
     try:
-        edited_offer = offerRepository.edit_offer(offer_uid, payload)
+
+        offer_json = payload.toJson()
+        offer_json.pop("_id")
+        edited_offer = offerRepository.edit_offer(offer_uid, offer_json)
 
         brand_payload = Brand(label=payload.brand, user_uid=payload.user_uid)
         brandService.insert(brand_payload)
@@ -210,20 +215,33 @@ def find_offer_by_id(offer_uid: str):
             status_code=500, detail=f'Error while fetching offer {e}')
 
 
-def change_offer_status(request_id: str, offer_id: str, status: OfferStatus):
+def change_offer_status(request_id: str, offer_id: str, status: str):
     try:
         part_request: PartRequest = _get_part_request_data(request_id)
         offer: Offer = _get_offer_data(offer_id)
-        match status:
-            case status.selected:
+        offer_status = OfferStatus[status.lower()]
+        match offer_status:
+            case offer_status.selected:
                 part_request.update_status(PartRequestStatus.OFFER_SELECTED)
                 offer.update_status(OfferStatus.selected)
 
-        partRequestRepository.edit_part_request(
-            request_id, part_request.toJson())
-        offerRepository.edit_offer(offer_id, offer.toJson())
+                order = Order(offer=offer, part_request=part_request, status=OrderStatus.WAITING_FOR_CONFIRMATION,
+                              creator_user=part_request.creatorUser, group=part_request.creatorGroup)
+                order_json = order.toJson()
+                order_json.pop("_id")
+                orderRepository.insert(order_json)
 
-        return {"ok": True}
+        part_request_json = part_request.toJson()
+        offer_json = offer.toJson()
+
+        part_request_json.pop('_id')
+        offer_json.pop('_id')
+
+        partRequestRepository.edit_part_request(
+            request_id, part_request_json)
+        offerRepository.edit_offer(offer_id, offer_json)
+
+        return offer_json
 
     except Exception as e:
         HTTPException(
@@ -232,7 +250,7 @@ def change_offer_status(request_id: str, offer_id: str, status: OfferStatus):
 
 def _get_part_request_data(request_id: str) -> PartRequest:
     try:
-        part_request_data = partRequestRepository.find_by_id(request_id)
+        part_request_data = partRequestRepository.find_one_by_id(request_id)
         if (part_request_data is not None):
             return PartRequest(**part_request_data)
         return None
@@ -250,3 +268,14 @@ def _get_offer_data(offer_id: str) -> Offer:
     except Exception as e:
         HTTPException(
             status_code=500, detail=f'Error while fetching part offer {e}')
+
+
+def get_offers_with_requests(group_id: str):
+    accepted_status = [OfferStatus.selected.value, OfferStatus.rejected.value]
+
+    filters = {
+        "group_id": group_id,
+        "status": {"$in": accepted_status}
+    }
+
+    offers = list(offerRepository.find_with_part_request(filters))
