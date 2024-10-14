@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 from typing import List, Optional
 from bson import ObjectId
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 
 class OrderStatus(Enum):
@@ -58,6 +59,7 @@ class Order(BaseModel):
     creator_user: str = Field(
         None, description="The user creator of the order")
     group: str = Field(None, description="the group this order belongs to")
+    created_at: datetime = Field(default=datetime.now(ZoneInfo('UTC')))
 
     @root_validator(pre=True)
     def convert_objectId(cls, values):
@@ -78,5 +80,15 @@ class Order(BaseModel):
 
         data["status_history"] = historical_status
         data["status"] = self.status.value
+        data["created_at"] = str(self.created_at)
 
         return data
+
+    def change_status(self, new_status: str):
+        try:
+            status = OrderStatus[new_status]
+            self.status = status
+            self.status_history.append(StatusChange(
+                status=status, timestamp=datetime.now(ZoneInfo('UTC'))))
+        except KeyError:
+            return ValueError(detail=f'{new_status} is not a valid status')

@@ -1,11 +1,13 @@
 from app.config import database
 from bson import ObjectId
-from app.schemas import Order
-import pymongo
 
 
 def insert(order: dict):
     return database.db["Orders"].insert_one(order)
+
+
+def find_by_id(id: ObjectId):
+    return database.db["Orders"].find_one({"_id": id})
 
 
 def find(filters):
@@ -64,10 +66,22 @@ def find(filters):
                 ],
                 "as": "request_group"
             }
-        }, {
+        },
+        {
             "$unwind": {
                 "path": "$request_group",
                 "preserveNullAndEmptyArrays": True
             }
         },
+        {
+            "$sort": {"created_at": -1}
+        }
     ])
+
+
+def edit(id: ObjectId, new_data):
+    return database.db["Orders"].find_one_and_update(
+        {"_id": id},
+        {"$set": new_data},
+        return_document=True
+    )
