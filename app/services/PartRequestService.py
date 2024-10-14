@@ -1,5 +1,5 @@
 from app.repositories import PartRequestRepository as partRequestRepository
-from app.schemas.PartRequest import PartRequest, PartRequestEdit
+from app.schemas.PartRequest import PartRequest, PartRequestEdit, PartRequestStatus
 from app.repositories import GroupCarRepository as groupCarRepository
 from app.repositories import GroupRepository as groupRepository
 from app.repositories import OfferRepository as offerRepository
@@ -146,7 +146,11 @@ def find_grouped(
             created_at,
             search_argument,
         )
+
         role = int(group_role)
+
+        if(role == 2):
+            filters["status"] = PartRequestStatus.CREATED.value
 
         part_requests = list(partRequestRepository.find_grouped(filters))
 

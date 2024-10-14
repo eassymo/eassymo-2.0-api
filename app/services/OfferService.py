@@ -220,6 +220,7 @@ def change_offer_status(request_id: str, offer_id: str, status: str):
         part_request: PartRequest = _get_part_request_data(request_id)
         offer: Offer = _get_offer_data(offer_id)
         offer_status = OfferStatus[status.lower()]
+        order_id: str = ""
         match offer_status:
             case offer_status.selected:
                 part_request.update_status(PartRequestStatus.OFFER_SELECTED)
@@ -229,7 +230,8 @@ def change_offer_status(request_id: str, offer_id: str, status: str):
                               creator_user=part_request.creatorUser, group=part_request.creatorGroup)
                 order_json = order.toJson()
                 order_json.pop("_id")
-                orderRepository.insert(order_json)
+                inserted_order = orderRepository.insert(order_json)
+                order_id = str(inserted_order.inserted_id)
 
         part_request_json = part_request.toJson()
         offer_json = offer.toJson()
@@ -240,6 +242,9 @@ def change_offer_status(request_id: str, offer_id: str, status: str):
         partRequestRepository.edit_part_request(
             request_id, part_request_json)
         offerRepository.edit_offer(offer_id, offer_json)
+
+        if len(order_id) > 0:
+            offer_json["order_id"] = order_id
 
         return offer_json
 
