@@ -8,7 +8,7 @@ from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_re
 orderRouter = APIRouter(prefix="/order")
 
 
-@orderRouter.get("", description="returns the list of orders")
+@orderRouter.get("", description="returns the list of orders", tags=["Orders"])
 def find(
     id: str = Query(None, title="order_id"),
     group_id: str = Query(None, title="group_id"),
@@ -21,7 +21,7 @@ def find(
         return JSONResponse(content=get_unsuccessful_response(e))
 
 
-@orderRouter.post("/change-status", description="Changes the status of the order")
+@orderRouter.post("/change-status", description="Changes the status of the order", tags=["Orders"])
 def change_order_status(data: dict = Body(...)):
     try:
         new_status = data.get("new_status")

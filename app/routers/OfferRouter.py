@@ -4,13 +4,11 @@ from app.schemas.Offer import Offer
 from app.services import OfferService as offerService
 from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response
 from fastapi.encoders import jsonable_encoder
-from typing import List
-from fastapi.encoders import jsonable_encoder
 
 offerRouter = APIRouter(prefix="/offer")
 
 
-@offerRouter.post("", description="Creation of an offer for a request")
+@offerRouter.post("", description="Creation of an offer for a request", tags=["Offers"])
 def insert(payload: Offer = Body(...)):
     try:
         response = offerService.insert(payload)
@@ -19,7 +17,7 @@ def insert(payload: Offer = Body(...)):
         return JSONResponse(content=get_unsuccessful_response(e))
 
 
-@offerRouter.get("/find_by_request_id_and_group", description="Get a specific offer for a request")
+@offerRouter.get("/find_by_request_id_and_group", description="Get a specific offer for a request", tags=["Offers"])
 def find_by_id(part_request_id: str = Query(None, title="part_request_id",
                                             description="The id of the offer"),
                group_id: str = Query(None, title="group_id",
@@ -32,7 +30,7 @@ def find_by_id(part_request_id: str = Query(None, title="part_request_id",
         return JSONResponse(content=get_unsuccessful_response(e))
 
 
-@offerRouter.get("/build-filters", description="Get the filter options for a specific prop name")
+@offerRouter.get("/build-filters", description="Get the filter options for a specific prop name", tags=["Offers"])
 def build_filters(
     prop_name: str = Query(None, title="prop_name")
 ):
@@ -43,7 +41,7 @@ def build_filters(
         return JSONResponse(content=get_unsuccessful_response(e))
 
 
-@offerRouter.get("", description="General offer get service")
+@offerRouter.get("", description="General offer get service", tags=["Offers"])
 def find(
     car_models: str = Query(None, title="car_models"),
     group_ids: str = Query(None, title="group_ids")
@@ -55,7 +53,7 @@ def find(
         return JSONResponse(content=get_unsuccessful_response(e))
 
 
-@offerRouter.get("/offers-by-groups/{request_id}", description="Get offers by groups")
+@offerRouter.get("/offers-by-groups/{request_id}", description="Get offers by groups", tags=["Offers"])
 def get_offers_by_groups(request_id: str):
     try:
         response = offerService.find_request_offers_by_groups(request_id)
@@ -64,7 +62,7 @@ def get_offers_by_groups(request_id: str):
         return JSONResponse(content=get_unsuccessful_response(e))
 
 
-@offerRouter.put("/edit-offer/{offer_uid}", description="Edit an offer")
+@offerRouter.put("/edit-offer/{offer_uid}", description="Edit an offer", tags=["Offers"])
 def edit_offer(offer_uid: str, payload: Offer = Body(...)):
     try:
         response = offerService.edit_offer(offer_uid, payload)
@@ -74,7 +72,7 @@ def edit_offer(offer_uid: str, payload: Offer = Body(...)):
         return JSONResponse(content=get_unsuccessful_response(e))
 
 
-@offerRouter.get("/{id}", description="Find an offer by id")
+@offerRouter.get("/{id}", description="Find an offer by id", tags=["Offers"])
 def find_offer_by_id(id: str):
     try:
         response = offerService.find_offer_by_id(id)
@@ -83,7 +81,7 @@ def find_offer_by_id(id: str):
         return JSONResponse(content=get_unsuccessful_response(e))
 
 
-@offerRouter.post("/change-offer-status")
+@offerRouter.post("/change-offer-status", tags=["Offers"])
 def change_offer_status(payload=Body(...)):
     try:
         response = offerService.change_offer_status(
