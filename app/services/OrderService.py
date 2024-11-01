@@ -50,6 +50,25 @@ def find(order_id: str, group_id: str, current_role: str):
             status_code=500, detail=f'Error while fetching orders {e}')
 
 
+def find_by_id(id: str):
+    try:
+        id = ObjectId(id)
+        order_obj = list(orderRepository.find_by_id(id))[0]
+
+        if order_obj is None:
+            return {}
+
+        order = Order(**order_obj)
+
+        offer_group = GroupSchema(**order_obj["offer_group"])
+        request_group = GroupSchema (**order_obj["request_group"])
+
+        return {**order.toJson(), "offer_group": offer_group.toJson(), "request_group": request_group.toJson()}
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f'Error while fetching order by id {e}')
+
+
 def change_order_status(order_id: str, new_status: str):
     try:
         order_id = ObjectId(order_id)

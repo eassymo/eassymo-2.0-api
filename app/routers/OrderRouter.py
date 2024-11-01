@@ -36,3 +36,12 @@ def change_order_status(data: dict = Body(...)):
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
         return JSONResponse(content=get_unsuccessful_response(e))
+
+
+@orderRouter.get("/{id}", description="Get order by id", tags=["Orders"], response_model=Order)
+def find_by_id(id: str):
+    try:
+        response = OrderService.find_by_id(id)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+    except Exception as e:
+        return JSONResponse(content=get_unsuccessful_response(e))
