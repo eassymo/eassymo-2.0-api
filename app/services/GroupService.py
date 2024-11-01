@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from typing import List
 
 
-def create_group(group: GroupSchema, censusReference: str, user_id: str):
+def create_group(group: GroupSchema, censusReference: str | None, user_id: str):
 
     group_data = {
         **group.dict(),
