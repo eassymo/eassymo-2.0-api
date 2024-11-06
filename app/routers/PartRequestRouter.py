@@ -46,6 +46,9 @@ def find_grouped(
         None, title="vehicle_model"),
     created_at: Optional[str] = Query(
         None, title="created_at"),
+    page: Optional[int] = Query(1, title="page", description="Page number"),
+    limit: Optional[int] = Query(
+        10, title="limit", description="Items per page")
 ):
     try:
         part_requests = partRequestService.find_grouped(
@@ -55,6 +58,8 @@ def find_grouped(
             vehicle_model,
             created_at,
             search_argument,
+            page,
+            limit
         )
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(part_requests))
     except Exception as e:

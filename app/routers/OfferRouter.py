@@ -89,3 +89,12 @@ def change_offer_status(payload=Body(...)):
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
         return JSONResponse(content=get_unsuccessful_response(e))
+
+
+@offerRouter.post("/ranked-offers", tags=["Offers"])
+def ranked_offers(payload=Body(...)):
+    try:
+        response = offerService.get_ranked_offers(payload["offer_ids"])
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+    except Exception as e:
+        return JSONResponse(content=get_unsuccessful_response(e))

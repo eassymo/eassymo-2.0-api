@@ -2,7 +2,7 @@ from app.config import database
 from app.schemas.Offer import Offer
 from typing import List
 from bson import ObjectId
-from pymongo import ReturnDocument
+from pymongo import ReturnDocument, ASCENDING, DESCENDING
 
 
 def insert(payload: Offer):
@@ -136,3 +136,7 @@ def find_with_part_request(filters):
             }
         }
     ])
+
+
+def get_ranked_offers(offer_ids: List[ObjectId]):
+    return database.db["Offers"].find({"_id": {"$in": offer_ids}}).sort('price', ASCENDING)

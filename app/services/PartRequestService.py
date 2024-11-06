@@ -36,9 +36,11 @@ def insert(part_request: PartRequest):
                 part_request_payload).inserted_id
             inserted_ids.append(part_request_id)
 
-        found_part_requests = list(partRequestRepository.find({"_id": { "$in": inserted_ids }}, {}))
+        found_part_requests = list(partRequestRepository.find(
+            {"_id": {"$in": inserted_ids}}, {}))
 
-        found_part_requests = [__format_part_request(part_request) for part_request in found_part_requests]
+        found_part_requests = [__format_part_request(
+            part_request) for part_request in found_part_requests]
 
         return found_part_requests
     except Exception as e:
@@ -49,6 +51,7 @@ def insert(part_request: PartRequest):
 def __format_part_request(part_request):
     part_request = PartRequest(**part_request)
     return part_request.toJson()
+
 
 def find(user_uid: str, group_id: str):
     try:
@@ -136,6 +139,8 @@ def find_grouped(
         vehicle_model: str,
         created_at: str,
         search_argument: str,
+        page: int = 1,
+        limit: int = 10
 ):
     try:
         filters = __format_grouped_filters(
@@ -149,10 +154,13 @@ def find_grouped(
 
         role = int(group_role)
 
-        if(role == 2):
+        if (role == 2):
             filters["status"] = PartRequestStatus.CREATED.value
 
-        part_requests = list(partRequestRepository.find_grouped(filters))
+        skip = (page - 1) * limit
+
+        part_requests = list(
+            partRequestRepository.find_grouped(filters, skip, limit))
 
         if len(part_requests) > 0:
             found_offers = __find_offers_for_requests(
@@ -162,7 +170,17 @@ def find_grouped(
                 requests=part_requests, offers=found_offers)
             __format_grouped_part_requests(part_requests)
 
-        return part_requests
+        total_count = partRequestRepository.count_grouped(filters)
+
+        return {
+            "data": part_requests,
+            "pagination": {
+                "total": total_count,
+                "page": page,
+                "limit": limit,
+                "total_pages": -(-total_count // limit)
+            }
+        }
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f'Error finding grouped requests {e}')

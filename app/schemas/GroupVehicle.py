@@ -19,6 +19,9 @@ class GroupVehicle(BaseModel):
         default=True, description="Field to determine if its active")
     createdAt: Optional[datetime] = Field(
         default=datetime.now(ZoneInfo('UTC')))
+    vin: Optional[str] = Field(None, description="Vin number of the car")
+    serviceOrder: Optional[str] = Field(None, description="Service order of the car")
+    licensePlate: Optional[str] = Field(None, description="current license plate of the car")
     
     @root_validator(pre=True)
     def convert_objectId(cls, values):
