@@ -60,7 +60,7 @@ def find_sister_part_requests(parent_request_id: str):
     return database.db["PartRequests"].find({"parent_request_uid": parent_request_id}, {"part": 1, "_id": 1})
 
 
-def find_grouped(filters):
+def find_grouped(filters, skip: int = 0, limit: int = 10):
     return database.db["PartRequests"].aggregate([
         {
             "$match": filters
@@ -89,8 +89,18 @@ def find_grouped(filters):
             "$sort": {
                 "createdAt": -1
             }
+        },
+        {
+            "$skip": skip
+        },
+        {
+            "$limit": limit
         }
     ])
+
+
+def count_grouped(filters):
+    return database.db["PartRequests"].count_documents(filters)
 
 
 def search_reduced(filters):
@@ -172,4 +182,4 @@ def edit_part_request(id: str, data):
     part_request_id = ObjectId(id)
     updated_part_request = database.db["PartRequests"].find_one_and_update(
         {"_id": part_request_id}, {"$set": {**data}}, return_document=ReturnDocument.AFTER)
-    return updated_part_request
+    return updated_part_request    

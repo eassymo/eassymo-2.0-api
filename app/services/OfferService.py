@@ -13,6 +13,8 @@ from uuid import uuid4
 from app.schemas.Offer import OfferStatus
 from app.repositories import OrderRepository as orderRepository
 from app.schemas.Order import Order, OrderStatus
+from typing import List
+from bson import ObjectId
 
 
 def insert(payload: Offer):
@@ -253,6 +255,22 @@ def change_offer_status(request_id: str, offer_id: str, status: str):
             status_code=500, detail=f'Error while changing offer status {e}')
 
 
+def get_ranked_offers(offer_ids: List[str]):
+    ids = [ObjectId(offer_id) for offer_id in offer_ids]
+
+    ranked_offers = {}
+
+    counter = 1
+
+    offers = list(offerRepository.get_ranked_offers(ids))
+
+    for offer_item in offers:
+        ranked_offers[str(offer_item["_id"])] = counter
+        counter += 1
+
+    return ranked_offers
+
+
 def _get_part_request_data(request_id: str) -> PartRequest:
     try:
         part_request_data = partRequestRepository.find_one_by_id(request_id)
@@ -273,14 +291,3 @@ def _get_offer_data(offer_id: str) -> Offer:
     except Exception as e:
         HTTPException(
             status_code=500, detail=f'Error while fetching part offer {e}')
-
-
-def get_offers_with_requests(group_id: str):
-    accepted_status = [OfferStatus.selected.value, OfferStatus.rejected.value]
-
-    filters = {
-        "group_id": group_id,
-        "status": {"$in": accepted_status}
-    }
-
-    offers = list(offerRepository.find_with_part_request(filters))
