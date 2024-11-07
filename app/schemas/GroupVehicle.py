@@ -20,9 +20,13 @@ class GroupVehicle(BaseModel):
     createdAt: Optional[datetime] = Field(
         default=datetime.now(ZoneInfo('UTC')))
     vin: Optional[str] = Field(None, description="Vin number of the car")
-    serviceOrder: Optional[str] = Field(None, description="Service order of the car")
-    licensePlate: Optional[str] = Field(None, description="current license plate of the car")
-    
+    serviceOrder: Optional[str] = Field(
+        None, description="Service order of the car")
+    licensePlate: str = Field(None,
+        description="current license plate of the car")
+    numberOfRequests: Optional[int] = Field(None, description="Number of requests")
+    parent_request_id: Optional[str] = Field(None, description="Parent request id, this links the vehicle with all previous requests")
+
     @root_validator(pre=True)
     def convert_objectId(cls, values):
         if "_id" in values and isinstance(values["_id"], ObjectId):

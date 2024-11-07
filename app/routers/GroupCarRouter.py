@@ -19,7 +19,7 @@ def insert(
         response = GroupCarService.insert(payload)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except Exception as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return JSONResponse(content=get_unsuccessful_response(e), status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @groupCarRouter.get("", tags=["GroupVehicle"])

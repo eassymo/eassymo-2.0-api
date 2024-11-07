@@ -2,7 +2,7 @@ from app.repositories import GroupCarRepository
 from app.schemas.GroupVehicle import GroupVehicle
 from pymongo.errors import PyMongoError
 from fastapi import HTTPException
-from fastapi.encoders import jsonable_encoder
+from app.repositories import PartRequestRepository
 
 
 def insert(group_vehicle: GroupVehicle):
@@ -18,29 +18,33 @@ def insert(group_vehicle: GroupVehicle):
 
 def find_by_group(group_id: str):
     try:
-        vehicle_list = list(GroupCarRepository.find_by_group(group_id))
-        print(vehicle_list)
-        vehicle_list = format_vehicle_list(vehicle_list)
+        vehicle_list = []
+        vehicle_list_data = list(GroupCarRepository.find_by_group(group_id))
+        for vehicle in vehicle_list_data:
+            vehicle_item = GroupVehicle(**vehicle)
+            part_requests = list(PartRequestRepository.find(
+                {"vehicleId": vehicle_item.id}, None))
+            vehicle_item.numberOfRequests = len(part_requests)
+            if len(part_requests) > 0:
+                vehicle_item.parent_request_id = part_requests[0]["parent_request_uid"]
+            vehicle_list.append(vehicle_item.toJson())
+
         return vehicle_list
     except PyMongoError as err:
         raise HTTPException(
             status_code=500, detail=f'Error while finding group cars{err}')
 
 
-def format_vehicle_list(vehicle_list):
-    formatted_list = []
-    for vehicle in vehicle_list:
-        formatted_list.append({
-            **vehicle,
-            "_id": str(vehicle["_id"])
-        })
-    return formatted_list
-
-
 def find_by_id(id: str):
     try:
         found_vehicle = GroupCarRepository.find_by_id(id)
-        return {**found_vehicle, "_id": str(found_vehicle["_id"])}
+        vehicle = GroupVehicle(**found_vehicle)
+        part_requests = list(PartRequestRepository.find(
+            {"vehicleId": vehicle.id}, None))
+        vehicle.numberOfRequests = len(part_requests)
+        if len(part_requests) > 0:
+            vehicle.parent_request_id = part_requests[0]["parent_request_uid"]
+        return vehicle.toJson()
     except PyMongoError as err:
         raise HTTPException(
             status_code=500, detail=f'Error while finding group vehicle by id {err}')
