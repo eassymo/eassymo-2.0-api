@@ -72,8 +72,10 @@ def find_by_id(id: str):
 def change_order_status(order_id: str, new_status: str):
     try:
         order_id = ObjectId(order_id)
-        order_found = orderRepository.find_by_id(order_id)
-        order = Order(**order_found)
+        order: Order
+        order_found = list(orderRepository.find_by_id(order_id))
+        if order_found != None and len(order_found) > 0:
+            order = Order(**order_found[0])
 
         order.change_status(new_status)
 

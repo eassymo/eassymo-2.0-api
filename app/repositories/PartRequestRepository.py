@@ -1,8 +1,6 @@
 from app.config import database
 from bson import ObjectId
-from app.schemas.PartRequest import PartRequest
 from pymongo import ReturnDocument
-from typing import List
 
 
 def insert(part_request):
@@ -22,7 +20,6 @@ def find_by_group_and_user(user_uid, group_uid):
             ]
         }
     )
-
 
 def find_one_by_id(id: str):
     return database.db["PartRequests"].find_one({"_id": ObjectId(id)})
@@ -183,3 +180,6 @@ def edit_part_request(id: str, data):
     updated_part_request = database.db["PartRequests"].find_one_and_update(
         {"_id": part_request_id}, {"$set": {**data}}, return_document=ReturnDocument.AFTER)
     return updated_part_request    
+
+def count(filters) -> int:
+    return database.db["PartRequests"].count_documents(filters)
