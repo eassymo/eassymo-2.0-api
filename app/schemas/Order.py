@@ -43,7 +43,7 @@ def _generate_order_id():
     date = datetime.now()
     uuid = str(uuid4())
 
-    return f'{date.day}-{date.month}-{str(date.year)[-2:]}-{uuid[-2:]}'
+    return f'{date.day}-{date.month}-{str(date.year)[-2:]}-{uuid[-4:]}'
 
 
 class Order(BaseModel):
