@@ -3,6 +3,7 @@ from app.schemas.GroupVehicle import GroupVehicle
 from pymongo.errors import PyMongoError
 from fastapi import HTTPException
 from app.repositories import PartRequestRepository
+from bson import ObjectId
 
 
 def insert(group_vehicle: GroupVehicle):
@@ -48,3 +49,33 @@ def find_by_id(id: str):
     except PyMongoError as err:
         raise HTTPException(
             status_code=500, detail=f'Error while finding group vehicle by id {err}')
+
+
+def edit(id: str, payload: GroupVehicle):
+    try:
+        vehicle_id = ObjectId(id)
+
+        json_payload = payload.toJson()
+        json_payload.pop("_id")
+
+        GroupCarRepository.edit(vehicle_id, json_payload).modified_count
+
+        found_vehicle_data = GroupCarRepository.find_by_id(id)
+
+        vehicle = GroupVehicle(**found_vehicle_data)
+
+        return vehicle.toJson()
+
+    except PyMongoError as err:
+        raise HTTPException(
+            status_code=500, detail=f'Error while editing group vehicle {err}')
+
+
+def remove(id: str):
+    try:
+        car_id = ObjectId(id)
+        deleted_count = GroupCarRepository.soft_remove(car_id).modified_count
+        return {"deleted_count": deleted_count}
+    except PyMongoError as err:
+        raise HTTPException(
+            status_code=500, detail=f'Error while deleting the group car {err}')
