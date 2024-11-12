@@ -11,7 +11,6 @@ def insert(payload: Offer):
         "status": payload.status.value,
         "type": payload.type
     }
-    print(offer_payload)
     return database.db["Offers"].insert_one(offer_payload)
 
 

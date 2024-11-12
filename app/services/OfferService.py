@@ -255,8 +255,11 @@ def change_offer_status(request_id: str, offer_id: str, status: str):
             status_code=500, detail=f'Error while changing offer status {e}')
 
 
-def get_ranked_offers(offer_ids: List[str]):
-    ids = [ObjectId(offer_id) for offer_id in offer_ids]
+def get_ranked_offers(request_id: str):
+
+    found_offers = list(offerRepository.find({"request_id": request_id}))
+
+    ids = [offer["_id"] for offer in found_offers]
 
     ranked_offers = {}
 
