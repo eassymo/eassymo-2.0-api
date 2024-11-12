@@ -18,7 +18,6 @@ def find(filters, limit=20, skip=0):
         if "show_only_census" in filters and filters["show_only_census"] is not None:
             census_filters["group_reference_id"] = {"$exists": False}
 
-        print(census_filters)
         census_filters.pop("limit", None)
         census_filters.pop("page", None)
         census_filters.pop("show_only_census", None)
@@ -28,7 +27,6 @@ def find(filters, limit=20, skip=0):
             ('Entity_Name', pymongo.ASCENDING)
         ])
     except Exception as e:
-        print(f"An error occurred in find(): {str(e)}")
         # You might want to log the error or handle it in a specific way
         raise  # Re-raise the exception after logging
 

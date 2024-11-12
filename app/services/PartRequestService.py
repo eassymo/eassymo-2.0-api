@@ -91,8 +91,6 @@ def find_by_id(id):
         found_request["partList"] = __find_sister_part_list(
             found_request["parent_request_uid"])
 
-        print(found_request)
-
         return found_request
     except Exception as e:
         raise HTTPException(
@@ -200,7 +198,6 @@ def __format_offers_with_found_requests(requests, offers):
     for request in requests:
         offers_found = __filter_part_offer_by_request_id(
             offers, str(request["_id"]))
-        print(offers_found)
         if len(offers_found) > 0:
             request["offers"] = offers_found
         else:

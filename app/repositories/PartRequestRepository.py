@@ -85,7 +85,7 @@ def find_grouped(filters, skip: int = 0, limit: int = 10):
         },
         {
             "$sort": {
-                "createdAt": -1
+                "_id": -1
             }
         },
         {
