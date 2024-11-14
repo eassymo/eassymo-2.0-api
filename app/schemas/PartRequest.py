@@ -41,6 +41,8 @@ class PartRequest(BaseModel):
     parent_request_uid: Optional[str] = Field("")
     status: PartRequestStatus = Field(
         default=PartRequestStatus.CREATED.value, description="Current status of part request")
+    show_ranking: Optional[bool] = Field(
+        None, description="this is a field that is calculated in the runtime to determine if we should show the ranking for all users")
 
     @root_validator(pre=True)
     def convert_objectId(cls, values):
@@ -60,7 +62,7 @@ class PartRequest(BaseModel):
 
         data["createdAt"] = str(data["createdAt"])
         data["updatedAt"] = str(data["updatedAt"])
-        
+
         if data.get("status") != None:
             data["status"] = self.status.value
 

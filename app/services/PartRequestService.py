@@ -72,9 +72,12 @@ def find_by_id(id):
             found_request = found_request[0]
 
         if found_request is not None:
+            offers_for_request = list(offerRepository.find(
+                {'request_id': str(found_request["_id"])}))
             found_request = {
                 **found_request,
                 "_id": str(found_request["_id"]),
+                "show_ranking": len(offers_for_request) > 1,
                 "createdAt": str(found_request["createdAt"]),
                 "updatedAt": str(found_request["updatedAt"]),
                 "vehicleInformation": {
