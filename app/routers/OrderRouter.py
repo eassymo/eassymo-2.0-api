@@ -45,3 +45,12 @@ def find_by_id(id: str):
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
         return JSONResponse(content=get_unsuccessful_response(e))
+
+
+@orderRouter.post("/change-delivery-time", description="Changes the delivery time of an order", tags=["Orders"])
+def change_delivery_time(data: dict = Body(...)):
+    try:
+        response = OrderService.change_delivery_time(
+            data["order_id"], data["new_delivery_time"], data["is_delayed"])
+    except Exception as e:
+        return JSONResponse(content=get_unsuccessful_response(e))

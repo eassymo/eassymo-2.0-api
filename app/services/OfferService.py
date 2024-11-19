@@ -13,15 +13,16 @@ from uuid import uuid4
 from app.schemas.Offer import OfferStatus
 from app.repositories import OrderRepository as orderRepository
 from app.schemas.Order import Order, OrderStatus
-from typing import List
-from bson import ObjectId
-
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 def insert(payload: Offer):
     try:
         if payload.offer_group_uid == None:
             offer_group_uid = str(uuid4())
             payload.offer_group_uid = offer_group_uid
+
+        payload.createdAt = datetime.now(ZoneInfo('UTC'))
 
         if isinstance(payload.status, str):
             payload.status = OfferStatus[payload.status.lower()]
@@ -63,6 +64,7 @@ def find_by_request_id_and_group(part_request_id: str, group_id: str):
         for offer in found_offers:
             offer["_id"] = str(offer["_id"])
             offer["to_be_delivered_time"] = str(offer["to_be_delivered_time"])
+            offer["createdAt"] = str(offer["createdAt"])
             offer["group_info"] = {
                 **offer["group_info"],
                 "_id": str(offer["group_info"]["_id"])
@@ -229,7 +231,7 @@ def change_offer_status(request_id: str, offer_id: str, status: str):
                 offer.update_status(OfferStatus.selected)
 
                 order = Order(offer=offer, part_request=part_request, status=OrderStatus.WAITING_FOR_CONFIRMATION,
-                              creator_user=part_request.creatorUser, group=part_request.creatorGroup)
+                              creator_user=part_request.creatorUser, group=part_request.creatorGroup, created_at=datetime.now(ZoneInfo('UTC')))
                 order_json = order.toJson()
                 order_json.pop("_id")
                 inserted_order = orderRepository.insert(order_json)

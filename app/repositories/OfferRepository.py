@@ -9,7 +9,7 @@ def insert(payload: Offer):
     offer_payload = {
         **payload.dict(),
         "status": payload.status.value,
-        "type": payload.type
+        "type": payload.type,
     }
     return database.db["Offers"].insert_one(offer_payload)
 
@@ -65,6 +65,7 @@ def find_by_request_id_and_group(request_id: str, group_id: str):
                 "type": 1,
                 "user_info.uid": 1,
                 "user_info.name": 1,
+                "createdAt": 1,
             }
         },
         {
