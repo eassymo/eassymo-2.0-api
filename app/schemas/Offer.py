@@ -50,6 +50,7 @@ class Offer(BaseModel):
         default=OfferStatus.created.value, description="Status of the offer")
     type: OfferType = Field(default=OfferType.partOffer.value)
     group_info: Optional[GroupSchema] = Field(default=None)
+    createdAt: Optional[datetime] = Field(None)
     updatedAt: Optional[datetime] = Field(
         default=datetime.now(ZoneInfo('UTC')))
     
@@ -78,4 +79,7 @@ class Offer(BaseModel):
 
         if data.get("updatedAt") != None:
             data["updatedAt"] = str(self.updatedAt)
+
+        if data.get("createdAt") != None:
+            data["createdAt"] = str(self.createdAt)
         return data

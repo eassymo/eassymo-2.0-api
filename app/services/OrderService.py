@@ -4,9 +4,10 @@ from app.schemas.Order import Order, OrderStatus
 from app.schemas.Groups import GroupSchema
 from app.schemas.PartRequest import PartRequest
 from bson import ObjectId
+from datetime import datetime
 
 
-def find(order_id: str, group_id: str, current_role: str):
+def find(order_id: str, group_id: str | None, current_role: str):
     if group_id == None:
         raise HTTPException(status_code=400, detail="Group id is required")
     try:
@@ -27,6 +28,8 @@ def find(order_id: str, group_id: str, current_role: str):
             filters["offer.group_id"] = group_id
 
         orders = list(orderRepository.find(filters))
+
+        print(orders)
 
         order_list = []
 
@@ -61,7 +64,7 @@ def find_by_id(id: str):
         order = Order(**order_obj)
 
         offer_group = GroupSchema(**order_obj["offer_group"])
-        request_group = GroupSchema (**order_obj["request_group"])
+        request_group = GroupSchema(**order_obj["request_group"])
 
         return {**order.toJson(), "offer_group": offer_group.toJson(), "request_group": request_group.toJson()}
     except Exception as e:
@@ -90,3 +93,23 @@ def change_order_status(order_id: str, new_status: str):
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f'Error while changing order status {e}')
+
+
+def change_delivery_time(order_id: str | ObjectId, new_delivery_time: datetime, is_delayed: bool):
+    try:
+        order_id = ObjectId(order_id)
+        orders = list(orderRepository.find_by_id(order_id))
+        if len(orders) > 0:
+            order = Order(**orders[0])
+            order.change_delivery_time(
+                new_delivery_time, current_deliver_promise_delayed=is_delayed)
+            order_data = order.toJson()
+
+            order_data.pop("_id")
+
+            edited_order = orderRepository.edit(order_id, order_data)
+
+            return Order(**edited_order).toJson()
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f'Error while changing order delivery time {e}')

@@ -60,6 +60,11 @@ class Order(BaseModel):
         None, description="The user creator of the order")
     group: str = Field(None, description="the group this order belongs to")
     created_at: datetime = Field(default=datetime.now(ZoneInfo('UTC')))
+    to_be_delivered_time: Optional[datetime] = Field(
+        None, description="Once confirmed this is the time the order is promised to be delivered")
+    current_deliver_promise_delayed: Optional[bool] = Field(
+        None, description="This is marked as true in case the new deliver promise is greater than the previous promise time")
+    updated_at: datetime = Field(default=datetime.now(ZoneInfo('UTC')))
 
     @root_validator(pre=True)
     def convert_objectId(cls, values):
@@ -80,15 +85,29 @@ class Order(BaseModel):
 
         data["status_history"] = historical_status
         data["status"] = self.status.value
+        data["updated_at"] = str(self.updated_at)
         data["created_at"] = str(self.created_at)
+
+        if self.to_be_delivered_time != None:
+            data["to_be_delivered_time"] = str(self.to_be_delivered_time)
 
         return data
 
     def change_status(self, new_status: str):
         try:
+            updated_date = datetime.now(ZoneInfo('UTC'))
             status = OrderStatus[new_status]
             self.status = status
             self.status_history.append(StatusChange(
-                status=status, timestamp=datetime.now(ZoneInfo('UTC'))))
+                status=status, timestamp=updated_date))
+            self.updated_at = updated_date
         except KeyError:
             return ValueError(detail=f'{new_status} is not a valid status')
+
+    def change_delivery_time(self, new_date: datetime, current_deliver_promise_delayed: bool):
+        try:
+            self.to_be_delivered_time = new_date
+            self.updated_at = datetime.now(ZoneInfo('UTC'))
+            self.current_deliver_promise_delayed = current_deliver_promise_delayed
+        except Exception as e:
+            raise ValueError(detail=f'Error while changing delivery time {e}')

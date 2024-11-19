@@ -162,6 +162,8 @@ def find_grouped(
 
         part_requests = list(
             partRequestRepository.find_grouped(filters, skip, limit))
+        
+        print(part_requests)
 
         if len(part_requests) > 0:
             found_offers = __find_offers_for_requests(
@@ -226,12 +228,11 @@ def __filter_part_offer_by_request_id(offers, requestId):
         if offer["request_id"] == requestId
     ]
 
-    print(matching_offers)
-
     for offer in matching_offers:
         offer["_id"] = str(offer["_id"])
         offer["to_be_delivered_time"] = str(offer["to_be_delivered_time"])
         offer["updatedAt"] = str(offer["updatedAt"])
+        offer["createdAt"] = str(offer["createdAt"])
     return matching_offers
 
 
