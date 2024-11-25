@@ -50,6 +50,7 @@ def update_user(uid: str, user: UserSchema):
             "phoneExtention", None)
         user_to_be_updated["location"] = user.location if user.location is not None else user_to_be_updated.get(
             "location", None)
+        
 
         if user.roles is not None:
             user_to_be_updated["roles"] = [role.value for role in user.roles]
