@@ -4,6 +4,7 @@ from pymongo.errors import PyMongoError
 
 from app.repositories import InvitationRepository as invitationRepository
 from app.repositories import ListsRepository as listRepository
+from bson import ObjectId
 
 
 def find(filters):
@@ -23,6 +24,10 @@ def find(filters):
 
 def build_filters(parameters):
     filters = {}
+
+    if parameters["id"] is not None:
+        filters["_id"] = ObjectId(parameters["id"])
+
     if parameters["limit"] is not None:
         filters["limit"] = parameters["limit"]
     else:

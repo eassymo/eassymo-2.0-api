@@ -13,12 +13,14 @@ from app.routers import GuaranteeRouter as guaranteeRouter
 from app.routers import PhotoRouter as photoRouter
 from app.routers import OrderRouter as orderRouter
 from app.routers import ChatRouter as chatRouter
+from app.routers import WhatsappRouter as whatsAppRouter
 
 from fastapi.middleware.cors import CORSMiddleware
 
 app = fastapi.FastAPI()
 
 origins = [
+    "https://www.eassymo.mx",
     "https://eassymo-2-0-client.vercel.app",
     "https://eassymo-2-0-client-nw5q0qylv-fernando-francos-projects-1618c379.vercel.app"
 ]
@@ -45,3 +47,4 @@ app.include_router(guaranteeRouter.guaranteeRouter)
 app.include_router(photoRouter.photoRouter)
 app.include_router(orderRouter.orderRouter)
 app.include_router(chatRouter.chatRouter)
+app.include_router(whatsAppRouter.whatsAppRouter)
