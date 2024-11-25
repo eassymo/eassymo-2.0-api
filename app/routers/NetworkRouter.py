@@ -14,7 +14,7 @@ networkRouter = APIRouter(prefix="/network")
 @networkRouter.post("/send-invite", response_description="response that we get from the meta api when we send an invite", tags=["invite"])
 def send_invite(inviteId: Optional[str] = Query(None, title="inviteId", description="invite id used for re sending the invite"), payload: InvitationsSchema = Body(...)):
     response = networkService.sendNetworkInvitationMessage(inviteId, payload)
-    return JSONResponse(status_code=status.HTTP_201_CREATED, content=response)
+    return JSONResponse(status_code=status.HTTP_201_CREATED, content=get_successful_response(jsonable_encoder(response)))
 
 
 @networkRouter.get("/user-invites/{id}", response_description="user invites", tags=["invite"])

@@ -1,59 +1,41 @@
 from fastapi import HTTPException
-import requests
-from dotenv import load_dotenv
-import os
 from app.schemas.Invitations import InvitationsSchema
 from app.repositories import InvitationRepository as invitationRepository
 from app.repositories import ListsRepository as listRepository
 from pymongo.errors import PyMongoError
 from datetime import datetime
-from typing import List
-
-load_dotenv()
-
-WHATSAPP_API_URL = "https://graph.facebook.com/v18.0/107266568911091/messages"
-ACCESS_TOKEN = os.getenv("WHATSAPP_TOKEN")
+from typing import List, Dict, Any
+from app.services.WhatsappService import WhatsappService
+from app.schemas.WhatasppMessage import WhatsappMessage, WhatsappTemplate
+from app.schemas.Invitations import InvitationsSchema
 
 
-def sendNetworkInvitationMessage(id: str, inviteData: InvitationsSchema):
+whatsapp_service = WhatsappService()
+
+
+def sendNetworkInvitationMessage(id: str | None, inviteData: InvitationsSchema):
     if (id != None):
         invite = invitationRepository.find_by_id(id)
         inviteData = InvitationsSchema(**invite)
 
-    data = {
-        "messaging_product": "whatsapp",
-        "to": inviteData.finalContactInfo,
-        "type": "template",
-        "template": {
-            "name": "unete_eassymo6",
-            "language": {
-                "code": "es_MX"
-            },
-            "components": [
-                {
-                    "type": "body",
-                    "parameters": [
-                        {
-                            "type": "text",
-                            "text": inviteData.censusUser.Entity_Name
-                        },
-                        {
-                            "type": "text",
-                            "text": inviteData.userName
-                        }
-                    ]
-                }
-            ]
-        }
-    }
+    whatsapp_message = WhatsappMessage(
+        to=inviteData.finalContactInfo,
+        template=WhatsappTemplate(
+            name="HXc4c0c5dd59125e6d3e0e1b5bcf5df9a3",
+            variables=[inviteData.censusUser.Entity_Name, inviteData.censusId]
+        )
+    )
 
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f'Bearer {ACCESS_TOKEN}'
-    }
+    whatsapp_message_sent_data: Dict[str, Any]
 
     try:
-        response = requests.post(WHATSAPP_API_URL, headers=headers, json=data)
+        whatsapp_message_sent_data = whatsapp_service.send_template_message(whatsapp_message)
+        print(whatsapp_message_sent_data)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error sending Whatsapp message {e}")
+
+    try:
+
         invite_data = {
             "user": inviteData.user,
             "userName": inviteData.userName,
@@ -62,19 +44,21 @@ def sendNetworkInvitationMessage(id: str, inviteData: InvitationsSchema):
             "censusUser": inviteData.censusUser.dict(),
             "type": inviteData.type.value,
             "finalContactInfo": inviteData.finalContactInfo,
+            "creator_group": inviteData.creator_group,
             "createdAt": datetime.utcnow(),
-            "lastSent": datetime.utcnow()
+            "lastSent": datetime.utcnow(),
+            "whatsapp_message_data": whatsapp_message_sent_data
         }
-
+        
         if (id != None):
             invite_data = {**invite_data, "createdAt": inviteData.createdAt}
             invitationRepository.edit(id, invite_data)
-            return {"message": "ok", "body": response.json()}
+            return id
         else:
-            invitationRepository.insert(invite_data)
-            return {"message": "ok", "body": response.json()}
-    except HTTPException as exeption:
-        return {"Error sending whatsapp invite"}
+            id = invitationRepository.insert(invite_data).inserted_id
+            return str(id)
+    except HTTPException as exception:
+        raise HTTPException(status_code=500, detail=f"Error sending Invite {exception}")
 
 
 def get_user_invites(id: str):
