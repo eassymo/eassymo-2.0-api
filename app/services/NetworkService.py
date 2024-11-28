@@ -1,5 +1,5 @@
 from fastapi import HTTPException
-from app.schemas.Invitations import InvitationsSchema
+from app.schemas.Invitations import InvitationsSchema, InvitationStatus
 from app.repositories import InvitationRepository as invitationRepository
 from app.repositories import ListsRepository as listRepository
 from pymongo.errors import PyMongoError
@@ -29,17 +29,18 @@ def sendNetworkInvitationMessage(id: str | None, inviteData: InvitationsSchema):
     whatsapp_message_sent_data: Dict[str, Any]
 
     try:
-        whatsapp_message_sent_data = whatsapp_service.send_template_message(whatsapp_message)
-        print(whatsapp_message_sent_data)
+        whatsapp_message_sent_data = whatsapp_service.send_template_message(
+            whatsapp_message)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error sending Whatsapp message {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Error sending Whatsapp message {e}")
 
     try:
 
         invite_data = {
             "user": inviteData.user,
             "userName": inviteData.userName,
-            "inviteStatus": inviteData.inviteStatus.value,
+            "inviteStatus": InvitationStatus.SENT.value,
             "censusId": inviteData.censusId,
             "censusUser": inviteData.censusUser.dict(),
             "type": inviteData.type.value,
@@ -49,7 +50,7 @@ def sendNetworkInvitationMessage(id: str | None, inviteData: InvitationsSchema):
             "lastSent": datetime.utcnow(),
             "whatsapp_message_data": whatsapp_message_sent_data
         }
-        
+
         if (id != None):
             invite_data = {**invite_data, "createdAt": inviteData.createdAt}
             invitationRepository.edit(id, invite_data)
@@ -58,7 +59,8 @@ def sendNetworkInvitationMessage(id: str | None, inviteData: InvitationsSchema):
             id = invitationRepository.insert(invite_data).inserted_id
             return str(id)
     except HTTPException as exception:
-        raise HTTPException(status_code=500, detail=f"Error sending Invite {exception}")
+        raise HTTPException(
+            status_code=500, detail=f"Error sending Invite {exception}")
 
 
 def get_user_invites(id: str):

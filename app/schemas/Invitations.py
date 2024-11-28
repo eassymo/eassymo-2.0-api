@@ -3,12 +3,12 @@ from enum import Enum
 from app.schemas.Census import CensusSchema
 from datetime import datetime
 from bson import ObjectId
-
+from typing import Optional, Any, Dict
 
 class InvitationStatus(Enum):
-    SENT = 1
-    REJECTED = 2
-    ACCEPTED = 3
+    SENT = "SENT"
+    REJECTED = "REJECTED"
+    ACCEPTED = "ACCEPTED"
 
 
 class InvitationType(Enum):
@@ -18,6 +18,7 @@ class InvitationType(Enum):
 
 
 class InvitationsSchema(BaseModel):
+    id: str = Field(None, alias="_id")
     user: str = Field(None, description="User that originated the invite")
     userName: str = Field(None, description="Name of user sending invite")
     inviteStatus: InvitationStatus = Field(
@@ -34,6 +35,7 @@ class InvitationsSchema(BaseModel):
         None, description="Timestamp of when the invite was last sent")
     creator_group: str = Field(
         None, description="The id of the group that generated the invitation")
+    whatsapp_message_data: Optional[Dict[str, Any]] = Field(None, description="The data returned from twilio")
 
     @root_validator(pre=True)
     def convert_objectId(cls, values):
@@ -41,8 +43,15 @@ class InvitationsSchema(BaseModel):
             values['_id'] = str(values['_id'])
         return values
 
+    def change_status(self, new_status: str):
+        try:
+            status = InvitationStatus[new_status]
+            self.inviteStatus = status
+        except KeyError:
+            raise ValueError(f'{new_status} is not a valid status')
+
     def toJson(self):
-        data_json = self.model_dump()
+        data_json = self.model_dump(by_alias=True)
 
         if data_json.get('createdAt') != None:
             data_json["createdAt"] = str(self.createdAt)

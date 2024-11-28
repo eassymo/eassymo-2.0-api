@@ -102,7 +102,7 @@ class Order(BaseModel):
                 status=status, timestamp=updated_date))
             self.updated_at = updated_date
         except KeyError:
-            return ValueError(detail=f'{new_status} is not a valid status')
+            return KeyError(detail=f'{new_status} is not a valid status')
 
     def change_delivery_time(self, new_date: datetime, current_deliver_promise_delayed: bool):
         try:

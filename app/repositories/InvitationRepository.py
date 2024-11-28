@@ -6,6 +6,10 @@ def insert(data):
     return database.db["Invitations"].insert_one(data)
 
 
+def find(filters):
+    return database.db["Invitations"].find(filters).sort({'_id': -1})
+
+
 def find_user_invites(userId: str):
     return database.db["Invitations"].find({"user": userId})
 
@@ -17,6 +21,10 @@ def find_by_id(id: str):
 
 def find_by_census_id(census_id: str):
     return database.db["Invitations"].find_one({"censusId": census_id})
+
+
+def find_all_by_census_id(census_id: str):
+    return database.db["Invitations"].find({"censusId": census_id})
 
 
 def edit(id: str, data):
