@@ -19,7 +19,7 @@ def find(filters):
         group_count = counts["group_count"]
         return {"message": "ok", "body": results, "count": total_count, "group_count": group_count, "page": filters["page"], "limit": filters["limit"]}
     except PyMongoError as err:
-        return {"message": f'Error getting items from census'}
+        return {"message": f'Error getting items from census {err}'}
 
 
 def build_filters(parameters):

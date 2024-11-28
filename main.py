@@ -14,6 +14,7 @@ from app.routers import PhotoRouter as photoRouter
 from app.routers import OrderRouter as orderRouter
 from app.routers import ChatRouter as chatRouter
 from app.routers import WhatsappRouter as whatsAppRouter
+from app.routers import InviteRouter as inviteRouter
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -48,3 +49,4 @@ app.include_router(photoRouter.photoRouter)
 app.include_router(orderRouter.orderRouter)
 app.include_router(chatRouter.chatRouter)
 app.include_router(whatsAppRouter.whatsAppRouter)
+app.include_router(inviteRouter.inviteRouter)
