@@ -10,6 +10,10 @@ def find_by_user(uid: str):
     return database.db["Lists"].find({"user_uid": uid})
 
 
+def find(filters):
+    return database.db["Lists"].find(filters)
+
+
 def find_lists_by_users_with_groups_info(uid: str):
     return database.db["Lists"].aggregate([
         {

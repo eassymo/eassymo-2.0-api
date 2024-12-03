@@ -1,5 +1,5 @@
 from app.config import database
-from typing import List
+from typing import List, Dict, Any
 from bson import ObjectId
 
 
@@ -7,7 +7,11 @@ def insert(groupData):
     return database.db["groups"].insert_one(groupData)
 
 
-def find_by_id(id):
+def find(filters: Dict[str, Any]):
+    return database.db["groups"].find(filters)
+
+
+def find_by_id(id: str):
     mongo_id = ObjectId(id)
     return database.db["groups"].find_one({"_id": mongo_id})
 
@@ -27,6 +31,7 @@ def distinct_by_id():
         {"$match": {"_id": {"$in": group_ids}}},
         {"$project": {"_id": {"$toString": "$_id"}, "name": 1}}
     ])
+
 
 def find_users_by_group_id(group_id: str):
     group_id = ObjectId(group_id)

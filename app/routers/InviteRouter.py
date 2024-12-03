@@ -17,10 +17,11 @@ def find(
     group_id: Optional[str] = Query(
         None, title="group_id", description="Group creator of the invite"), 
     status: Optional[str] = Query(
-        None, title="status", description="Status of the invite - must be one of the valid InvitationStatus values")
+        None, title="status", description="Status of the invite - must be one of the valid InvitationStatus values"),
+    final_contact_info: Optional[str] = Query(None, title="final_contact_info", description="The contact info with which the invitation was sent")
 ):
     try:
-        invites = inviteService.find(user_id, group_id, status)
+        invites = inviteService.find(user_id, group_id, status, final_contact_info)
         return JSONResponse(get_successful_response(jsonable_encoder(invites)))
     except Exception as e:
         return JSONResponse(get_unsuccessful_response(e))

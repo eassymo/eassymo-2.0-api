@@ -4,11 +4,12 @@ from app.repositories import InvitationRepository as invitationRepository
 from app.repositories import ListsRepository as listRepository
 from pymongo.errors import PyMongoError
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import Dict, Any
 from app.services.WhatsappService import WhatsappService
 from app.schemas.WhatasppMessage import WhatsappMessage, WhatsappTemplate
 from app.schemas.Invitations import InvitationsSchema
-
+from app.repositories import GroupRepository as groupRepository
+from app.schemas.Groups import GroupSchema
 
 whatsapp_service = WhatsappService()
 
@@ -17,12 +18,25 @@ def sendNetworkInvitationMessage(id: str | None, inviteData: InvitationsSchema):
     if (id != None):
         invite = invitationRepository.find_by_id(id)
         inviteData = InvitationsSchema(**invite)
+        inviteData.change_status('SENT')
+
+    creator_group = groupRepository.find_by_id(inviteData.creator_group)
+
+    number_pending_invites = list(invitationRepository.find(
+        {"finalContactInfo": inviteData.finalContactInfo, "inviteStatus": InvitationStatus.SENT.value}))
+
+    if (creator_group == None):
+        raise HTTPException(
+            500, detail=f'Error group with id {inviteData.creator_group} does not exist')
+
+    creator_group_data = GroupSchema(**creator_group)
 
     whatsapp_message = WhatsappMessage(
         to=inviteData.finalContactInfo,
         template=WhatsappTemplate(
-            name="HXc4c0c5dd59125e6d3e0e1b5bcf5df9a3",
-            variables=[inviteData.censusUser.Entity_Name, inviteData.censusId]
+            name="HXc28f0ef27e6fc80f1384f29386c5dbe5",
+            variables=[inviteData.censusUser.Entity_Name,
+                       creator_group_data.name, str(len(number_pending_invites)), inviteData.censusId]
         )
     )
 
