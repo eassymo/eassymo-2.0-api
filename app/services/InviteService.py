@@ -1,7 +1,11 @@
 from fastapi import HTTPException
 from app.repositories import InvitationRepository as inviteRepository
 from app.schemas.Invitations import InvitationsSchema, InvitationStatus
-from typing import Dict, Any
+from typing import Dict, Any, List
+from app.repositories import GroupRepository as groupRepository
+from app.schemas.Groups import GroupSchema
+from app.repositories import ListsRepository as listRepository
+from app.schemas.Lists import ListsSchema
 
 
 def change_status(census_id: str, new_status: str):
@@ -10,11 +14,13 @@ def change_status(census_id: str, new_status: str):
         modified_invites = []
         modified_count = 0
 
-        print(invites_found)
+        inviter_groups: List[str] = []
 
         for invite in invites_found:
             invite_data = InvitationsSchema(**invite)
             invite_data.change_status(new_status)
+
+            inviter_groups.append(invite_data.creator_group)
 
             invite_json = invite_data.toJson()
             invite_json.pop('_id')
@@ -22,13 +28,53 @@ def change_status(census_id: str, new_status: str):
                 invite_data.id, {"inviteStatus": invite_json["inviteStatus"]}).modified_count
             modified_invites.append(invite_data.id)
 
+        if (new_status == InvitationStatus.ACCEPTED.value and len(inviter_groups) > 0):
+            _append_created_group_to_lists(
+                census_id, inviter_groups, invite_data.user)
         return {"modified_count": modified_count, "modified_invites": modified_invites}
     except HTTPException as e:
         raise HTTPException(
             status_code=500, detail=f"Error changing the invite status {e}")
 
 
-def find(user_id: str | None, group_id: str | None, status: str | None):
+def _append_created_group_to_lists(census_id: str, inviter_groups: List[str], user_id: str) -> int:
+    groups_related_to_census = list(groupRepository.find(
+        {"censusReference": census_id}))
+
+    group: GroupSchema
+
+    if len(groups_related_to_census) > 0:
+        group = GroupSchema(**groups_related_to_census[0])
+        modified_lists: int = 0
+        for inviter_group_id in inviter_groups:
+            lists = list(listRepository.find_by_group(
+                {"group_id": inviter_group_id, "name": "Mi Red"}))
+
+            if len(lists) == 0:
+                new_list: Dict[str, Any] = ListsSchema(
+                    group_id=inviter_group_id,
+                    groups=[group.id],
+                    is_priority=True,
+                    name="Mi Red",
+                    user_uid=user_id
+                ).toJson()
+
+                new_list.pop('_id')
+
+                inserted_id = listRepository.insert(new_list).inserted_id
+
+                modified_lists += 1 if inserted_id is not None else 0
+
+            userList = ListsSchema(**lists[0])
+            userList.append_group(group.id)
+
+            modified_lists += listRepository.insert_group_to_list(
+                userList.id, group.id).modified_count
+
+    return modified_lists
+
+
+def find(user_id: str | None, group_id: str | None, status: str | None, final_contact_info: str | None):
     try:
         filters: Dict[str, Any] = {}
 
@@ -45,6 +91,9 @@ def find(user_id: str | None, group_id: str | None, status: str | None):
             except KeyError:
                 raise HTTPException(
                     status_code=400, detail=f"{status} is not a valid invitation status")
+
+        if final_contact_info is not None:
+            filters["finalContactInfo"] = final_contact_info
 
         invites_found = list(inviteRepository.find(filters))
 

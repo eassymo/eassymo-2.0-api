@@ -4,6 +4,7 @@ from app.schemas.Census import CensusSchema
 from datetime import datetime
 from bson import ObjectId
 from typing import Optional, Any, Dict
+from zoneinfo import ZoneInfo
 
 class InvitationStatus(Enum):
     SENT = "SENT"
@@ -46,6 +47,7 @@ class InvitationsSchema(BaseModel):
     def change_status(self, new_status: str):
         try:
             status = InvitationStatus[new_status]
+            self.lastSent = datetime.now(ZoneInfo('UTC'))
             self.inviteStatus = status
         except KeyError:
             raise ValueError(f'{new_status} is not a valid status')
