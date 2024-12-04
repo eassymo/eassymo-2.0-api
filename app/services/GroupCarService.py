@@ -8,12 +8,26 @@ from bson import ObjectId
 
 def insert(group_vehicle: GroupVehicle):
     try:
-        vehicle = group_vehicle.dict()
-        inserted_id = GroupCarRepository.insert(vehicle).inserted_id
-        return str(inserted_id)
+        vehicle = group_vehicle.toJson()
+        vehicle.pop('_id')
+        is_repeated: bool = False
+        if group_vehicle.licensePlate is not None and len(group_vehicle.licensePlate) > 0:
+            is_repeated = _check_if_license_plate_is_unique(
+                group_vehicle.licensePlate)
+
+        if not is_repeated:
+            inserted_id = GroupCarRepository.insert(vehicle).inserted_id
+            return str(inserted_id)
+        else:
+            raise HTTPException(
+                status_code=500, detail=f'License plate is repeated')
     except PyMongoError as err:
         raise HTTPException(
             status_code=500, detail=f'Error while inserting group vehicle {err}')
+
+
+def _check_if_license_plate_is_unique(license_plate: str):
+    return len(list(GroupCarRepository.find({"licensePlate": license_plate}))) > 0
 
 
 def find_by_group(group_id: str):

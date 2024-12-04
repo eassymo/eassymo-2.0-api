@@ -23,3 +23,4 @@ class ListsSchema(BaseModel):
 
     def toJson(self):
         data = self.model_dump(by_alias=True)
+        return data

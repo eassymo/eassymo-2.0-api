@@ -22,7 +22,7 @@ class GroupVehicle(BaseModel):
     vin: Optional[str] = Field(None, description="Vin number of the car")
     serviceOrder: Optional[str] = Field(
         None, description="Service order of the car")
-    licensePlate: str = Field(None,
+    licensePlate: Optional[str] = Field(None,
         description="current license plate of the car")
     numberOfRequests: Optional[int] = Field(None, description="Number of requests")
     parent_request_id: Optional[str] = Field(None, description="Parent request id, this links the vehicle with all previous requests")

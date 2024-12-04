@@ -6,6 +6,10 @@ def insert(groupCar):
     return database.db["GroupCars"].insert_one(groupCar)
 
 
+def find(filters):
+    return database.db["GroupCars"].find(filters)
+
+
 def find_by_group(group_id: str):
     return database.db["GroupCars"].find({"group": group_id, "active": True})
 
