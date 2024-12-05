@@ -1,8 +1,10 @@
 from app.repositories import GroupRepository as groupRepository
 from app.repositories import CensusRepository as censusRepository
 from app.repositories import UserRepository as userRepository
+from app.repositories import ListsRepository as listRepository
 from app.schemas.Groups import GroupSchema
 from app.schemas.Census import CensusSchema
+from app.schemas.Lists import ListsSchema
 from pymongo.errors import PyMongoError
 from fastapi import HTTPException
 from typing import List
@@ -23,6 +25,21 @@ def create_group(group: GroupSchema, censusReference: str | None, user_id: str):
     created_group = groupRepository.insert(group_data)
     created_group_id = str(created_group.inserted_id)
     userRepository.add_user_group(user_id, created_group_id)
+
+    user_lists = list(listRepository.find(
+        {"user_uid": user_id, "group_id": created_group_id}))
+
+    if len(user_lists) == 0:
+        user_list = ListsSchema(
+            group_id=created_group_id,
+            name="Mi Red",
+            groups=[],
+            is_priority=True,
+            user_uid=user_id
+        ).toJson()
+
+        user_list.pop('_id')
+        listRepository.insert(user_list)
 
     if censusReference is not None:
         census_json = censusRepository.find_by_id(censusReference)

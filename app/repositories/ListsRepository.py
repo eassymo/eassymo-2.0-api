@@ -14,10 +14,10 @@ def find(filters):
     return database.db["Lists"].find(filters)
 
 
-def find_lists_by_users_with_groups_info(uid: str):
+def find_lists_by_users_with_groups_info(uid: str, group_id: str):
     return database.db["Lists"].aggregate([
         {
-            "$match": {"user_uid": uid}
+            "$match": {"user_uid": uid, "group_id": group_id}
         },
         {
             "$addFields": {
@@ -59,7 +59,7 @@ def find_lists_by_users_with_groups_info(uid: str):
 
 
 def insert_group_to_list(list_id: str, group_id: str):
-    return database.db["Lists"].update_one({"_id": list_id}, {"$addToSet": {"groups": group_id}})
+    return database.db["Lists"].update_one({"_id": ObjectId(list_id)}, {"$addToSet": {"groups": group_id}})
 
 
 def find_all_groups_in_user_lists(user_uid: str):

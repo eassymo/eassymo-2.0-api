@@ -31,13 +31,13 @@ def change_status(census_id: str, new_status: str):
         if (new_status == InvitationStatus.ACCEPTED.value and len(inviter_groups) > 0):
             _append_created_group_to_lists(
                 census_id, inviter_groups, invite_data.user)
-        return {"modified_count": modified_count, "modified_invites": modified_invites}
+        return {"modified_count": modified_count, "modified_invites": modified_invites, "inviter_groups": inviter_groups}
     except HTTPException as e:
         raise HTTPException(
             status_code=500, detail=f"Error changing the invite status {e}")
 
 
-def _append_created_group_to_lists(census_id: str, inviter_groups: List[str], user_id: str) -> int:
+def _append_created_group_to_lists(census_id: str, inviter_groups: List[str]) -> int:
     groups_related_to_census = list(groupRepository.find(
         {"censusReference": census_id}))
 
@@ -47,29 +47,13 @@ def _append_created_group_to_lists(census_id: str, inviter_groups: List[str], us
         group = GroupSchema(**groups_related_to_census[0])
         modified_lists: int = 0
         for inviter_group_id in inviter_groups:
-            lists = list(listRepository.find_by_group(
-                {"group_id": inviter_group_id, "name": "Mi Red"}))
+            lists = list(listRepository.find(
+                {"group_id": inviter_group_id, "name": "Mi Red", "is_priority": True}))
 
-            if len(lists) == 0:
-                new_list: Dict[str, Any] = ListsSchema(
-                    group_id=inviter_group_id,
-                    groups=[group.id],
-                    is_priority=True,
-                    name="Mi Red",
-                    user_uid=user_id
-                ).toJson()
-
-                new_list.pop('_id')
-
-                inserted_id = listRepository.insert(new_list).inserted_id
-
-                modified_lists += 1 if inserted_id is not None else 0
-
-            userList = ListsSchema(**lists[0])
-            userList.append_group(group.id)
-
-            modified_lists += listRepository.insert_group_to_list(
-                userList.id, group.id).modified_count
+            for group_list in lists:
+                userList = ListsSchema(**group_list)
+                modified_lists += listRepository.insert_group_to_list(
+                    userList.id, group.id).modified_count
 
     return modified_lists
 

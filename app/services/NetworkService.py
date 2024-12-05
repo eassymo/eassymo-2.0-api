@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Dict, Any
 from app.services.WhatsappService import WhatsappService
 from app.schemas.WhatasppMessage import WhatsappMessage, WhatsappTemplate
-from app.schemas.Invitations import InvitationsSchema
+from app.schemas.Invitations import InvitationsSchema, InvitationStatus
 from app.repositories import GroupRepository as groupRepository
 from app.schemas.Groups import GroupSchema
 
@@ -85,11 +85,12 @@ def get_user_invites(id: str):
         raise HTTPException(status_code=500, detail="Item not found")
 
 
-def get_user_network(user_uid: str):
+def get_user_network(user_uid: str, group_id: str):
     try:
-        invites = list(invitationRepository.find_user_invites(user_uid))
+        invites = list(invitationRepository.find(
+            {"user_uid": user_uid, "group_id": group_id, "inviteStatus": InvitationStatus.ACCEPTED.value}))
         user_network = list(
-            listRepository.find_lists_by_users_with_groups_info(user_uid))
+            listRepository.find_lists_by_users_with_groups_info(user_uid, group_id))
 
         invites = format_invites(invites)
         user_network = format_user_network(user_network)

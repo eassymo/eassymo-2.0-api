@@ -24,7 +24,10 @@ def get_user_invites(id: str):
 
 
 @networkRouter.get("/user-network", response_description="User network, this includes all of the invites and all of the members connected to the user group", tags=["invite"])
-def get_user_network(user_uid: Optional[str] = Query(None, title="user_uid", description="user uid used for checking the users that are a part of the user network")):
+def get_user_network(
+        user_uid: Optional[str] = Query(
+            None, title="user_uid", description="user uid used for checking the users that are a part of the user network"),
+        group_id: Optional[str] = Query(None, title="group_id")):
     response = typeUtilities.parse_json(
-        networkService.get_user_network(user_uid))
+        networkService.get_user_network(user_uid, group_id))
     return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
