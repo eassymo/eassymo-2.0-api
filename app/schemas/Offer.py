@@ -10,7 +10,7 @@ from app.schemas.Groups import GroupSchema
 
 
 class OfferType(Enum):
-    partOffer = "PartOffer"
+    PartOffer = "PartOffer"
 
 
 class OfferStatus(Enum):
@@ -18,8 +18,8 @@ class OfferStatus(Enum):
     selected = "Selected"
     rejected = "Rejected"
 
-class Offer(BaseModel):
 
+class Offer(BaseModel):
     id: Optional[str] = Field(None, alias="_id")
     request_id: str = Field(
         description="This is the request that is the owner of this offer")
@@ -48,12 +48,11 @@ class Offer(BaseModel):
     )
     status: OfferStatus = Field(
         default=OfferStatus.created.value, description="Status of the offer")
-    type: OfferType = Field(default=OfferType.partOffer.value)
+    type: OfferType = Field(default=OfferType.PartOffer.value)
     group_info: Optional[GroupSchema] = Field(default=None)
-    createdAt: Optional[datetime] = Field(None)
+    createdAt: Optional[datetime] = Field(datetime.now(ZoneInfo('UTC')))
     updatedAt: Optional[datetime] = Field(
         default=datetime.now(ZoneInfo('UTC')))
-    
 
     @root_validator(pre=True)
     def convert_objectId(cls, values):
@@ -82,4 +81,8 @@ class Offer(BaseModel):
 
         if data.get("createdAt") != None:
             data["createdAt"] = str(self.createdAt)
+
+        if data.get("group_info") != None:
+            data["group_info"] = self.group_info.toJson()
+
         return data

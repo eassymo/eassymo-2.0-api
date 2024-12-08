@@ -1,17 +1,12 @@
 from app.config import database
 from app.schemas.Offer import Offer
-from typing import List
+from typing import List, Dict, Any
 from bson import ObjectId
 from pymongo import ReturnDocument, ASCENDING, DESCENDING
 
 
-def insert(payload: Offer):
-    offer_payload = {
-        **payload.dict(),
-        "status": payload.status.value,
-        "type": payload.type,
-    }
-    return database.db["Offers"].insert_one(offer_payload)
+def insert(payload: Dict[str, Any]):
+    return database.db["Offers"].insert_one(payload)
 
 
 def find(filters):
