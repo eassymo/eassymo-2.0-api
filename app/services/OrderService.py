@@ -1,13 +1,14 @@
 from app.repositories import OrderRepository as orderRepository
 from fastapi import HTTPException
-from app.schemas.Order import Order, OrderStatus
+from app.schemas.Order import Order
 from app.schemas.Groups import GroupSchema
-from app.schemas.PartRequest import PartRequest
 from bson import ObjectId
 from datetime import datetime
 
+from typing import Dict, Any
 
-def find(order_id: str, group_id: str | None, current_role: str):
+
+def find(order_id: str, group_id: str | None, current_role: str, search_argument: str | None):
     if group_id == None:
         raise HTTPException(status_code=400, detail="Group id is required")
     try:
@@ -17,19 +18,9 @@ def find(order_id: str, group_id: str | None, current_role: str):
             "sales": []
         }
 
-        if (order_id != None and len(order_id) > 0):
-            order_id = ObjectId(order_id)
-            filters["_id"] = order_id
-
-        if (current_role != None and current_role == "1"):
-            filters["group"] = group_id
-
-        if (current_role != None and current_role == "2"):
-            filters["offer.group_id"] = group_id
+        filters = _build_order_filters(current_role, order_id, group_id, search_argument)
 
         orders = list(orderRepository.find(filters))
-
-        print(orders)
 
         order_list = []
 
@@ -51,6 +42,28 @@ def find(order_id: str, group_id: str | None, current_role: str):
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f'Error while fetching orders {e}')
+
+
+def _build_order_filters(current_role: str, order_id: str | None, group_id: str | None, search_argument: str | None) -> Dict[str, Any]:
+
+    filters = {}
+
+    if (order_id != None and len(order_id) > 0):
+        order_id = ObjectId(order_id)
+        filters["_id"] = order_id
+
+    if (current_role != None and current_role == "1"):
+        filters["group"] = group_id
+
+    if (current_role != None and current_role == "2"):
+        filters["offer.group_id"] = group_id
+
+    if (search_argument != None):
+        filters["$text"] = {
+            "$search": search_argument
+        }
+
+    return filters
 
 
 def find_by_id(id: str):

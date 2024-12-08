@@ -30,3 +30,4 @@ class CensusSchema(BaseModel):
     Entity_Address_SectorType: Optional[str] = Field(None, description="Square address")
     Entity_Address_SectorName: Optional[str] = Field(None, description="Square address sector name")
     group_reference_id: Optional[str] = Field(None, description="reference of eassymo group")
+    Entity_Active: str = Field(default="Y")

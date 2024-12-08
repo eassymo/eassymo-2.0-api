@@ -51,11 +51,12 @@ def create_group(group: GroupSchema, censusReference: str | None, user_id: str):
         census_data = CensusSchema(
             Census_Country="Mexico",
             Entity_Address_City=group.city,
+            Entity_Location_State=group.state,
             Entity_Address_Short=group.address,
             Entity_Name=group.name,
             Entity_Type=group.type,
-            Entity_Visible="1",
-            Entity_Status="1",
+            Entity_Visible="Y",
+            Entity_Status="Y",
             group_reference_id=created_group_id
         )
         census_json = census_data.dict()

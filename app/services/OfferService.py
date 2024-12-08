@@ -10,11 +10,12 @@ from app.schemas.PartRequest import PartRequest, PartRequestStatus
 from app.schemas.Groups import GroupSchema
 from fastapi import HTTPException
 from uuid import uuid4
-from app.schemas.Offer import OfferStatus
+from app.schemas.Offer import OfferStatus, OfferType
 from app.repositories import OrderRepository as orderRepository
 from app.schemas.Order import Order, OrderStatus
 from datetime import datetime
 from zoneinfo import ZoneInfo
+
 
 def insert(payload: Offer):
     try:
@@ -22,10 +23,22 @@ def insert(payload: Offer):
             offer_group_uid = str(uuid4())
             payload.offer_group_uid = offer_group_uid
 
-        payload.createdAt = datetime.now(ZoneInfo('UTC'))
+        if payload.status is not None:
+            if isinstance(payload.status, str):
+                payload.status = OfferStatus[payload.status.lower()]
+            elif isinstance(payload.status, OfferStatus):
+                pass
+            else:
+                raise ValueError(
+                    f"Invalid status type: {type(payload.status)}")
 
-        if isinstance(payload.status, str):
-            payload.status = OfferStatus[payload.status.lower()]
+        if payload.type is not None:
+            if isinstance(payload.type, str):
+                payload.type = OfferType[payload.type]
+            elif isinstance(payload.type, OfferType):
+                pass
+            else:
+                raise ValueError(f"Invalid offer type: {type(payload.status)}")
 
         brand_payload = Brand(label=payload.brand, user_uid=payload.user_uid)
         brandService.insert(brand_payload)
@@ -34,7 +47,19 @@ def insert(payload: Offer):
             label=payload.guarantee, user_uid=payload.user_uid)
         guaranteeService.insert(guarantee_payload)
 
-        inserted_id = offerRepository.insert(payload).inserted_id
+        group_info = groupRepository.find_by_id(payload.group_id)
+
+        group: GroupSchema
+
+        if (group_info != None):
+            group = GroupSchema(**group_info)
+            payload.group_info = group
+
+        offer_payload = payload.toJson()
+
+        offer_payload.pop('_id')
+
+        inserted_id = offerRepository.insert(offer_payload).inserted_id
 
         return str(inserted_id)
     except Exception as e:

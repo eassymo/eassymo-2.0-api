@@ -23,12 +23,12 @@ def find(filters, limit=20, skip=0):
         census_filters.pop("show_only_census", None)
 
         skip = limit * (skip - 1)
-        return database.db["Census"].find(census_filters).limit(limit).skip(skip).sort([
+        return database.db["Census"].find(census_filters).limit(limit).skip(1).sort([
+            ('census_reference_id', pymongo.ASCENDING),
             ('Entity_Name', pymongo.ASCENDING)
         ])
     except Exception as e:
-        # You might want to log the error or handle it in a specific way
-        raise  # Re-raise the exception after logging
+        raise
 
 
 def count(filters):

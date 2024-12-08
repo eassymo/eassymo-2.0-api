@@ -88,7 +88,7 @@ def search(
     part_type: Optional[str] = Query(None, title="part_type")
 ):
     try:
-        reduced_part_requests = partRequestService.sexarch(
+        reduced_part_requests = partRequestService.search(
             search_argument, category, sub_category, part_type)
 
         reduced_part_requests = __format_reduced_parts(reduced_part_requests)
