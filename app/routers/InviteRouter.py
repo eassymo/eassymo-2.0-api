@@ -1,6 +1,5 @@
 from fastapi.responses import JSONResponse
 from fastapi import APIRouter, Body, Query
-from app.schemas.Invitations import InvitationStatus
 from typing import Optional
 from app.services import InviteService as inviteService
 from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response

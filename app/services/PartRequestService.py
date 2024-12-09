@@ -10,6 +10,7 @@ from uuid import uuid4
 from bson import ObjectId
 from typing import List
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 
 def insert(part_request: PartRequest):
@@ -29,7 +30,8 @@ def insert(part_request: PartRequest):
                 "part": car_part,
                 "vehicleInformation": vehicle_information,
                 "parent_request_uid": parent_request_uid,
-                "status": part_request.status.value
+                "status": part_request.status.value,
+                "createdAt": datetime.now(ZoneInfo('UTC'))
             }
             del part_request_payload["partList"]
             part_request_id = partRequestRepository.insert(

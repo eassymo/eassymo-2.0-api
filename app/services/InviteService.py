@@ -28,7 +28,7 @@ def change_status(census_id: str, new_status: str):
                 invite_data.id, {"inviteStatus": invite_json["inviteStatus"]}).modified_count
             modified_invites.append(invite_data.id)
 
-        if (new_status == InvitationStatus.ACCEPTED.value and len(inviter_groups) > 0):
+        if new_status == InvitationStatus.ACCEPTED.value and len(inviter_groups) > 0:
             _append_created_group_to_lists(
                 census_id, inviter_groups, invite_data.user)
         return {"modified_count": modified_count, "modified_invites": modified_invites, "inviter_groups": inviter_groups}
@@ -37,7 +37,7 @@ def change_status(census_id: str, new_status: str):
             status_code=500, detail=f"Error changing the invite status {e}")
 
 
-def _append_created_group_to_lists(census_id: str, inviter_groups: List[str]) -> int:
+def _append_created_group_to_lists(census_id: str, inviter_groups: List[str], inviter_group_id: str) -> int:
     groups_related_to_census = list(groupRepository.find(
         {"censusReference": census_id}))
 

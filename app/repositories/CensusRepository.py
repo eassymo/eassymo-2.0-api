@@ -6,7 +6,6 @@ import pymongo
 def insert(data):
     return database.db["Census"].insert_one(data)
 
-
 def find(filters, limit=20, skip=0):
     try:
         census_filters = {
@@ -22,14 +21,15 @@ def find(filters, limit=20, skip=0):
         census_filters.pop("page", None)
         census_filters.pop("show_only_census", None)
 
+        print(census_filters)
+
         skip = limit * (skip - 1)
-        return database.db["Census"].find(census_filters).limit(limit).skip(1).sort([
+        return database.db["Census"].find(census_filters).limit(limit).skip(skip).sort([
             ('census_reference_id', pymongo.ASCENDING),
             ('Entity_Name', pymongo.ASCENDING)
         ])
     except Exception as e:
         raise
-
 
 def count(filters):
     census_filters = {
@@ -48,7 +48,6 @@ def count(filters):
         "total_count": total_count,
         "group_count": group_count
     }
-
 
 def find_by_id(id):
     mongo_id = ObjectId(id)
