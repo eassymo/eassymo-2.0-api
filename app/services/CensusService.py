@@ -38,7 +38,7 @@ def build_filters(parameters):
     else:
         filters["page"] = 1
 
-    if parameters["Entity_Name"] is not None:
+    if parameters["Entity_Name"] is not None and len(parameters["Entity_Name"]) > 0:
         filters["Entity_Name"] = {
             "$regex": parameters["Entity_Name"], "$options": "i"}
     if parameters["Entity_Address_City"] is not None:
