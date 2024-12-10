@@ -88,7 +88,7 @@ def get_user_invites(id: str):
 def get_user_network(user_uid: str, group_id: str):
     try:
         invites = list(invitationRepository.find(
-            {"user_uid": user_uid, "group_id": group_id, "inviteStatus": InvitationStatus.ACCEPTED.value}))
+            {"user": user_uid, "creator_group": group_id, "inviteStatus": InvitationStatus.SENT.value}))
         user_network = list(
             listRepository.find_lists_by_users_with_groups_info(user_uid, group_id))
 
