@@ -17,7 +17,7 @@ class CensusSchema(BaseModel):
     Entity_Location_Lon: Optional[str] = Field(None, description="lng")
     Entity_Stat_Nr1: Optional[int] = Field(None, description="Nr1")
     Entity_Stat_Nr2: Optional[str] = Field(None, description="Nr2")
-    Entity_Stat_Activity_Code: int = Field(None, description="Activity Code")
+    Entity_Stat_Activity_Code: Optional[int] = Field(0, description="Activity Code")
     Entity_Size_Emp: Optional[str] = Field(None, description="Business size")
     Entity_Log_Ref1_Type: Optional[str | int | None] = Field(None, description="Ref 1")
     Entity_Log_Ref2_Type: Optional[str | int | None] = Field(None, description="Ref 2 type")
