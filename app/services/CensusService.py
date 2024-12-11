@@ -10,6 +10,7 @@ from bson import ObjectId
 def find(filters):
     try:
         user_uid = filters["userUid"]
+
         filters = build_filters(filters)
         results = list(censusRepository.find(
             filters, filters["limit"], filters["page"]))
@@ -27,6 +28,11 @@ def build_filters(parameters):
 
     if parameters["id"] is not None:
         filters["_id"] = ObjectId(parameters["id"])
+
+    if parameters["exclude_group"] is not None:
+        filters["group_reference_id"] = {
+            "$ne": parameters["exclude_group"]
+        }
 
     if parameters["limit"] is not None:
         filters["limit"] = parameters["limit"]

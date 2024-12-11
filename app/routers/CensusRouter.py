@@ -14,6 +14,7 @@ censusRouter = APIRouter(prefix="/census")
 def find(
     params: Params = Depends(),
     id: Optional[str] = Query(None, title="id", description="Census id"),
+    exclude_group: Optional[str] = Query(None, title="exclude_group"),
     userUid: Optional[str] = Query(
         None, title="userUid", description="User uid"),
     Entity_Name: Optional[str] = Query(
@@ -29,6 +30,7 @@ def find(
         "id": id,
         "userUid": userUid,
         "Entity_Name": Entity_Name,
+        "exclude_group": exclude_group,
         "Entity_Address_City": Entity_Address_City,
         "Entity_Location_State": Entity_Location_State,
         "show_only_census": show_only_census,

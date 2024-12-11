@@ -25,7 +25,7 @@ def find(filters, limit=20, skip=0):
 
         skip = limit * (skip - 1)
         return database.db["Census"].find(census_filters).limit(limit).skip(skip).sort([
-            ('census_reference_id', pymongo.ASCENDING),
+            ('group_reference_id', pymongo.DESCENDING),
             ('Entity_Name', pymongo.ASCENDING)
         ])
     except Exception as e:
