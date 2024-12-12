@@ -62,9 +62,9 @@ def insert_group_to_list(list_id: str, group_id: str):
     return database.db["Lists"].update_one({"_id": ObjectId(list_id)}, {"$addToSet": {"groups": group_id}})
 
 
-def find_all_groups_in_user_lists(user_uid: str):
+def find_all_groups_in_user_lists(user_uid: str, group_id: str):
     pipeline = [
-        {"$match": {"user_uid": user_uid}},
+        {"$match": {"user_uid": user_uid, "group_id": group_id}},
         {"$unwind": "$groups"},
         {"$group": {
             "_id": None,

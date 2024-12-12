@@ -15,6 +15,7 @@ def find(
     params: Params = Depends(),
     id: Optional[str] = Query(None, title="id", description="Census id"),
     exclude_group: Optional[str] = Query(None, title="exclude_group"),
+    group_id: Optional[str] = Query(None, title="group_id"),
     userUid: Optional[str] = Query(
         None, title="userUid", description="User uid"),
     Entity_Name: Optional[str] = Query(
@@ -29,6 +30,7 @@ def find(
     parameters = {
         "id": id,
         "userUid": userUid,
+        "group_id": group_id,
         "Entity_Name": Entity_Name,
         "exclude_group": exclude_group,
         "Entity_Address_City": Entity_Address_City,
