@@ -10,11 +10,12 @@ from bson import ObjectId
 def find(filters):
     try:
         user_uid = filters["userUid"]
+        group_id = filters["group_id"]
 
         filters = build_filters(filters)
         results = list(censusRepository.find(
             filters, filters["limit"], filters["page"]))
-        results = check_census_status(user_uid, results)
+        results = check_census_status(user_uid, results, group_id)
         counts = censusRepository.count(filters)
         total_count = counts["total_count"]
         group_count = counts["group_count"]
@@ -61,6 +62,7 @@ def build_filters(parameters):
         filters["Entity_Type"] = parameters["Entity_Type"]
     if "show_only_census" in parameters and parameters["show_only_census"] is not None:
         filters["show_only_census"] = parameters["show_only_census"]
+
     return filters
 
 
@@ -80,10 +82,11 @@ def get_cities(state: str):
         return {"message": f'Error getting cities from census {err}'}
 
 
-def check_census_status(user_uid: str, census_items):
-    found_invites = list(invitationRepository.find_user_invites(user_uid))
+def check_census_status(user_uid: str, census_items, group_id: str):
+    found_invites = list(invitationRepository.find(
+        {"user": user_uid, "creator_group": group_id}))
     user_groups_in_lists = list(
-        listRepository.find_all_groups_in_user_lists(user_uid))
+        listRepository.find_all_groups_in_user_lists(user_uid, group_id))
 
     all_groups_in_lists = []
     if len(user_groups_in_lists) > 0:
