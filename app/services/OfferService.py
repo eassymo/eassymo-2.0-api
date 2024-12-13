@@ -55,6 +55,8 @@ def insert(payload: Offer):
             group = GroupSchema(**group_info)
             payload.group_info = group
 
+        payload.createdAt = datetime.now(ZoneInfo('UTC'))
+
         offer_payload = payload.toJson()
 
         offer_payload.pop('_id')
