@@ -1,6 +1,7 @@
 from app.config import database
 from typing import List, Dict, Any
 from bson import ObjectId
+from pymongo.results import UpdateResult
 
 
 def insert(groupData):
@@ -36,3 +37,12 @@ def distinct_by_id():
 def find_users_by_group_id(group_id: str):
     group_id = ObjectId(group_id)
     return database.db["groups"].find_one({"_id": group_id}, {"users": 1})
+
+
+def edit_group(group_id: str, payload: Dict[str, Any]) -> UpdateResult:
+    group_id = ObjectId(group_id)
+    return database.db["groups"].find_one_and_update(
+        {"_id": group_id}, 
+        {"$set": {**payload}},
+        return_document=True
+    )

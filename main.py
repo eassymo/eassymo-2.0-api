@@ -1,4 +1,4 @@
-import fastapi
+from fastapi import HTTPException
 from app.routers import UserRouter as userRouter
 from app.routers import RolesRouter as rolesRouter
 from app.routers import CensusRouter as censusRouter
@@ -15,10 +15,40 @@ from app.routers import OrderRouter as orderRouter
 from app.routers import ChatRouter as chatRouter
 from app.routers import WhatsappRouter as whatsAppRouter
 from app.routers import InviteRouter as inviteRouter
+import app.utils.firebase_admin
 
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, Request
+from app.middleware.auth_middleware import verify_token
+from fastapi.responses import JSONResponse
 
-app = fastapi.FastAPI()
+app = FastAPI()
+
+# Add a middleware to verify all protected routes
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    # List of paths that don't require authentication
+    public_paths = [
+        "/docs",
+        "/redoc",
+        "/openapi.json",
+        "/users/create"
+    ]
+
+    if request.url.path in public_paths:
+        return await call_next(request)
+
+    try:
+        await verify_token(request)
+        response = await call_next(request)
+        return response
+    except HTTPException as e:
+        return JSONResponse(
+            status_code=e.status_code,
+            content={"detail": str(e.detail)}
+        )
 
 origins = [
     "https://www.eassymo.mx",
@@ -33,6 +63,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 app.include_router(userRouter.userRouter)
 app.include_router(rolesRouter.rolesRouter)
