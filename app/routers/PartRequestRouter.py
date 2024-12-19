@@ -6,6 +6,7 @@ from app.schemas.PartRequest import PartRequest, PartRequestEdit
 from typing import List
 from fastapi.encoders import jsonable_encoder
 from typing import Optional
+from fastapi import Request
 
 
 partRequestRouter = APIRouter(prefix="/partRequest")
@@ -36,6 +37,7 @@ def find(
 
 @partRequestRouter.get("/grouped", response_description="part requests grouped by group")
 def find_grouped(
+    request: Request,
     group_id: Optional[str] = Query(None, title="group_id", description=""),
     group_role: Optional[str] = Query(
         None, title="group_role", description="current logged in role"),

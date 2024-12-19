@@ -7,7 +7,8 @@ from app.schemas.Census import CensusSchema
 from app.schemas.Lists import ListsSchema
 from pymongo.errors import PyMongoError
 from fastapi import HTTPException
-from typing import List
+from typing import List, Dict, Any
+from app.dto.group_dto import EditGroupDto
 
 
 def create_group(group: GroupSchema, censusReference: str | None, user_id: str):
@@ -87,3 +88,36 @@ def find_users_by_groups_ids(groups_ids: List[str]):
     except PyMongoError as err:
         raise HTTPException(
             status_code=500, detail=f'Error while finding users {err}')
+
+
+def find_group_by_id(id: str):
+    try:
+        group_info = groupRepository.find_by_id(id)
+        if group_info != None:
+            group = GroupSchema(**group_info)
+            return group.toJson()
+
+        return None
+    except PyMongoError as err:
+        raise HTTPException(
+            status_code=500, detail=f'Error while finding group {err}')
+
+
+def edit_group_by_id(user_uid: str, id: str, payload: EditGroupDto):
+    try:
+        group_info = groupRepository.find_by_id(id)
+        if group_info != None:
+            group = GroupSchema(**group_info)
+
+            if user_uid != group.owner:
+                raise HTTPException(status_code=401, detail='Only the owner of the group can edit information')
+            
+            edited_group = groupRepository.edit_group(id, payload.model_dump())
+
+            if edited_group != None:
+                group = GroupSchema(**edited_group)
+                return group.toJson()
+                
+    except PyMongoError as err:
+         raise HTTPException(
+            status_code=500, detail=f'Error while editing group {err}')
