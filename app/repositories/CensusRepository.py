@@ -14,9 +14,6 @@ def find(filters, limit=20, skip=0):
             "Entity_Active": "Y"
         }
 
-        if "show_only_census" in filters and filters["show_only_census"] is not None:
-            census_filters["group_reference_id"] = {"$exists": False}
-
         census_filters.pop("limit", None)
         census_filters.pop("page", None)
         census_filters.pop("show_only_census", None)

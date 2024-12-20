@@ -1,5 +1,6 @@
 from app.config import database
 from bson import ObjectId
+from pymongo import ReturnDocument, ASCENDING, DESCENDING
 
 
 def insert(groupCar):
@@ -11,7 +12,7 @@ def find(filters):
 
 
 def find_by_group(group_id: str):
-    return database.db["GroupCars"].find({"group": group_id, "active": True})
+    return database.db["GroupCars"].find({"group": group_id, "active": True}).sort("createdAt", DESCENDING)
 
 
 def find_by_id(id: str):
