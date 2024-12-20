@@ -61,7 +61,10 @@ def build_filters(parameters):
             parameters["Entity_Type"] = 2
         filters["Entity_Type"] = parameters["Entity_Type"]
     if "show_only_census" in parameters and parameters["show_only_census"] is not None:
-        filters["show_only_census"] = parameters["show_only_census"]
+        filters["$or"] = [
+            {"group_reference_id": None},
+            {"group_reference_id": {"$exists": False}}
+        ]
 
     return filters
 
