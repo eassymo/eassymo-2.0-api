@@ -13,6 +13,7 @@ def find(filters):
         group_id = filters["group_id"]
 
         filters = build_filters(filters)
+
         results = list(censusRepository.find(
             filters, filters["limit"], filters["page"]))
         results = check_census_status(user_uid, results, group_id)
@@ -55,11 +56,12 @@ def build_filters(parameters):
         filters["Entity_Location_State"] = {
             "$regex": parameters["Entity_Location_State"], "$options": "i"}
     if "Entity_Type" in parameters and parameters["Entity_Type"] is not None:
-        if parameters["Entity_Type"] == "Refaccionaria":
+        if parameters["Entity_Type"] == "Refa":
             parameters["Entity_Type"] = 1
         if parameters["Entity_Type"] == "Taller":
             parameters["Entity_Type"] = 2
-        filters["Entity_Type"] = parameters["Entity_Type"]
+        if parameters["Entity_Type"] != "Refa/Taller":
+            filters["Entity_Type"] = parameters["Entity_Type"]
     if "show_only_census" in parameters and parameters["show_only_census"] is not None:
         filters["$or"] = [
             {"group_reference_id": None},

@@ -25,13 +25,15 @@ def find(
     Entity_Location_State: Optional[str] = Query(
         None, title="Entity_Location_State", description="State of entity"),
     show_only_census: Optional[bool] = Query(
-        None, title="show_only_census", description="Show only census")
+        None, title="show_only_census", description="Show only census"),
+    Entity_Type: Optional[str] = Query(None, title="Entity_Type")
 ):
     parameters = {
         "id": id,
         "userUid": userUid,
         "group_id": group_id,
         "Entity_Name": Entity_Name,
+        "Entity_Type": Entity_Type,
         "exclude_group": exclude_group,
         "Entity_Address_City": Entity_Address_City,
         "Entity_Location_State": Entity_Location_State,
