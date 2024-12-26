@@ -36,7 +36,7 @@ def sendNetworkInvitationMessage(id: str | None, inviteData: InvitationsSchema):
         template=WhatsappTemplate(
             name="HXc28f0ef27e6fc80f1384f29386c5dbe5",
             variables=[inviteData.censusUser.Entity_Name,
-                       creator_group_data.name, str(len(number_pending_invites)), inviteData.censusId]
+                       creator_group_data.name, str(len(number_pending_invites) + 1), inviteData.censusId]
         )
     )
 

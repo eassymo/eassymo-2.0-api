@@ -1,6 +1,6 @@
 from app.config import database
 from bson import ObjectId
-from pymongo import ReturnDocument, ASCENDING, DESCENDING
+from pymongo import DESCENDING
 
 
 def insert(groupCar):
