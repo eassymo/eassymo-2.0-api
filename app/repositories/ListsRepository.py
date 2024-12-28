@@ -1,13 +1,51 @@
 from app.config import database
 from bson import ObjectId
+from app.schemas.Lists import ListsSchema
+from pymongo.results import UpdateResult
+from bson import ObjectId
+from typing import Dict, Any
 
 
 def insert(data):
     return database.db["Lists"].insert_one(data)
 
 
-def find_by_user(uid: str):
-    return database.db["Lists"].find({"user_uid": uid})
+def find_by_user_and_group(filters: Dict[str, Any]):
+    return database.db["Lists"].aggregate([
+        {
+            "$match": filters
+        },
+        {
+            "$addFields": {
+                "groupIds": {
+                    "$map": {
+                        "input": "$groups",
+                        "as": "group",
+                        "in": {"$toObjectId": "$$group"}
+                    }
+                }
+            }
+        },
+        {
+            "$lookup": {
+                "from": "groups",
+                "localField": "groupIds",
+                "foreignField": "_id",
+                "as": "groups_info"
+            }
+        },
+        {
+            "$project": {
+                "_id": 1,
+                "name": 1,
+                "user_uid": 1,
+                "group_id": 1,
+                "groups": 1,
+                "is_priority": 1,
+                "groups_info": 1
+            }
+        },
+    ])
 
 
 def find(filters):
@@ -73,3 +111,8 @@ def find_all_groups_in_user_lists(user_uid: str, group_id: str):
     ]
 
     return database.db["Lists"].aggregate(pipeline)
+
+
+def update(list_id: str, payload: Dict[str, Any]) -> UpdateResult:
+    id = ObjectId(list_id)
+    return database.db["Lists"].find_one_and_update({"_id": id}, {"$set": payload}, return_document=True)

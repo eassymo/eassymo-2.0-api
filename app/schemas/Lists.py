@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field, root_validator
 from typing import List, Optional
 from bson import ObjectId
+from app.schemas.Groups import GroupSchema
 
 
 class ListsSchema(BaseModel):
@@ -11,6 +12,7 @@ class ListsSchema(BaseModel):
     name: str = Field(description="Name of the list")
     is_priority: bool = Field(
         description="this field determines if it is a priority")
+    groups_info: Optional[List[GroupSchema]] = Field(None)
 
     @root_validator(pre=True)
     def convert_objectId(cls, values):
@@ -23,4 +25,11 @@ class ListsSchema(BaseModel):
 
     def toJson(self):
         data = self.model_dump(by_alias=True)
+
+        if self.groups_info != None and len(self.groups_info) > 0:
+            groups = []
+            for group in self.groups_info:
+                groups.append(group.toJson())
+
+            data["groups_info"] = groups
         return data
