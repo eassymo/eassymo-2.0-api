@@ -57,3 +57,15 @@ def get_groups_from_lists(
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except Exception as e:
         return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=get_unsuccessful_response(str(e)))
+
+
+@listRouter.get("/get-followers-list", description="This returns the users that have the logged in user in their lists but that the current user does not have in its lists", tags=["Lists"])
+def get_followers_list(request: Request, group_id: str = Query(None, title="group_id")):
+    try:
+        user_info = request.state._state.get('user')
+        response = listService.get_followers_list(
+            user_info.get("uid"), group_id)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
+
+    except Exception as e:
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=get_unsuccessful_response(str(e)))

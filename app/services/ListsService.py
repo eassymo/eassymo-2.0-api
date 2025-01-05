@@ -45,7 +45,11 @@ def insert_list(list: ListsSchema):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                                 detail="A list with that name already exists for this user")
 
-        inserted_id = listsRepository.insert(list.toJson()).inserted_id
+        payload = list.toJson()
+
+        payload.pop('_id')
+
+        inserted_id = listsRepository.insert(payload).inserted_id
 
         return str(inserted_id)
     except PyMongoError as error:
@@ -140,5 +144,46 @@ def _get_groups_info(accumulated_groups: List[ObjectId]) -> List[GroupSchema]:
             groups = [GroupSchema(**group) for group in groups_found]
 
         return groups
+    except PyMongoError as error:
+        raise InternalServerError(str(error))
+
+
+def get_followers_list(user_uid: str, group_id: str) -> List[Dict[str, Any]]:
+    try:
+        follower_list_json: List[Dict[str, Any]] = []
+
+        lists_user_appears = list(listsRepository.find({"groups": group_id}))
+
+        user_priority_list = list(listsRepository.find(
+            {"user_uid": user_uid, "group_id": group_id, "is_priority": True}))
+
+        groups_in_priority_list = user_priority_list[0].get('groups')
+
+        groups_that_added_current_group = [list_data.get(
+            'group_id') for list_data in lists_user_appears]
+
+        follower_group_ids: List[str] = []
+
+        for group_that_added_current_group_id in groups_that_added_current_group:
+            for group_id_in_priority_list in groups_in_priority_list:
+                if group_that_added_current_group_id != group_id_in_priority_list:
+                    follower_group_ids.append(
+                        group_that_added_current_group_id)
+
+        if len(follower_group_ids) > 0:
+            follower_group_ids = list(set(follower_group_ids))
+
+            follower_group_ids = [ObjectId(group_id)
+                                  for group_id in follower_group_ids]
+
+            groups_found = list(groupRepository.find(
+                {"_id": {"$in": follower_group_ids}}))
+
+            follower_list = [GroupSchema(**group) for group in groups_found]
+
+            follower_list_json = [follower.toJson()
+                                  for follower in follower_list]
+            
+        return follower_list_json
     except PyMongoError as error:
         raise InternalServerError(str(error))
