@@ -165,10 +165,8 @@ def get_followers_list(user_uid: str, group_id: str) -> List[Dict[str, Any]]:
         follower_group_ids: List[str] = []
 
         for group_that_added_current_group_id in groups_that_added_current_group:
-            for group_id_in_priority_list in groups_in_priority_list:
-                if group_that_added_current_group_id != group_id_in_priority_list:
-                    follower_group_ids.append(
-                        group_that_added_current_group_id)
+            if group_that_added_current_group_id not in groups_in_priority_list:
+                follower_group_ids.append(group_that_added_current_group_id)
 
         if len(follower_group_ids) > 0:
             follower_group_ids = list(set(follower_group_ids))
