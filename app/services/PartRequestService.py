@@ -5,10 +5,10 @@ from app.repositories import GroupRepository as groupRepository
 from app.repositories import OfferRepository as offerRepository
 from app.schemas.Groups import GroupType, GroupSchema
 from app.schemas.Offer import Offer
-from fastapi import HTTPException
+from fastapi import HTTPException, status
 from uuid import uuid4
 from bson import ObjectId
-from typing import List
+from typing import List, Any, Dict
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -31,6 +31,7 @@ def insert(part_request: PartRequest):
                 "vehicleInformation": vehicle_information,
                 "parent_request_uid": parent_request_uid,
                 "status": part_request.status.value,
+                "specific_order_uid": part_request.specific_order_uid,
                 "createdAt": datetime.now(ZoneInfo('UTC'))
             }
             del part_request_payload["partList"]
@@ -55,10 +56,23 @@ def __format_part_request(part_request):
     return part_request.toJson()
 
 
-def find(user_uid: str, group_id: str):
+def find(user_uid: str | None, group_id: str | None, specific_order_uid: str | None):
     try:
-        found_requests = partRequestRepository.find_by_group_and_user(
-            user_uid, group_id)
+
+        filters: Dict[str, Any] = {}
+
+        if user_uid != None and group_id != None:
+            filters = {
+                "$or": [
+                    {"creatorUser": user_uid},
+                    {"subscribedSellers": group_id}
+                ]
+            }
+
+        if specific_order_uid != None:
+            filters = {**filters, "specific_order_uid": specific_order_uid}
+
+        found_requests = partRequestRepository.find(filters, {})
 
         found_requests_list = list(found_requests)
         return format_part_requests(found_requests_list)
@@ -164,7 +178,7 @@ def find_grouped(
 
         part_requests = list(
             partRequestRepository.find_grouped(filters, skip, limit))
-        
+
         print(part_requests)
 
         if len(part_requests) > 0:
@@ -494,3 +508,45 @@ def edit_part_request(part_request_data: List[PartRequestEdit]):
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f'Error while editing part request {e}')
+
+
+def join_seller_to_part_request(parent_request_id: str | None, new_seller_group_id: str | None):
+    try:
+        if parent_request_id is None or new_seller_group_id is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                detail="The request is missing information")
+
+        part_requests_documents = list(partRequestRepository.find({"specific_order_uid": parent_request_id}, None))
+
+        part_requests: List[PartRequest] = []
+        if len(part_requests_documents) > 0:
+            for part_request_data in part_requests_documents:
+                part_requests.append(PartRequest(**part_request_data))
+        else:
+            raise HTTPException(status_code=status.HTTP_204_NO_CONTENT,
+                                detail="The requested part request is not found")
+        
+
+        edited_part_request_ids: List[str] = []
+        for part_request in part_requests:
+
+            if part_request.status != PartRequestStatus.CREATED:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                                detail="The part request status does not allow this operation")
+        
+            if part_request.subscribedSellers and new_seller_group_id in part_request.subscribedSellers:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                                detail="The current seller already belongs to the request")
+        
+            part_request.subscribedSellers.append(new_seller_group_id)
+
+            edit_payload = part_request.toJson()
+
+            edit_payload.pop("_id")
+
+            edited_part_request = partRequestRepository.edit_part_request(part_request.id, edit_payload)
+            edited_part_request_ids.append(str(edited_part_request["_id"]))
+
+        return edited_part_request_ids
+    except HTTPException as e:
+        raise HTTPException(status_code=e.status_code, detail= e.detail)

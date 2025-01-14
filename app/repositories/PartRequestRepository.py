@@ -8,18 +8,7 @@ def insert(part_request):
 
 
 def find(filters, projection):
-    return database.db["PartRequests"].find(filters, projection).sort({"_id": -1})
-
-
-def find_by_group_and_user(user_uid, group_uid):
-    return database.db["PartRequests"].find(
-        {
-            "$or": [
-                {"creatorUser": user_uid},
-                {"subscribedSellers": group_uid}
-            ]
-        }
-    )
+    return database.db["PartRequests"].find(filters, projection or None).sort({"_id": -1})
 
 
 def find_one_by_id(id: str):
