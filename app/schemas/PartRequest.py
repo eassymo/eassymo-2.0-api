@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field, root_validator
 from typing import List
 from app.schemas.GroupVehicle import GroupVehicle
+from app.schemas.Groups import GroupSchema
 from app.schemas.Location import Location
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -39,10 +40,12 @@ class PartRequest(BaseModel):
     partList: Optional[List[object]] = Field(
         [], description="Optional part list")
     parent_request_uid: Optional[str] = Field("")
+    specific_order_uid: Optional[str] = Field(None, description="This id groups the different part requests as a single order, independent to the vehicle")
     status: PartRequestStatus = Field(
         default=PartRequestStatus.CREATED.value, description="Current status of part request")
     show_ranking: Optional[bool] = Field(
         None, description="this is a field that is calculated in the runtime to determine if we should show the ranking for all users")
+    group_info: Optional[GroupSchema] = Field(None, description="detailed information of the group")
 
     @root_validator(pre=True)
     def convert_objectId(cls, values):
@@ -59,6 +62,9 @@ class PartRequest(BaseModel):
 
         if self.vehicleInformation:
             data["vehicleInformation"] = self.vehicleInformation.toJson()
+
+        if self.group_info:
+            data["group_info"] = self.group_info.toJson()
 
         data["createdAt"] = str(data["createdAt"])
         data["updatedAt"] = str(data["updatedAt"])

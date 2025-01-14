@@ -6,7 +6,7 @@ from app.schemas.PartRequest import PartRequest, PartRequestEdit
 from typing import List
 from fastapi.encoders import jsonable_encoder
 from typing import Optional
-from fastapi import Request
+from fastapi import Request, HTTPException
 
 
 partRequestRouter = APIRouter(prefix="/partRequest")
@@ -27,9 +27,11 @@ def find(
         None, title="user_uid", description="User uid"),
     group_id: Optional[str] = Query(
         None, title="group_id", description="Group id"),
+    specific_order_uid: Optional[str] = Query(None, title="specific_order_uid")
 ):
     try:
-        response = partRequestService.find(user_uid, group_id)
+        response = partRequestService.find(
+            user_uid, group_id, specific_order_uid)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except Exception as e:
         return JSONResponse(content=get_unsuccessful_response(e))
@@ -136,7 +138,7 @@ def find_sibling_requests_with_offers(
         return JSONResponse(content=get_unsuccessful_response(e))
 
 
-@partRequestRouter.put("")
+@partRequestRouter.put("", tags=["PartRequest"])
 def edit_part_request(
     payload: List[PartRequestEdit]
 ):
@@ -144,4 +146,16 @@ def edit_part_request(
         edited_part_request = partRequestService.edit_part_request(payload)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(edited_part_request))
     except Exception as e:
+        return JSONResponse(content=get_unsuccessful_response(e))
+
+
+@partRequestRouter.put("/join_seller_to_part_request", tags=["PartRequest"])
+def join_seller_to_part_request(
+    payload=Body(...)
+):
+    try:
+        edited_part_request = partRequestService.join_seller_to_part_request(
+            payload["specific_order_uid"], payload["new_seller_group_id"])
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(edited_part_request))
+    except HTTPException as e:
         return JSONResponse(content=get_unsuccessful_response(e))
