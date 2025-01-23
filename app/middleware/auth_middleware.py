@@ -13,6 +13,7 @@ async def verify_token(request: Request) -> Optional[dict]:
         token = headers.get("Authorization").replace("Bearer ", "")
         decoded_token = auth.verify_id_token(token)
         request.state.user = decoded_token
+        request.state.groupSelected = headers.get('groupselected')
         return decoded_token
     except Exception as e:
         raise HTTPException(
