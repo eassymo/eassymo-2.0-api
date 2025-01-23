@@ -2,11 +2,13 @@ from app.repositories import GroupRepository as groupRepository
 from app.repositories import CensusRepository as censusRepository
 from app.repositories import UserRepository as userRepository
 from app.repositories import ListsRepository as listRepository
+from app.repositories import PartRequestInviteRepository as partRequestInviteRepository
 from app.schemas.Groups import GroupSchema
 from app.schemas.Census import CensusSchema
 from app.schemas.Lists import ListsSchema
+from app.schemas.RequestInvites import RequestInviteStatus
 from pymongo.errors import PyMongoError
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 from typing import List, Dict, Any
 from app.dto.group_dto import EditGroupDto
 
@@ -68,6 +70,48 @@ def create_group(group: GroupSchema, censusReference: str | None, user_id: str):
     return {"message": "ok", "body": group_data}
 
 
+def find(request: Request, filters: Dict[str, Any]) -> List[GroupSchema]:
+    try:
+
+        user = request.state._state.get('user')
+        groupSelected = request.state._state.get('groupSelected')
+
+        search_filters = {}
+        if (filters["search_argument"] != None):
+            search_filters["$text"] = {
+                "$search": filters["search_argument"]
+            }
+
+        groups_data = list(groupRepository.find(search_filters))
+
+        groups: List[GroupSchema] = []
+
+        for group_data in groups_data:
+            group = GroupSchema(**group_data)
+
+            invites_data_found = list(partRequestInviteRepository.find({
+                "inviter_user": user.get('uid'),
+                "inviter_group": groupSelected,
+                "invited_group": str(group.id),
+                "$or": [
+                    {
+                        "status": RequestInviteStatus.CREATED.value
+                    },
+                    {
+                        "status": RequestInviteStatus.ACCEPTED.value
+                    }
+                ]
+            }))
+
+            group.can_be_invited = len(invites_data_found) == 0
+
+            groups.append(group)
+
+        return groups
+    except (PyMongoError, HTTPException) as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+
+
 def find_by_user_id(uid: str):
     try:
         group_list = list(groupRepository.find_by_user(uid))
@@ -110,14 +154,15 @@ def edit_group_by_id(user_uid: str, id: str, payload: EditGroupDto):
             group = GroupSchema(**group_info)
 
             if user_uid != group.owner:
-                raise HTTPException(status_code=401, detail='Only the owner of the group can edit information')
-            
+                raise HTTPException(
+                    status_code=401, detail='Only the owner of the group can edit information')
+
             edited_group = groupRepository.edit_group(id, payload.model_dump())
 
             if edited_group != None:
                 group = GroupSchema(**edited_group)
                 return group.toJson()
-                
+
     except PyMongoError as err:
-         raise HTTPException(
+        raise HTTPException(
             status_code=500, detail=f'Error while editing group {err}')

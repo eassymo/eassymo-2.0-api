@@ -1,12 +1,13 @@
-from fastapi import APIRouter, Body, status, Query, Request
+from fastapi import APIRouter, Body, status, Query, Request, HTTPException
 from app.schemas.Groups import GroupSchema
 from typing import Optional
 from app.services import GroupService as groupService
 from fastapi.responses import JSONResponse
-from typing import List
+from typing import List, Dict, Any
 from fastapi.encoders import jsonable_encoder
 from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response
 from app.dto.group_dto import EditGroupDto
+from pymongo.errors import PyMongoError
 
 
 groupRouter = APIRouter(prefix="/group")
@@ -20,7 +21,8 @@ def create(
             None, title="census_reference", description="Census reference"),
         payload: GroupSchema = Body(...)):
     try:
-        response = groupService.create_group(payload, census_reference, user_id)
+        response = groupService.create_group(
+            payload, census_reference, user_id)
         return JSONResponse(status_code=status.HTTP_201_CREATED, content=response)
     except Exception as e:
         return JSONResponse(
@@ -49,8 +51,29 @@ def get_by_id(group_id: str):
     except Exception as e:
         return JSONResponse(
             status_code=status.HTTP_404_NOT_FOUND,
-            content=get_unsuccessful_response(f"Group with id {group_id} not found")
+            content=get_unsuccessful_response(
+                f"Group with id {group_id} not found")
         )
+
+
+@groupRouter.get("", description="finds groups according to filters", tags=["partRequestInvite"])
+def find(
+    request: Request,
+    search_argument: Optional[str] = Query(None, title="search_argument")
+):
+    try:
+        filters = {}
+        groups_found: List[Dict[str, Any]] = []
+        if search_argument != None:
+            filters["search_argument"] = search_argument
+        response = groupService.find(request, filters)
+
+        for group_found in response:
+            groups_found.append(group_found.toJson())
+
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(groups_found)))
+    except (HTTPException, PyMongoError) as e:
+        return JSONResponse(content=get_unsuccessful_response(e))
 
 
 @groupRouter.put("/{group_id}", tags=["Groups"])
