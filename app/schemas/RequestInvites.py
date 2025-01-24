@@ -14,7 +14,7 @@ class RequestInviteStatus(Enum):
 
 class StatusChange(BaseModel):
     status: RequestInviteStatus = Field(None)
-    time: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo('utc')))
+    time: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo('UTC')))
 
     def to_json(self):
         data = self.model_dump()
@@ -32,11 +32,11 @@ class RequestInvite(BaseModel):
         description="Group that was logged in that invited that group")
     inviter_user: str = Field(description="user that invited the other group")
     invited_group: str = Field(description="group that was invited")
-    created_at: Optional[datetime] = Field(default_factory=lambda: datetime.now(ZoneInfo('utc')))
+    created_at: Optional[datetime] = Field(default_factory=lambda: datetime.now(ZoneInfo('UTC')))
     status_history: List[StatusChange] = Field(default_factory=lambda: [StatusChange(
-        status=RequestInviteStatus.CREATED, time=datetime.now(ZoneInfo('utc')))], description="list of the status changes")
+        status=RequestInviteStatus.CREATED, time=datetime.now(ZoneInfo('UTC')))], description="list of the status changes")
     status: RequestInviteStatus = Field(RequestInviteStatus.CREATED, description="current status of invite")
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo('utc')))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo('UTC')))
 
 
     @model_validator(mode='before')
