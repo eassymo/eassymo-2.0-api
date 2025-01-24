@@ -59,13 +59,18 @@ def get_by_id(group_id: str):
 @groupRouter.get("", description="finds groups according to filters", tags=["partRequestInvite"])
 def find(
     request: Request,
-    search_argument: Optional[str] = Query(None, title="search_argument")
+    search_argument: Optional[str] = Query(None, title="search_argument"),
+    parent_request_id: Optional[str] = Query(None, title="parent_request_id")
 ):
     try:
         filters = {}
         groups_found: List[Dict[str, Any]] = []
         if search_argument != None:
             filters["search_argument"] = search_argument
+
+        if parent_request_id != None: 
+            filters["parent_request_id"] = parent_request_id
+
         response = groupService.find(request, filters)
 
         for group_found in response:
