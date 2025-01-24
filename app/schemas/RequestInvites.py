@@ -48,7 +48,7 @@ class RequestInvite(BaseModel):
 
     def change_status(self, new_status: str):
         try:
-            updated_date = datetime.now(ZoneInfo('utc'))
+            updated_date = datetime.now(ZoneInfo('UTC'))
             status = RequestInviteStatus[new_status]
 
             self.status = status
