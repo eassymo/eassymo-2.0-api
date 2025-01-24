@@ -72,7 +72,6 @@ def create_group(group: GroupSchema, censusReference: str | None, user_id: str):
 
 def find(request: Request, filters: Dict[str, Any]) -> List[GroupSchema]:
     try:
-
         user = request.state._state.get('user')
         groupSelected = request.state._state.get('groupSelected')
 
@@ -89,7 +88,7 @@ def find(request: Request, filters: Dict[str, Any]) -> List[GroupSchema]:
         for group_data in groups_data:
             group = GroupSchema(**group_data)
 
-            invites_data_found = list(partRequestInviteRepository.find({
+            search_filters = {
                 "inviter_user": user.get('uid'),
                 "inviter_group": groupSelected,
                 "invited_group": str(group.id),
@@ -101,7 +100,12 @@ def find(request: Request, filters: Dict[str, Any]) -> List[GroupSchema]:
                         "status": RequestInviteStatus.ACCEPTED.value
                     }
                 ]
-            }))
+            }
+
+            if "parent_request_id" in filters and filters["parent_request_id"] != None:
+                search_filters["parent_request_id"] = filters["parent_request_id"]
+
+            invites_data_found = list(partRequestInviteRepository.find(search_filters))
 
             group.can_be_invited = len(invites_data_found) == 0
 
