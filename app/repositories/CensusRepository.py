@@ -1,10 +1,12 @@
 from app.config import database
 from bson import ObjectId
 import pymongo
+from pymongo.errors import PyMongoError
 
 
 def insert(data):
     return database.db["Census"].insert_one(data)
+
 
 def find(filters, limit=20, skip=0):
     try:
@@ -19,14 +21,15 @@ def find(filters, limit=20, skip=0):
         census_filters.pop("show_only_census", None)
 
         print(census_filters)
-
-        skip = limit * (skip - 1)
+        if skip > 0:
+            skip = limit * (skip - 1)
         return database.db["Census"].find(census_filters).limit(limit).skip(skip).sort([
             ('group_reference_id', pymongo.DESCENDING),
             ('Entity_Name', pymongo.ASCENDING)
         ])
     except Exception as e:
         raise
+
 
 def count(filters):
     census_filters = {
@@ -45,6 +48,7 @@ def count(filters):
         "total_count": total_count,
         "group_count": group_count
     }
+
 
 def find_by_id(id):
     mongo_id = ObjectId(id)

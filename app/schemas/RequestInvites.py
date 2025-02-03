@@ -14,7 +14,8 @@ class RequestInviteStatus(Enum):
 
 class StatusChange(BaseModel):
     status: RequestInviteStatus = Field(None)
-    time: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo('UTC')))
+    time: datetime = Field(
+        default_factory=lambda: datetime.now(ZoneInfo('UTC')))
 
     def to_json(self):
         data = self.model_dump()
@@ -31,13 +32,18 @@ class RequestInvite(BaseModel):
     inviter_group: str = Field(
         description="Group that was logged in that invited that group")
     inviter_user: str = Field(description="user that invited the other group")
-    invited_group: str = Field(description="group that was invited")
-    created_at: Optional[datetime] = Field(default_factory=lambda: datetime.now(ZoneInfo('UTC')))
+    invited_group: Optional[str] = Field(
+        None, description="group that was invited")
+    created_at: Optional[datetime] = Field(
+        default_factory=lambda: datetime.now(ZoneInfo('UTC')))
     status_history: List[StatusChange] = Field(default_factory=lambda: [StatusChange(
         status=RequestInviteStatus.CREATED, time=datetime.now(ZoneInfo('UTC')))], description="list of the status changes")
-    status: RequestInviteStatus = Field(RequestInviteStatus.CREATED, description="current status of invite")
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo('UTC')))
-
+    status: RequestInviteStatus = Field(
+        RequestInviteStatus.CREATED, description="current status of invite")
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(ZoneInfo('UTC')))
+    census_id: Optional[str] = Field(
+        None, description="it only applies if it was originally for a census item")
 
     @model_validator(mode='before')
     @classmethod
@@ -52,7 +58,8 @@ class RequestInvite(BaseModel):
             status = RequestInviteStatus[new_status]
 
             self.status = status
-            self.status_history.append(StatusChange(status=status, time=updated_date))
+            self.status_history.append(StatusChange(
+                status=status, time=updated_date))
             self.updated_at = updated_date
         except KeyError:
             return KeyError(detail=f'{new_status} is not a valid status')
