@@ -1,10 +1,12 @@
-from fastapi import APIRouter, status, Query, Depends
+from fastapi import APIRouter, status, Query, Depends, HTTPException, Request
 from typing import List, Optional
 from app.utils import TypeUtilities as typeUtilities
 from app.services import CensusService as censusService
 from fastapi.responses import JSONResponse
 from app.schemas.Census import CensusSchema
-from fastapi_pagination import Params, paginate
+from fastapi_pagination import Params
+from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response
+from fastapi.encoders import jsonable_encoder
 
 
 censusRouter = APIRouter(prefix="/census")
@@ -44,6 +46,17 @@ def find(
     census_items = typeUtilities.parse_json(censusService.find(parameters))
 
     return JSONResponse(status_code=status.HTTP_200_OK, content=census_items)
+
+
+@censusRouter.get("/text-search/{search_argument}", tags=["Census"])
+def text_search(request: Request, search_argument: str, parent_request_id: Optional[str] = Query(None, title="parent_request_id")):
+    try:
+        response = typeUtilities.parse_json(
+            censusService.text_search(request, search_argument, parent_request_id))
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
+
+    except (HTTPException, Exception) as e:
+        return JSONResponse(content=get_unsuccessful_response(e))
 
 
 @censusRouter.get("/states", response_description="", response_model=List[str], tags=["Census"])

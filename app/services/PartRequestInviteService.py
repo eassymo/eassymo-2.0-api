@@ -22,26 +22,32 @@ def insert(partRequestInvite: RequestInvite) -> RequestInvite:
 
             if part_request_item.status.value != PartRequestStatus.CREATED.value:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
-                                detail="cannot create invites for part requests that have a status different that created")
+                                    detail="cannot create invites for part requests that have a status different that created")
 
-        existing_invite = list(PartRequestInviteRepository.find(
-            {
-                "parent_request_id": partRequestInvite.parent_request_id,
-                "inviter_group": partRequestInvite.inviter_group,
-                "inviter_user": partRequestInvite.inviter_user,
-                "invited_group": partRequestInvite.invited_group
-            }
-        ))
+        filters = {
+            "parent_request_id": partRequestInvite.parent_request_id,
+            "inviter_group": partRequestInvite.inviter_group,
+            "inviter_user": partRequestInvite.inviter_user
+        }
+
+        if partRequestInvite.invited_group != None: 
+            filters["invited_group"] = partRequestInvite.invited_group
+
+        if partRequestInvite.census_id != None:
+            filters["census_id"] = partRequestInvite.census_id
+
+        existing_invite = list(PartRequestInviteRepository.find(filters))
 
         if len(existing_invite) > 0:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT,
                                 detail="Cannot create an invite since one already exists")
-        
+
         part_request_invite_payload = partRequestInvite.toJson()
 
         part_request_invite_payload.pop('_id')
 
-        inserted_id = PartRequestInviteRepository.insert(part_request_invite_payload).inserted_id
+        inserted_id = PartRequestInviteRepository.insert(
+            part_request_invite_payload).inserted_id
 
         part_request_invite_data = PartRequestInviteRepository.find_by_id(
             inserted_id)
@@ -61,9 +67,10 @@ def update_status(inviter_group: str, invited_group: str, parent_request_id: str
             "invited_group": invited_group,
             "parent_request_id": parent_request_id
         }))
-        
+
         for part_request_invite_item in part_request_invites_data:
-            part_request_invite: RequestInvite = RequestInvite(**part_request_invite_item)
+            part_request_invite: RequestInvite = RequestInvite(
+                **part_request_invite_item)
             part_request_invite.change_status(status)
 
             part_request_json = part_request_invite.toJson()
@@ -72,8 +79,9 @@ def update_status(inviter_group: str, invited_group: str, parent_request_id: str
 
             part_request_json.pop('_id')
 
-            modified_part_request_invite = PartRequestInviteRepository.find_one_and_update(part_request_id, part_request_json)
-            
+            modified_part_request_invite = PartRequestInviteRepository.find_one_and_update(
+                part_request_id, part_request_json)
+
             modified_invite = RequestInvite(**modified_part_request_invite)
 
             part_requests_modified.append(modified_invite.toJson())

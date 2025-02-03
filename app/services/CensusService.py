@@ -1,10 +1,13 @@
 from datetime import datetime, timedelta
 from app.repositories import CensusRepository as censusRepository
 from pymongo.errors import PyMongoError
-
+from fastapi import HTTPException, Request
 from app.repositories import InvitationRepository as invitationRepository
 from app.repositories import ListsRepository as listRepository
 from bson import ObjectId
+from app.schemas.Census import CensusSchema
+from app.schemas.RequestInvites import RequestInviteStatus
+from app.repositories import PartRequestInviteRepository as partRequestInviteRepository
 
 
 def find(filters):
@@ -120,3 +123,53 @@ def validate_if_invite_canbe_resent(last_sent: datetime):
     current_date = datetime.now()
     difference = current_date - last_sent
     return difference >= timedelta(days=7)
+
+
+def text_search(request: Request, argument: str | None, parent_request_id: str | None):
+    try:
+
+        user = request.state._state.get('user')
+        groupSelected = request.state._state.get('groupSelected')
+
+        search_filters = {}
+
+        if argument != None:
+            search_filters["$text"] = {
+                "$search": argument,
+            }
+
+        search_filters["group_reference_id"] = {"$eq": None}
+
+        results = list(censusRepository.find(search_filters, 30, 0))
+
+        results_json = []
+        for census_item in results:
+            census = CensusSchema(**census_item)
+
+            invitation_filters = {
+                "inviter_user": user.get('uid'),
+                "inviter_group": groupSelected,
+                "census_id": str(census.id),
+                "$or": [
+                    {
+                        "status": RequestInviteStatus.CREATED.value
+                    },
+                    {
+                        "status": RequestInviteStatus.ACCEPTED.value
+                    }
+                ]
+            }
+
+            if parent_request_id != None:
+                invitation_filters["parent_request_id"] = parent_request_id
+
+            invites_data_found = list(
+                partRequestInviteRepository.find(invitation_filters))
+
+            census.can_be_invited = len(invites_data_found) == 0
+
+            results_json.append(census.toJson())
+
+        return results_json
+    except (PyMongoError, Exception) as e:
+        raise HTTPException(e)
