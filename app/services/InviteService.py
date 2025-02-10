@@ -6,6 +6,7 @@ from app.repositories import GroupRepository as groupRepository
 from app.schemas.Groups import GroupSchema
 from app.repositories import ListsRepository as listRepository
 from app.schemas.Lists import ListsSchema
+from app.schemas.Census import CensusSchema
 
 
 def change_status(census_id: str, new_status: str):
@@ -80,10 +81,16 @@ def find(user_id: str | None, group_id: str | None, status: str | None, final_co
             filters["finalContactInfo"] = final_contact_info
 
         invites_found = list(inviteRepository.find(filters))
-
         formatted_invites = []
 
         for invite in invites_found:
+            if invite.get('censusUser') and isinstance(invite['censusUser'], dict):
+                census_data = invite['censusUser']
+                if '_id' not in census_data:
+                    census_data['_id'] = None
+                invite['censusUser'] = CensusSchema(**census_data)
+            else:
+                invite['censusUser'] = None
             invite_data = InvitationsSchema(**invite)
             formatted_invites.append(invite_data.toJson())
 

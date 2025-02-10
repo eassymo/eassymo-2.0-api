@@ -24,7 +24,7 @@ class InvitationsSchema(BaseModel):
     userName: str = Field(None, description="Name of user sending invite")
     inviteStatus: InvitationStatus = Field(
         InvitationStatus.SENT, description="Status of the invite")
-    censusUser: CensusSchema = Field(
+    censusUser: Optional[CensusSchema] = Field(
         None, description="user of the census that the invite was sent to")
     type: InvitationType = Field(
         None, description="Type of communication method used")

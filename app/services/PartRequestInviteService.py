@@ -1,7 +1,10 @@
 from app.schemas.RequestInvites import RequestInvite, RequestInviteStatus
 from fastapi import HTTPException, status
 from app.repositories import PartRequestRepository, PartRequestInviteRepository
+from app.repositories import GroupRepository
 from app.schemas.PartRequest import PartRequest, PartRequestStatus
+from app.services import PartRequestService as partRequestService
+from app.schemas.Groups import GroupSchema
 from pymongo.errors import PyMongoError
 from bson import ObjectId
 from typing import List, Dict, Any
@@ -30,7 +33,7 @@ def insert(partRequestInvite: RequestInvite) -> RequestInvite:
             "inviter_user": partRequestInvite.inviter_user
         }
 
-        if partRequestInvite.invited_group != None: 
+        if partRequestInvite.invited_group != None:
             filters["invited_group"] = partRequestInvite.invited_group
 
         if partRequestInvite.census_id != None:
@@ -104,3 +107,63 @@ def find_by_id(part_request_invite_id: str) -> RequestInvite:
         return None
     except (HTTPException) as e:
         raise HTTPException(e)
+
+
+def find_and_link_census_invites_with_created_group(
+    census_id: str,
+    new_group_id: str
+) -> List[Dict[str, Any]]:
+    try:
+
+        filters = {
+            "status": RequestInviteStatus.CREATED.value
+        }
+
+        if census_id != None:
+            filters["census_id"] = census_id
+
+        invites_found = list(PartRequestInviteRepository.find(filters))
+
+        part_requests_invites_modified: List[Dict[Any, str]] = []
+        for invite_item in invites_found:
+            part_request_invite = RequestInvite(**invite_item)
+
+            group_info = GroupRepository.find_by_id(
+                part_request_invite.inviter_group)
+
+            group = GroupSchema(**group_info)
+
+            part_request_invite.inviter_group_name = group.name
+
+            part_request_invite.invited_group = new_group_id
+
+            part_requests_linked_to_invite = partRequestService.find(
+                None, None, part_request_invite.parent_request_id)
+            
+            part_requests_linked_to_invite = format_part_requests(part_requests_linked_to_invite)
+
+            payload = part_request_invite.toJson()
+
+            payload.pop("_id")
+
+            part_request_invite_modified = PartRequestInviteRepository.find_one_and_update(
+                ObjectId(part_request_invite.id), payload)
+
+            part_request_invite_modified["linked_part_requests"] = part_requests_linked_to_invite
+
+            part_requests_invites_modified.append(RequestInvite(
+                **part_request_invite_modified).toJson())
+
+        return part_requests_invites_modified
+
+    except (PyMongoError, Exception) as e:
+        raise Exception(e)
+
+
+def format_part_requests(part_requests: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    formatted_part_requests = []
+    for part_request_dict in part_requests:
+        part_request = PartRequest(**part_request_dict)
+        formatted_part_requests.append(part_request.toJson())
+
+    return formatted_part_requests
