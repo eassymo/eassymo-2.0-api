@@ -31,6 +31,7 @@ class RequestInvite(BaseModel):
         description="Id of the parent request that groups the requests that the user should join")
     inviter_group: str = Field(
         description="Group that was logged in that invited that group")
+    inviter_group_name: Optional[str] = Field(None, description="Optional description of the inviter group")
     inviter_user: str = Field(description="user that invited the other group")
     invited_group: Optional[str] = Field(
         None, description="group that was invited")
@@ -44,6 +45,7 @@ class RequestInvite(BaseModel):
         default_factory=lambda: datetime.now(ZoneInfo('UTC')))
     census_id: Optional[str] = Field(
         None, description="it only applies if it was originally for a census item")
+    linked_part_requests: Optional[List[Dict[str, Any]]] = Field(None, description="Array of optional requests")
 
     @model_validator(mode='before')
     @classmethod

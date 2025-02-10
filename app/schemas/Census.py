@@ -45,17 +45,21 @@ class CensusSchema(BaseModel):
         None, description="Square address sector name")
     group_reference_id: Optional[str] = Field(
         None, description="reference of eassymo group")
-    Entity_Active: str = Field(default="Y")
+    Entity_Active: Optional[str] = Field(default="Y")
     can_be_invited: Optional[bool] = Field(None)
 
     @model_validator(mode='before')
     @classmethod
     def convert_objectId(cls, values):
+        if values is None:
+            return {}
         if '_id' in values and isinstance(values["_id"], ObjectId):
             values["_id"] = str(values["_id"])
-            return values
+        
+        if '_id' in values and isinstance(values['_id'], Dict):
+            values["_id"] = str(values["_id"]["$oid"]) 
+        return values
         
     def toJson(self) -> Dict[str, Any]:
         data = self.model_dump(by_alias=True)
-
         return data

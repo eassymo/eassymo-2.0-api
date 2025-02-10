@@ -26,13 +26,26 @@ def find_by_id(id: str):
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(None))
     except (HTTPException, Exception) as e:
         return JSONResponse(content=get_unsuccessful_response(e))
-    
+
 
 @partRequestInviteRouter.put("/update-status", description="Edit a part request invite", tags=["partRequestInvite"])
-def update_status(request: Request, payload = Body(...)):
+def update_status(request: Request, payload=Body(...)):
     try:
         invited_group = request.state._state.get("groupSelected")
-        response = partRequestInviteService.update_status(payload["inviter_group"], invited_group, payload["parent_request_id"], payload["status"])
+        response = partRequestInviteService.update_status(
+            payload["inviter_group"], invited_group, payload["parent_request_id"], payload["status"])
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except (HTTPException, Exception) as e:
+        return JSONResponse(content=get_unsuccessful_response(e))
+
+
+@partRequestInviteRouter.post("/link-census-invites-with-created-group", description="this finds the census invites and links them with the group id", tags=["partRequestInvites"])
+def find_and_link_census_invites_with_created_group(
+    payload=Body(...)
+):
+    try:
+        response = partRequestInviteService.find_and_link_census_invites_with_created_group(
+            payload["census_id"], payload["new_group_id"])
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+    except Exception as e:
         return JSONResponse(content=get_unsuccessful_response(e))
