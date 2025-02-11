@@ -20,12 +20,7 @@ def find(
     group_id: Optional[str] = Query(None, title="group_id"),
     userUid: Optional[str] = Query(
         None, title="userUid", description="User uid"),
-    Entity_Name: Optional[str] = Query(
-        None, title="Entity_Name", description="Entity name in collection"),
-    Entity_Address_City: Optional[str] = Query(
-        None, title="Entity_Address_City", description="City of entity"),
-    Entity_Location_State: Optional[str] = Query(
-        None, title="Entity_Location_State", description="State of entity"),
+    search_argument: Optional[str] = Query(None, title="search_argument", description="search argument used for the $text index"),
     show_only_census: Optional[bool] = Query(
         None, title="show_only_census", description="Show only census"),
     Entity_Type: Optional[str] = Query(None, title="Entity_Type")
@@ -34,11 +29,9 @@ def find(
         "id": id,
         "userUid": userUid,
         "group_id": group_id,
-        "Entity_Name": Entity_Name,
         "Entity_Type": Entity_Type,
         "exclude_group": exclude_group,
-        "Entity_Address_City": Entity_Address_City,
-        "Entity_Location_State": Entity_Location_State,
+        "search_argument": search_argument,
         "show_only_census": show_only_census,
         "limit": params.dict()["size"],
         "page":  params.dict()["page"]
