@@ -16,7 +16,6 @@ def find(filters):
         group_id = filters["group_id"]
 
         filters = build_filters(filters)
-
         results = list(censusRepository.find(
             filters, filters["limit"], filters["page"]))
         results = check_census_status(user_uid, results, group_id)
@@ -49,22 +48,10 @@ def build_filters(parameters):
     else:
         filters["page"] = 1
 
-    if parameters["Entity_Name"] is not None and len(parameters["Entity_Name"]) > 0:
-        filters["Entity_Name"] = {
-            "$regex": parameters["Entity_Name"], "$options": "i"}
-    if parameters["Entity_Address_City"] is not None:
-        filters["Entity_Address_City"] = {
-            "$regex": parameters["Entity_Address_City"], "$options": "i"}
-    if parameters["Entity_Location_State"] is not None:
-        filters["Entity_Location_State"] = {
-            "$regex": parameters["Entity_Location_State"], "$options": "i"}
-    if "Entity_Type" in parameters and parameters["Entity_Type"] is not None:
-        if parameters["Entity_Type"] == "Refa":
-            parameters["Entity_Type"] = 1
-        if parameters["Entity_Type"] == "Taller":
-            parameters["Entity_Type"] = 2
-        if parameters["Entity_Type"] != "Refa/Taller":
-            filters["Entity_Type"] = parameters["Entity_Type"]
+    if parameters["search_argument"] is not None and len(parameters["search_argument"]) > 0:
+        filters["$text"] = {
+            "$search": parameters["search_argument"],
+        }
     if "show_only_census" in parameters and parameters["show_only_census"] is not None:
         filters["$or"] = [
             {"group_reference_id": None},
