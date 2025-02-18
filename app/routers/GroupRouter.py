@@ -43,6 +43,20 @@ def find_users_from_group(payload: List[str] = Body(...)):
         )
 
 
+@groupRouter.post("/users-from-group-ids-v2", response_description="", tags=["Groups"])
+def find_users_from_group_v2(payload=Body(...)):
+    try:
+        response = groupService.find_users_by_groups_ids_v2(
+            payload["group_ids"])
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
+
+    except Exception as e:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content=get_unsuccessful_response(str(e))
+        )
+
+
 @groupRouter.get("/{group_id}", tags=["Groups"])
 def get_by_id(group_id: str):
     try:
@@ -68,7 +82,7 @@ def find(
         if search_argument != None:
             filters["search_argument"] = search_argument
 
-        if parent_request_id != None: 
+        if parent_request_id != None:
             filters["parent_request_id"] = parent_request_id
 
         response = groupService.find(request, filters)

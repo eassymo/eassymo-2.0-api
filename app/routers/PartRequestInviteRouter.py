@@ -45,7 +45,7 @@ def find_and_link_census_invites_with_created_group(
 ):
     try:
         response = partRequestInviteService.find_and_link_census_invites_with_created_group(
-            payload["census_id"], payload["new_group_id"])
+            payload["censusId"], payload["groupId"])
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
         return JSONResponse(content=get_unsuccessful_response(e))
