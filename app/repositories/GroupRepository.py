@@ -2,14 +2,15 @@ from app.config import database
 from typing import List, Dict, Any
 from bson import ObjectId
 from pymongo.results import UpdateResult
+from typing import Optional
 
 
 def insert(groupData):
     return database.db["groups"].insert_one(groupData)
 
 
-def find(filters: Dict[str, Any]):
-    return database.db["groups"].find(filters)
+def find(filters: Dict[str, Any], projection: Optional[Dict[str, Any]] = {}):
+    return database.db["groups"].find(filters, projection)
 
 
 def find_by_id(id: str):

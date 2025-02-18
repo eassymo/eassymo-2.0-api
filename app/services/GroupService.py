@@ -11,6 +11,7 @@ from pymongo.errors import PyMongoError
 from fastapi import HTTPException, Request
 from typing import List, Dict, Any
 from app.dto.group_dto import EditGroupDto
+from bson import ObjectId
 
 
 def create_group(group: GroupSchema, censusReference: str | None, user_id: str):
@@ -105,7 +106,8 @@ def find(request: Request, filters: Dict[str, Any]) -> List[GroupSchema]:
             if "parent_request_id" in filters and filters["parent_request_id"] != None:
                 search_filters["parent_request_id"] = filters["parent_request_id"]
 
-            invites_data_found = list(partRequestInviteRepository.find(search_filters))
+            invites_data_found = list(
+                partRequestInviteRepository.find(search_filters))
 
             group.can_be_invited = len(invites_data_found) == 0
 
@@ -136,6 +138,23 @@ def find_users_by_groups_ids(groups_ids: List[str]):
     except PyMongoError as err:
         raise HTTPException(
             status_code=500, detail=f'Error while finding users {err}')
+
+
+def find_users_by_groups_ids_v2(groups_ids: List[str]) -> List[Dict[str, Any]]:
+    try:
+        group_ids = [ObjectId(group_id) for group_id in groups_ids]
+        groups_data = list(groupRepository.find(
+            {"_id": {"$in": group_ids}}, {"_id": 1, "users": 1}))
+
+        groups_found: List[Dict[str, Any]] = []
+
+        for group_data in groups_data:
+            groups_found.append({**group_data, "_id": str(group_data["_id"])})
+
+        return groups_found
+    except PyMongoError as err:
+        raise HTTPException(
+            status_code=500, detail=f'Error while finding user from groups {err}')
 
 
 def find_group_by_id(id: str):
