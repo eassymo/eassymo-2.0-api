@@ -6,6 +6,7 @@ from app.repositories import PartRequestInviteRepository as partRequestInviteRep
 from app.schemas.Groups import GroupSchema
 from app.schemas.Census import CensusSchema
 from app.schemas.Lists import ListsSchema
+from app.schemas.Users import UserSchema
 from app.schemas.RequestInvites import RequestInviteStatus
 from pymongo.errors import PyMongoError
 from fastapi import HTTPException, Request
@@ -189,3 +190,89 @@ def edit_group_by_id(user_uid: str, id: str, payload: EditGroupDto):
     except PyMongoError as err:
         raise HTTPException(
             status_code=500, detail=f'Error while editing group {err}')
+
+
+def add_employee_to_group(group_id: str, employee_uid: str) -> str | None:
+    try:
+        group_ifo = groupRepository.find_by_id(group_id)
+        employee_info = list(userRepository.find_by_uid(employee_uid))
+
+        employee_groups = []
+
+        if len(employee_info) > 0:
+            employee_data = employee_info[0]
+            employee_groups = [str(group["_id"]) for group in employee_data["groups"]]
+            employee_data["groups"] = employee_groups
+            employee_info[0] = employee_data
+
+        if group_ifo != None and len(employee_info) > 0:
+            employee = UserSchema(**employee_info[0])
+            group = GroupSchema(**group_ifo)            
+            group.add_user_to_group(employee.uid)
+            employee.add_group_to_user(group_id)
+            
+            employee_data = employee.toJson()
+            employee_data.pop("_id")
+
+            group_data = group.toJson()
+            group_data.pop("_id")
+            print(group_data)
+            modified_users = userRepository.update_user(employee.uid, employee_data).modified_count
+            modified_groups = groupRepository.edit_group(group.id, group_data)
+
+            return {
+                "user": employee_data if modified_users > 0 else None,
+                "group": group if modified_groups != None else None
+            }
+    except PyMongoError as err:
+        raise HTTPException(status_code=500, detail=f'Error while adding employee to group {err}')
+
+
+def find_users_by_group_id(group_id: str) -> List[Dict[str, Any]]:
+    """
+    Retrieves all users that belong to a specific group.
+    
+    Args:
+        group_id: The ID of the group to find users for
+        
+    Returns:
+        A list of user data dictionaries
+        
+    Raises:
+        HTTPException: If there's an error retrieving the users
+    """
+    try:
+        # First get the group to verify it exists
+        group_info = groupRepository.find_by_id(group_id)
+        if group_info is None:
+            raise HTTPException(
+                status_code=404, detail=f"Group with ID {group_id} not found")
+        
+        group = GroupSchema(**group_info)
+        
+        # If the group has no users, return an empty list
+        if not group.users or len(group.users) == 0:
+            return []
+        
+        # Get detailed user information for each user in the group
+        users_data = []
+        for user_uid in group.users:
+            user_info = list(userRepository.find_by_uid(user_uid))
+            if user_info and len(user_info) > 0:
+                # Format the user data
+                user_data = user_info[0]
+                # Convert ObjectId to string if present
+                if "_id" in user_data and not isinstance(user_data["_id"], str):
+                    user_data["_id"] = str(user_data["_id"])
+                
+                # Format groups if present
+                if "groups" in user_data and isinstance(user_data["groups"], list):
+                    user_data["groups"] = [GroupSchema(**g).toJson() if not isinstance(g, str) else g for g in user_data["groups"]]
+                
+                users_data.append(user_data)
+        
+        return users_data
+    except PyMongoError as err:
+        raise HTTPException(
+            status_code=500, detail=f'Error while finding users for group {err}')
+    
