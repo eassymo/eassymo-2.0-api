@@ -43,6 +43,16 @@ class GroupSchema(BaseModel):
             value["_id"] = str(value["_id"])
         return value
 
+    def add_user_to_group(self, new_user: str):
+        current_user_list = self.users
+        current_user_list.append(new_user)
+        self.users = list(set(current_user_list))
+
+    def remove_user_from_group(self, user_id: str):
+        current_user_list = self.users
+        current_user_list.remove(user_id)
+        self.users = list(set(current_user_list))
+
     def toJson(self):
         data = self.dict(by_alias=True)
         return data

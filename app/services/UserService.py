@@ -11,8 +11,12 @@ def create_user(user: UserSchema):
         print(user_exists)
         if user_exists != None:
             return user_exists
+        
+        user_payload = user.toJson()
 
-        user = {**jsonable_encoder(user), "groups": []}
+        user_payload.pop('_id')
+
+        user = {**user_payload, "groups": []}
         userRepository.insert_user(user)
         created_user = list(userRepository.find_by_uid(user["uid"]))
         return created_user[0] if len(created_user)> 0 else None
