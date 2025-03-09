@@ -8,7 +8,12 @@ from app.schemas.Groups import GroupSchema
 class UserRoles(Enum):
     ADMIN_BUYER_SHOP = "322"
     ADMIN_SELLER_SHOP = "212"
-
+    SELLER_SHOP = "213"
+    STORAGE_SHOP = "214"
+    DEALER_SHOP = "215"
+    MECHANIC_CAR_REPAIR = "326"
+    BUYER_CAR_REPAIR = "327"
+    STORAGE_CAR_REPAIR = "324"
 
 class UserSchema(BaseModel):
     id: str = Field(alias="_id", default=None)

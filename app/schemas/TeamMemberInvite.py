@@ -33,10 +33,11 @@ class TeamMemberInvite(BaseModel):
     role: Union[str, RolesSchema] = Field(
         None, description="the id of the role that they are configured to have")
     timestamp: datetime = Field(datetime.now(ZoneInfo('UTC')))
-    contact_method: str = Field(
+    contact_method: Optional[str] = Field(
         None, description="The method used to contact them")
     status_changes: Optional[List[TeamMemberInviteStatusChange]] = Field(
         [], description="list of status changes trough the time")
+    is_public: bool = Field(False, description="Property that marks if it was a generated link")
 
     @model_validator(mode='before')
     @classmethod
