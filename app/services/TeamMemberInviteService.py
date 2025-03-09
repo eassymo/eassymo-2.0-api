@@ -27,9 +27,10 @@ def insert(team_member_invite: TeamMemberInvite):
 
         sender_group: GroupSchema = GroupSchema(**sender_group_info)
 
-        can_send_invite = _verify_can_send_invite(team_member_invite)
+        can_send_invite = _verify_can_send_invite(
+            team_member_invite) if team_member_invite.is_public == False else True
 
-        if can_send_invite:
+        if can_send_invite and team_member_invite.is_public == False:
             team_member_invite.status_changes.append(
                 TeamMemberInviteStatusChange(
                     status=TeamMemberInviteStatus.SENT, timestamp=datetime.now(ZoneInfo('UTC')))
@@ -56,6 +57,17 @@ def insert(team_member_invite: TeamMemberInvite):
             return {
                 "invite_id": str(inserted_invite),
                 "whatsapp_message_sent_data": whatsapp_message_sent_data
+            }
+        elif can_send_invite and team_member_invite.is_public == True:
+            team_member_invite.status_changes.append(
+                TeamMemberInviteStatusChange(
+                    status=TeamMemberInviteStatus.SENT, timestamp=datetime.now(ZoneInfo('UTC')))
+            )
+            inserted_invite = teamMemberInviteRepository.insert(
+                team_member_invite).inserted_id
+
+            return {
+                "invite_id": str(inserted_invite),
             }
 
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
@@ -113,7 +125,6 @@ def _accept_invite(invite_id: str, user_uid: str):
 
             modified_invite = teamMemberInviteRepository.find_one_and_update(
                 str(invite_id), invite_payload)
-                
 
             return TeamMemberInvite(**modified_invite).toJson()
 
@@ -136,7 +147,8 @@ def _add_user_to_group(invite: TeamMemberInvite, user_uid: str):
 
         groupRepository.edit_group(invite.group, group_payload)
     except Exception as err:
-        raise Exception(f'Error while changing invite status adding user to group {err}')
+        raise Exception(
+            f'Error while changing invite status adding user to group {err}')
 
 
 def _add_group_to_user(user_uid: str, group_id: str):
@@ -152,7 +164,8 @@ def _add_group_to_user(user_uid: str, group_id: str):
             user_payload.pop('_id')
             userRepository.update_user(user_uid, user_payload)
     except Exception as err:
-        raise Exception(f'Error while changing invite status adding group to user {err}')
+        raise Exception(
+            f'Error while changing invite status adding group to user {err}')
 
 
 def _reject_invite(invite_id: str):
