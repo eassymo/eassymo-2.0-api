@@ -133,3 +133,10 @@ def list_employees_from_groups(group_id: str):
             status_code=status.HTTP_400_BAD_REQUEST,
             content=get_unsuccessful_response(str(e))
         )
+    
+@groupRouter.post("/transfer-ownership", tags=["Groups"])
+def transfer_ownership(req: Request, payload = Body(...)):
+    try:
+        response = groupService.transfer_ownership(req, payload["group_id"], payload["new_owner"])
+    except (PyMongoError, HTTPException) as e:
+        return JSONResponse(status_code=e.status_code if hasattr(e, 'status_code') else status.HTTP_500_INTERNAL_SERVER_ERROR, content=get_unsuccessful_response(e))

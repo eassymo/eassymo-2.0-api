@@ -1,5 +1,12 @@
 from app.config import database
+from typing import Dict, Any, Optional
 
+def find_one(filters: Dict[str, Any]):
+    return database.db["Users"].find_one(filters)
+
+
+def find(filters: Dict[str, Any], limit: Optional[int] = 30):
+    return database.db["Users"].find(filters).limit(limit)
 
 def find_by_uid(uid: str):
     return database.db["Users"].aggregate([
