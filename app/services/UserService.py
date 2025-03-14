@@ -2,7 +2,8 @@ from app.repositories import UserRepository as userRepository
 from app.schemas.Users import UserSchema
 from fastapi.encoders import jsonable_encoder
 from pymongo.errors import PyMongoError
-from fastapi import HTTPException
+from fastapi import HTTPException, status
+from typing import Dict, Any
 
 
 def create_user(user: UserSchema):
@@ -11,7 +12,7 @@ def create_user(user: UserSchema):
         print(user_exists)
         if user_exists != None:
             return user_exists
-        
+
         user_payload = user.toJson()
 
         user_payload.pop('_id')
@@ -19,7 +20,7 @@ def create_user(user: UserSchema):
         user = {**user_payload, "groups": []}
         userRepository.insert_user(user)
         created_user = list(userRepository.find_by_uid(user["uid"]))
-        return created_user[0] if len(created_user)> 0 else None
+        return created_user[0] if len(created_user) > 0 else None
     except PyMongoError as e:
         raise HTTPException(
             status_code=500, detail="Error while creating user")
@@ -30,6 +31,32 @@ def find_user(uid: str):
         return userRepository.find_by_uid(uid)
     except PyMongoError as e:
         return 'Error While fetching user'
+
+
+def find_users(filters: Dict[str, Any]):
+    try:
+        search_filters = {}
+        if (filters["search_argument"] != None):
+            search_filters = {
+                "$text": {
+                    "$search": filters["search_argument"],
+                    "$caseSensitive": False
+                }
+            }
+
+            users_found = list(userRepository.find(search_filters))
+
+            if len(users_found) > 0:
+                formatted_users = []
+                for user_info in users_found:
+                    user = UserSchema(**user_info)
+                    formatted_users.append(user.toJson())
+                return formatted_users
+
+        return []
+    except (PyMongoError, HTTPException) as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail=f'Error while fetching users {str(e)}')
 
 
 def update_user(uid: str, user: UserSchema):
@@ -54,7 +81,6 @@ def update_user(uid: str, user: UserSchema):
             "phoneExtention", None)
         user_to_be_updated["location"] = user.location if user.location is not None else user_to_be_updated.get(
             "location", None)
-        
 
         if user.roles is not None:
             user_to_be_updated["roles"] = [role.value for role in user.roles]
@@ -85,7 +111,6 @@ def validate_if_users_exists(uid: str):
     except PyMongoError as e:
         raise HTTPException(
             status_code=500, detail="Error while finding user")
-    
 
 
 def __format_groups(groups):

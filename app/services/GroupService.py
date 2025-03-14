@@ -9,7 +9,7 @@ from app.schemas.Lists import ListsSchema
 from app.schemas.Users import UserSchema
 from app.schemas.RequestInvites import RequestInviteStatus
 from pymongo.errors import PyMongoError
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, Request, status
 from typing import List, Dict, Any
 from app.dto.group_dto import EditGroupDto
 from bson import ObjectId
@@ -276,3 +276,42 @@ def find_users_by_group_id(group_id: str) -> List[Dict[str, Any]]:
         raise HTTPException(
             status_code=500, detail=f'Error while finding users for group {err}')
     
+
+def transfer_ownership(request: Request, group_id: str, new_owner: str):
+    try:
+        user = request.state._state.get('user')
+        
+        group_info = groupRepository.find_by_id(group_id)
+        if group_info != None:
+            group = GroupSchema(**group_info)
+            user = _find_user(new_owner)
+
+            user.add_group_to_user(group.id)
+
+            if group.owner == user["uid"]:
+                group.owner = new_owner
+                group.add_user_to_group(new_owner)
+
+                group_payload = group.toJson()
+
+                group_payload.pop("_id")
+                edited_group = groupRepository.edit_group(group.id, group_payload)
+
+                return GroupSchema(**edited_group).toJson()
+            else:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Only the owner can change the ownership of the group")
+        print(user)
+        
+    except (HTTPException, PyMongoError) as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f'Error while transfering ownership of group {e}')
+    
+
+def _find_user(uid: str) -> UserSchema | None:
+    try:
+        user_info = userRepository.find_one({"uid": uid})
+        if user_info != None:
+            user = UserSchema(**user_info)
+            return user
+        return None
+    except (HTTPException, PyMongoError) as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Error while getting user ')
