@@ -48,16 +48,38 @@ def build_filters(parameters):
     else:
         filters["page"] = 1
 
+    # Create a list of conditions that will be combined with $and
+    conditions = []
+    
     if parameters["search_argument"] is not None and len(parameters["search_argument"]) > 0:
-        filters["$text"] = {
-            "$search": parameters["search_argument"],
-        }
-    if "show_only_census" in parameters and parameters["show_only_census"] is not None:
-        filters["$or"] = [
-            {"group_reference_id": None},
-            {"group_reference_id": {"$exists": False}}
-        ]
+        search_term = parameters["search_argument"]
+        if not (search_term.startswith('"') and search_term.endswith('"')):
+            search_term = f'"{search_term}"'
+        
+        conditions.append({"$text": {"$search": search_term}})
 
+    if parameters["Entity_Type"] is not None and len(parameters["Entity_Type"]) > 0:
+        if parameters["Entity_Type"] == "Refa":
+            conditions.append({"Entity_Type": 1})
+        elif parameters["Entity_Type"] == "Taller":
+            conditions.append({"Entity_Type": 2})
+
+    if "show_only_census" in parameters and parameters["show_only_census"] is not None:
+        conditions.append({
+            "$or": [
+                {"group_reference_id": None},
+                {"group_reference_id": {"$exists": False}}
+            ]
+        })
+    
+    # If we have conditions, combine them with $and
+    if conditions:
+        if len(conditions) == 1:
+            # If only one condition, no need for $and
+            filters.update(conditions[0])
+        else:
+            filters["$and"] = conditions
+            
     return filters
 
 
