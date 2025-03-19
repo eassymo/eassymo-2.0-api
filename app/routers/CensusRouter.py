@@ -23,7 +23,9 @@ def find(
     search_argument: Optional[str] = Query(None, title="search_argument", description="search argument used for the $text index"),
     show_only_census: Optional[bool] = Query(
         None, title="show_only_census", description="Show only census"),
-    Entity_Type: Optional[str] = Query(None, title="Entity_Type")
+    Entity_Type: Optional[str] = Query(None, title="Entity_Type"),
+    Entity_Location_State: Optional[str] = Query(None, title="Entity_Location_State"),
+    Entity_Address_City: Optional[str] = Query(None, title="Entity_Address_City")
 ):
     parameters = {
         "id": id,
@@ -33,6 +35,8 @@ def find(
         "exclude_group": exclude_group,
         "search_argument": search_argument,
         "show_only_census": show_only_census,
+        "Entity_Location_State": Entity_Location_State,
+        "Entity_Address_City": Entity_Address_City,
         "limit": params.dict()["size"],
         "page":  params.dict()["page"]
     }

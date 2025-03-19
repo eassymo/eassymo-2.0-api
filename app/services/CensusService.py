@@ -16,6 +16,7 @@ def find(filters):
         group_id = filters["group_id"]
 
         filters = build_filters(filters)
+        print(filters)
         results = list(censusRepository.find(
             filters, filters["limit"], filters["page"]))
         results = check_census_status(user_uid, results, group_id)
@@ -33,7 +34,7 @@ def build_filters(parameters):
     if parameters["id"] is not None:
         filters["_id"] = ObjectId(parameters["id"])
 
-    if parameters["exclude_group"] is not None:
+    if parameters["exclude_group"] is not None and len(parameters["exclude_group"]) > 0:
         filters["group_reference_id"] = {
             "$ne": parameters["exclude_group"]
         }
@@ -63,6 +64,13 @@ def build_filters(parameters):
             conditions.append({"Entity_Type": 1})
         elif parameters["Entity_Type"] == "Taller":
             conditions.append({"Entity_Type": 2})
+
+    # Apply state and city filters directly to the filters dictionary instead of conditions
+    if parameters["Entity_Location_State"] is not None and len(parameters["Entity_Location_State"]) > 0:
+        filters["Entity_Location_State"] = parameters["Entity_Location_State"]
+
+    if parameters["Entity_Address_City"] is not None and len(parameters["Entity_Address_City"]) > 0:
+        filters["Entity_Address_City"] = parameters["Entity_Address_City"]
 
     if "show_only_census" in parameters and parameters["show_only_census"] is not None:
         conditions.append({
