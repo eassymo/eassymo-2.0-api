@@ -11,9 +11,7 @@ def insert(data):
 def find(filters, limit=20, skip=0):
     try:
         census_filters = {
-            **filters,
-            "Entity_Visible": "Y",
-            "Entity_Active": "Y"
+            **filters
         }
 
         census_filters.pop("limit", None)
