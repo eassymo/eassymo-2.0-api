@@ -110,7 +110,7 @@ def edit_group(request: Request, group_id: str, payload: EditGroupDto = Body(...
 
 
 @groupRouter.post("/add-employee-to-group", tags=["Groups"])
-def add_employee_to_group(payload = Body(...)):
+def add_employee_to_group(payload=Body(...)):
     try:
         group_id: str = payload["group_id"]
         employee_uid: str = payload["employee_uid"]
@@ -122,7 +122,8 @@ def add_employee_to_group(payload = Body(...)):
             status_code=status.HTTP_400_BAD_REQUEST,
             content=get_unsuccessful_response(str(e))
         )
-    
+
+
 @groupRouter.get("/list-employees-from-group/{group_id}", tags=["Groups"])
 def list_employees_from_groups(group_id: str):
     try:
@@ -133,10 +134,13 @@ def list_employees_from_groups(group_id: str):
             status_code=status.HTTP_400_BAD_REQUEST,
             content=get_unsuccessful_response(str(e))
         )
-    
+
+
 @groupRouter.post("/transfer-ownership", tags=["Groups"])
-def transfer_ownership(req: Request, payload = Body(...)):
+def transfer_ownership(req: Request, payload=Body(...)):
     try:
-        response = groupService.transfer_ownership(req, payload["group_id"], payload["new_owner"])
+        response = groupService.transfer_ownership(
+            req, payload["group_id"], payload["new_owner"])
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except (PyMongoError, HTTPException) as e:
         return JSONResponse(status_code=e.status_code if hasattr(e, 'status_code') else status.HTTP_500_INTERNAL_SERVER_ERROR, content=get_unsuccessful_response(e))

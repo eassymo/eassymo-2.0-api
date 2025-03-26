@@ -36,3 +36,21 @@ def find(uid: str):
 def update(uid: str, user:UserSchema = Body()):
     response = typeUtilities.parse_json(userService.update_user(uid, user))
     return JSONResponse(status_code=status.HTTP_200_OK, content=response)
+
+
+@userRouter.post("/add-role", response_model=UserSchema, tags=["Users"])
+def add_role(payload = Body(...)):
+    try:
+        response = userService.add_role_to_user(payload["user_uid"], payload["role_id"])
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
+    except (HTTPException) as e:
+        return JSONResponse(status_code=e.status_code if hasattr(e, 'status_code') else status.HTTP_500_INTERNAL_SERVER_ERROR, content=get_unsuccessful_response(e))
+
+
+@userRouter.post("/remove-role", response_model=UserSchema, tags=["Users"])
+def add_role(payload = Body(...)):
+    try:
+        response = userService.remove_role_from_user(payload["user_uid"], payload["role_id"])
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
+    except (HTTPException) as e:
+        return JSONResponse(status_code=e.status_code if hasattr(e, 'status_code') else status.HTTP_500_INTERNAL_SERVER_ERROR, content=get_unsuccessful_response(e))
