@@ -1,9 +1,10 @@
 from app.repositories import UserRepository as userRepository
+from app.repositories import RoleRepository as roleRepository
 from app.schemas.Users import UserSchema
 from fastapi.encoders import jsonable_encoder
 from pymongo.errors import PyMongoError
 from fastapi import HTTPException, status
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 
 def create_user(user: UserSchema):
@@ -121,3 +122,57 @@ def __format_groups(groups):
             "_id": str(group["_id"])
         })
     return formatted_groups
+
+
+def add_role_to_user(user_uid: str, role_id: str) -> UserSchema:
+    try:
+        user_data = userRepository.find_one({"uid": user_uid})
+        role_data = roleRepository.find_by_id(role_id)
+
+        if user_data != None and role_data != None:
+            user: UserSchema = UserSchema(**user_data)
+
+            current_user_roles: List[str] = [
+                role_data["value"]
+            ]
+
+            for role in user.roles:
+                current_user_roles.append(role.value)
+
+            user_json = user.toJson()
+
+            user_json.pop("_id")
+
+            user_json["roles"] = list(set(current_user_roles))
+
+            modified_user = UserSchema(**userRepository.update_user(user_uid, user_json))
+
+            return modified_user
+    except PyMongoError:
+        raise HTTPException(
+            status_code=500, detail="Error while finding user")
+
+
+def remove_role_from_user(user_uid: str, role_id: str) -> UserSchema:
+    try:
+        user_data = userRepository.find_one({"uid": user_uid})
+        role_data = roleRepository.find_by_id(role_id)
+
+        if user_data != None and role_data != None:
+            user: UserSchema = UserSchema(**user_data)
+            
+            role_value_to_remove = role_data["value"]
+            
+            updated_roles = [role.value for role in user.roles if role.value != role_value_to_remove]
+            
+            user_json = user.toJson()
+            user_json.pop("_id")
+            user_json["roles"] = updated_roles
+            
+            modified_user = UserSchema(**userRepository.update_user(user_uid, user_json))
+            
+            return modified_user
+        return None
+    except PyMongoError:
+        raise HTTPException(
+            status_code=500, detail="Error while removing role from user")
