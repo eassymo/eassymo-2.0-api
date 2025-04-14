@@ -10,10 +10,16 @@ callCenterRouter = APIRouter(prefix="/callCenter")
 
 
 @callCenterRouter.get("", description="Call center requests query", tags=["Call Center"])
-def insert(request: Request):
+def find(request: Request, search_term: Optional[str] = Query(None, title="search_term")):
     try:
+
+        filters = {}
+        
+        if search_term != None:
+            filters["search_term"] = search_term
+
         groupSelected = request.state._state.get('groupSelected')
-        response = CallCenterService.find(groupSelected)
+        response = CallCenterService.find(groupSelected, filters)
 
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except (HTTPException) as e:
