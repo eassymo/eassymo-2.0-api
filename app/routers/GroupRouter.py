@@ -74,7 +74,8 @@ def get_by_id(group_id: str):
 def find(
     request: Request,
     search_argument: Optional[str] = Query(None, title="search_argument"),
-    parent_request_id: Optional[str] = Query(None, title="parent_request_id")
+    parent_request_id: Optional[str] = Query(None, title="parent_request_id"),
+    is_callcenter: Optional[bool] = Query(None, title="is_callcenter")
 ):
     try:
         filters = {}
@@ -84,6 +85,9 @@ def find(
 
         if parent_request_id != None:
             filters["parent_request_id"] = parent_request_id
+
+        if is_callcenter != None:
+            filters["is_callcenter"] = is_callcenter
 
         response = groupService.find(request, filters)
 

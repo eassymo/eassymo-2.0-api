@@ -17,6 +17,9 @@ from app.routers import WhatsappRouter as whatsAppRouter
 from app.routers import InviteRouter as inviteRouter
 from app.routers import PartRequestInviteRouter as partRequestInviteRouter
 from app.routers import TeamMemberInviteRouter as teamMemberInviteRouter
+from app.routers import UserRolesRouter as userRolesRouter
+from app.routers import CallCenterConnectionRouter as callCenterConnectionRouter
+from app.routers import CallCenterRouter as callCenterRouter
 import app.utils.firebase_admin
 
 from fastapi.middleware.cors import CORSMiddleware
@@ -85,3 +88,6 @@ app.include_router(whatsAppRouter.whatsAppRouter)
 app.include_router(inviteRouter.inviteRouter)
 app.include_router(partRequestInviteRouter.partRequestInviteRouter)
 app.include_router(teamMemberInviteRouter.teamMemberInviteRouter)
+app.include_router(userRolesRouter.userRolesRouter)
+app.include_router(callCenterConnectionRouter.callCenterConnectionRouter)
+app.include_router(callCenterRouter.callCenterRouter)

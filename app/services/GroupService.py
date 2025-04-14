@@ -78,6 +78,9 @@ def find(request: Request, filters: Dict[str, Any]) -> List[GroupSchema]:
         groupSelected = request.state._state.get('groupSelected')
 
         search_filters = {}
+        if("is_callcenter" in filters):
+            search_filters["is_callcenter"] = filters["is_callcenter"]
+
         if (filters["search_argument"] != None):
             search_filters["$text"] = {
                 "$search": filters["search_argument"]
