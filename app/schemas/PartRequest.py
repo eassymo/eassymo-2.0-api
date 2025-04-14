@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field, root_validator
 from typing import List
 from app.schemas.GroupVehicle import GroupVehicle
 from app.schemas.Groups import GroupSchema
+from app.schemas.Offer import Offer
 from app.schemas.Location import Location
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -27,11 +28,9 @@ class PartRequest(BaseModel):
                                                        description="Info of vehicle")
     """location: Optional[Location] = Field(
        None) """
-    createdAt: Optional[datetime] = Field(
-        default=datetime.now(ZoneInfo('UTC')))
+    createdAt: Optional[datetime] = Field(None)
     photos: Optional[List[str]] = Field([], description="list of urls")
-    updatedAt: Optional[datetime] = Field(
-        default=datetime.now(ZoneInfo('UTC')))
+    updatedAt: Optional[datetime] = Field(None)
     subscribedSellers: Optional[List[str]] = Field(
         description="List of groups that where selected for this request")
     isActive: bool = Field(
@@ -46,11 +45,18 @@ class PartRequest(BaseModel):
     show_ranking: Optional[bool] = Field(
         None, description="this is a field that is calculated in the runtime to determine if we should show the ranking for all users")
     group_info: Optional[GroupSchema] = Field(None, description="detailed information of the group")
+    offers_amount: Optional[int] = Field(None)
 
     @root_validator(pre=True)
     def convert_objectId(cls, values):
         if '_id' in values and isinstance(values['_id'], ObjectId):
             values["_id"] = str(values["_id"])
+        
+        if 'createdAt' not in values or values['createdAt'] is None:
+            values['createdAt'] = datetime.now(ZoneInfo('UTC'))
+        if 'updatedAt' not in values or values['updatedAt'] is None:
+            values['updatedAt'] = datetime.now(ZoneInfo('UTC'))
+            
         return values
 
     def update_status(self, new_status: PartRequestStatus):
@@ -66,8 +72,8 @@ class PartRequest(BaseModel):
         if self.group_info:
             data["group_info"] = self.group_info.toJson()
 
-        data["createdAt"] = str(data["createdAt"])
-        data["updatedAt"] = str(data["updatedAt"])
+        data["createdAt"] = self.createdAt.isoformat() if self.createdAt else None
+        data["updatedAt"] = self.updatedAt.isoformat() if self.updatedAt else None
 
         if data.get("status") != None:
             data["status"] = self.status.value

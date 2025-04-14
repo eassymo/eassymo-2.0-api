@@ -36,6 +36,7 @@ class GroupSchema(BaseModel):
         None, description="users linked to this group")
     owner: Optional[str] = Field(None, description="User owner")
     can_be_invited: Optional[bool] = Field(None)
+    is_callcenter: Optional[bool] = Field(False)
 
     @root_validator(pre=True)
     def convert_objectId(cls, value):

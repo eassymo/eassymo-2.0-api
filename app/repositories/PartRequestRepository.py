@@ -11,6 +11,34 @@ def find(filters, projection):
     return database.db["PartRequests"].find(filters, projection or None).sort({"_id": -1})
 
 
+def find_for_call_center(filters):
+    return database.db["PartRequests"].aggregate([
+        {
+            "$match": filters
+        },
+        {
+            "$lookup": {
+                "from": "groups",
+                "let": {"creatorGroupId": {"$toObjectId": "$creatorGroup"}},
+                "pipeline": [
+                    {
+                        "$match": {
+                            "$expr": {"$eq": ["$_id", "$$creatorGroupId"]}
+                        }
+                    }
+                ],
+                "as": "group_info"
+            }
+        },
+        {
+            "$unwind": {
+                "path": "$group_info",
+                "preserveNullAndEmptyArrays": True
+            }
+        }
+    ])
+
+
 def find_one_by_id(id: str):
     return database.db["PartRequests"].find_one({"_id": ObjectId(id)})
 

@@ -5,7 +5,8 @@ from fastapi.encoders import jsonable_encoder
 from pymongo.errors import PyMongoError
 from fastapi import HTTPException, status
 from typing import Dict, Any, List
-
+from app.schemas.UserRoles import UserRoles
+from app.repositories import UserRolesRepository
 
 def create_user(user: UserSchema):
     try:
@@ -151,28 +152,3 @@ def add_role_to_user(user_uid: str, role_id: str) -> UserSchema:
     except PyMongoError:
         raise HTTPException(
             status_code=500, detail="Error while finding user")
-
-
-def remove_role_from_user(user_uid: str, role_id: str) -> UserSchema:
-    try:
-        user_data = userRepository.find_one({"uid": user_uid})
-        role_data = roleRepository.find_by_id(role_id)
-
-        if user_data != None and role_data != None:
-            user: UserSchema = UserSchema(**user_data)
-            
-            role_value_to_remove = role_data["value"]
-            
-            updated_roles = [role.value for role in user.roles if role.value != role_value_to_remove]
-            
-            user_json = user.toJson()
-            user_json.pop("_id")
-            user_json["roles"] = updated_roles
-            
-            modified_user = UserSchema(**userRepository.update_user(user_uid, user_json))
-            
-            return modified_user
-        return None
-    except PyMongoError:
-        raise HTTPException(
-            status_code=500, detail="Error while removing role from user")

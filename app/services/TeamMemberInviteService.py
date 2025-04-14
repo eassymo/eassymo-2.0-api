@@ -17,6 +17,9 @@ from app.schemas.TeamMemberInvite import TeamMemberInvite, TeamMemberInviteStatu
 from app.schemas.WhatasppMessage import WhatsappMessage, WhatsappTemplate
 from app.services.WhatsappService import WhatsappService
 
+from app.repositories import UserRolesRepository
+from app.schemas.UserRoles import UserRoles
+
 whatsapp_service = WhatsappService()
 
 
@@ -116,9 +119,16 @@ def _accept_invite(invite_id: str, user_uid: str):
             invite = TeamMemberInvite(**invite_data)
 
             invite.change_status(TeamMemberInviteStatus.ACCEPTED.value)
-            print(invite)
+
+            role_data = rolesRepository.find_by_id(invite.role)
+
+            if role_data != None:
+                role = RolesSchema(**role_data)
+                _create_user_role(user_uid, role.value, invite.group)
+            
             _add_user_to_group(invite, user_uid)
             _add_group_to_user(user_uid, invite.group)
+            
 
             invite_payload = invite.toJson()
             invite_payload.pop('id')
@@ -166,6 +176,17 @@ def _add_group_to_user(user_uid: str, group_id: str):
     except Exception as err:
         raise Exception(
             f'Error while changing invite status adding group to user {err}')
+
+def _create_user_role(
+        user_uid: str,
+        role: str,
+        group_id: str
+):
+    try:
+        userRole = UserRoles(active=True, group= group_id, role= role, user_uid= user_uid)
+        UserRolesRepository.insert(userRole)
+    except PyMongoError as e:
+        raise Exception('Error while creating the user role')
 
 
 def _reject_invite(invite_id: str):
