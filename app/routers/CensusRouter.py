@@ -14,6 +14,7 @@ censusRouter = APIRouter(prefix="/census")
 
 @censusRouter.get("", response_description="Service for listing the census items", response_model=List[CensusSchema], tags=["Census", "list"])
 def find(
+    request: Request,
     params: Params = Depends(),
     id: Optional[str] = Query(None, title="id", description="Census id"),
     exclude_group: Optional[str] = Query(None, title="exclude_group"),
@@ -27,10 +28,13 @@ def find(
     Entity_Location_State: Optional[str] = Query(None, title="Entity_Location_State"),
     Entity_Address_City: Optional[str] = Query(None, title="Entity_Address_City")
 ):
+    user = request.state._state.get('user')
+    groupSelected = request.state._state.get('groupSelected')
+    
     parameters = {
         "id": id,
-        "userUid": userUid,
-        "group_id": group_id,
+        "userUid": userUid if userUid != None and len(userUid) > 0 else user.get("uid"),
+        "group_id": group_id if group_id != None and len(group_id) > 0 else groupSelected,
         "Entity_Type": Entity_Type,
         "exclude_group": exclude_group,
         "search_argument": search_argument,

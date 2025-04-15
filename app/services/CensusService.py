@@ -128,10 +128,10 @@ def check_census_status(user_uid: str, census_items, group_id: str):
         if "group_reference_id" in census_item and census_item["group_reference_id"] is not None:
             census_items[index]["census_status"] = "CAN_CONNECT"
             census_items[index]["can_send_invite"] = False
-        for group_in_list in all_groups_in_lists:
-            if "group_reference_id" in census_item:
-                if group_in_list == census_item["group_reference_id"]:
-                    census_items[index]["census_status"] = "CONNECTED"
+            if "BOSH CAR SERVICE ORIZABA" in census_item["Entity_Name"]:
+                print(census_item)
+            if census_item["group_reference_id"] in all_groups_in_lists:
+                census_items[index]["census_status"] = "CONNECTED"
 
     return census_items
 
