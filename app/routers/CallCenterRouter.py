@@ -10,17 +10,44 @@ callCenterRouter = APIRouter(prefix="/callCenter")
 
 
 @callCenterRouter.get("", description="Call center requests query", tags=["Call Center"])
-def find(request: Request, search_term: Optional[str] = Query(None, title="search_term")):
+def find(
+    request: Request,
+    search_term: Optional[str] = Query(None, title="search_term"),
+    positions: Optional[List[str]] = Query(None, title="positions"),
+    unitsOfMeasure: Optional[List[str]] = Query(None, title="unitsOfMeasure"),
+    statuses: Optional[List[str]] = Query(None, title="statuses")
+):
     try:
 
         filters = {}
-        
+
         if search_term != None:
             filters["search_term"] = search_term
+
+        if positions != None:
+            filters["positions"] = positions
+
+        if unitsOfMeasure != None:
+            filters["unitsOfMeasure"] = unitsOfMeasure
+
+        if statuses != None:
+            filters["statuses"] = statuses
 
         groupSelected = request.state._state.get('groupSelected')
         response = CallCenterService.find(groupSelected, filters)
 
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except (HTTPException) as e:
+        return JSONResponse(status_code=e.status_code, content=get_unsuccessful_response(e))
+
+
+@callCenterRouter.post("/get_users_of_callcenters_from_group_ids", tags=["Call Center"])
+def get_users_of_callcenters_from_group_ids(payload=Body()):
+    try:
+        group_ids = payload.get("group_ids")
+
+        response = CallCenterService.get_users_of_callcenters_from_group_ids(
+            group_ids)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
+    except HTTPException as e:
         return JSONResponse(status_code=e.status_code, content=get_unsuccessful_response(e))

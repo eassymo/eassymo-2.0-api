@@ -1,5 +1,5 @@
 from fastapi import HTTPException, status
-from app.repositories import PartRequestRepository, CallCenterConnectionRepository, OfferRepository, GroupRepository
+from app.repositories import PartRequestRepository, CallCenterConnectionRepository, OfferRepository, GroupRepository, UserRepository
 from pymongo.errors import PyMongoError
 from typing import List, Dict, Any
 from app.schemas.PartRequest import PartRequestStatus, PartRequest
@@ -42,7 +42,7 @@ def find(callcenter_id: str, filters: Dict[str, Any]) -> Dict[str, Any]:
                     },
                     {
                         "vehicleInformation.maker": {
-                            "$regex": filters["search_term"], 
+                            "$regex": filters["search_term"],
                             "$options": "i"
                         }
                     },
@@ -75,6 +75,39 @@ def find(callcenter_id: str, filters: Dict[str, Any]) -> Dict[str, Any]:
 
             filters.pop("search_term")
 
+        if "positions" in filters:
+            filters = {
+                **filters,
+                "part.position": {
+                    "$in": filters["positions"]
+                }
+            }
+
+            filters.pop("positions")
+
+        if "unitsOfMeasure" in filters:
+            filters = {
+                **filters,
+                "part.unitOfMeasure": {
+                    "$in": filters["unitsOfMeasure"]
+                }
+            }
+
+            filters.pop("unitsOfMeasure")
+
+        if "statuses" in filters:
+            filters = {
+                **filters,
+                "status": {
+                    "$in": filters["statuses"]
+                }
+            }
+
+            filters.pop("statuses")
+
+        filters_for_part_requests = build_callcenter_requests_filters(
+            callcenter_id, filters)
+
         # Get part requests and convert directly to the final format
         part_requests_data = list(
             PartRequestRepository.find_for_call_center(filters))
@@ -90,7 +123,64 @@ def find(callcenter_id: str, filters: Dict[str, Any]) -> Dict[str, Any]:
             part_requests.append(part_request)
 
         # Return JSON representation of the part requests with offers_amount included
-        return [part_request.toJson() for part_request in part_requests]
+        return {
+            "part_requests": [part_request.toJson() for part_request in part_requests],
+            "filter_data": filters_for_part_requests
+        }
     except PyMongoError as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                             detail="Error while finding part requests for callcenter")
+
+
+def build_callcenter_requests_filters(callcenter_id: str, filters: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        groups_linked_to_callcenter = CallCenterConnectionRepository.find_many(
+            {"callcenter_id": callcenter_id})
+
+        group_ids = [group.group_id for group in groups_linked_to_callcenter]
+
+        filters = {
+            **filters,
+            "subscribedSellers": {"$in": group_ids},
+            "status": PartRequestStatus.CREATED.value
+        }
+
+        units = PartRequestRepository.distinct("part.unitOfMeasure", filters)
+        statuses = PartRequestRepository.distinct("status", filters)
+        positions = PartRequestRepository.distinct("part.position", filters)
+
+        return {"units": units, "statuses": statuses, "positions": positions}
+
+    except PyMongoError as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail="Error while building filters for requests filters")
+
+
+def get_users_of_callcenters_from_group_ids(group_ids: List[str]) -> List[Dict[str, Any]]:
+    try:
+
+        callcenters_for_group = CallCenterConnectionRepository.find(
+            {"group_id": {"$in": group_ids}})
+
+
+
+        if len(callcenters_for_group) > 0:
+            users_formatted = []
+            for callcenter_connection in callcenters_for_group:
+                users_from_callcenter = UserRepository.find({"groups": callcenter_connection.callcenter_id})
+                
+                for user in users_from_callcenter:
+                    users_formatted.append({
+                        "user_id": user.get("uid"), 
+                        "name": user.get("name"), 
+                        "callcenter_id": callcenter_connection.callcenter_id,
+                        "group_id": callcenter_connection.group_id
+                    })
+            
+            return users_formatted
+        else:
+            return []
+
+    except PyMongoError as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail="Error while building filters for requests filters")

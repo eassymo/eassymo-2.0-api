@@ -20,7 +20,7 @@ def insert(payload: CallCenterConnection = Body()):
 
 
 @callCenterConnectionRouter.get("", description="query service for call center connections", tags=["Call Center"])
-def find_one(
+def find(
     callcenter_id: Optional[str] = Query(default=None, title="callcenter_id"),
     group_id: Optional[str] = Query(default=None, title="group_id")
 ):
@@ -33,7 +33,7 @@ def find_one(
         if group_id != None:
             filters["group_id"] = group_id
 
-        response = CallCenterConnectionService.find_one(filters)
+        response = CallCenterConnectionService.find(filters)
 
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except (HTTPException) as e:
