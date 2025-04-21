@@ -2,6 +2,7 @@ from app.config import database
 from bson import ObjectId
 from app.schemas.CallCenterConnection import CallCenterConnection
 from pymongo.errors import PyMongoError
+from typing import List
 
 
 def insert(payload: CallCenterConnection) -> str:
@@ -14,6 +15,20 @@ def insert(payload: CallCenterConnection) -> str:
         inserted_item = database.db["callcenterConnection"].insert_one(data_json)
 
         return str(inserted_item.inserted_id)
+    except PyMongoError as e:
+        raise Exception(e)
+    
+
+def find(filters) -> List[CallCenterConnection]:
+    try:
+        callcenter_connections_found = list(database.db["callcenterConnection"].find(filters))
+
+        if len(callcenter_connections_found) > 0:
+            callcenter_connections_formatted = [CallCenterConnection(**callcenter_connection) for callcenter_connection in callcenter_connections_found]
+
+            return callcenter_connections_formatted
+        
+        return []
     except PyMongoError as e:
         raise Exception(e)
 

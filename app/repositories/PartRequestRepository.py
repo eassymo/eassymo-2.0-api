@@ -1,6 +1,7 @@
 from app.config import database
 from bson import ObjectId
 from pymongo import ReturnDocument
+from typing import Dict, Any
 
 
 def insert(part_request):
@@ -202,3 +203,7 @@ def edit_part_request(id: str, data):
 
 def count(filters) -> int:
     return database.db["PartRequests"].count_documents(filters)
+
+
+def distinct(property_name: str, filters: Dict[str, Any]):
+    return database.db["PartRequests"].distinct(property_name, filters)

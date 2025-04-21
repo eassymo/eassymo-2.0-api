@@ -1,18 +1,27 @@
 from app.repositories import UserRepository as userRepository
 from app.repositories import RoleRepository as roleRepository
 from app.schemas.Users import UserSchema
+from app.schemas.Groups import GroupSchema
+from app.schemas.UserRoles import UserRoles
 from fastapi.encoders import jsonable_encoder
 from pymongo.errors import PyMongoError
 from fastapi import HTTPException, status
 from typing import Dict, Any, List
 from app.schemas.UserRoles import UserRoles
 from app.repositories import UserRolesRepository
+from app.repositories import GroupRepository
+
 
 def create_user(user: UserSchema):
     try:
         user_exists = validate_if_users_exists(user.uid)
-        print(user_exists)
+
+        linked_callcenters: List[Dict[str, Any]
+                                 ] = _link_user_to_callcenters(user.uid)
+
         if user_exists != None:
+            user_exists = {**user_exists,
+                           "linked_callcenters": linked_callcenters}
             return user_exists
 
         user_payload = user.toJson()
@@ -115,6 +124,32 @@ def validate_if_users_exists(uid: str):
             status_code=500, detail="Error while finding user")
 
 
+def _link_user_to_callcenters(user_uid: str) -> List[Dict[str, Any]]:
+    try:
+        callcenter_list = list(GroupRepository.find(
+            {"users": user_uid, "is_callcenter": True}))
+
+        callcenters_with_roles = []
+        for callcenter_item in callcenter_list:
+            callcenter = GroupSchema(**callcenter_item)
+
+            roles_found = list(UserRolesRepository.find(
+                {"group": callcenter.id, "user_uid": user_uid}))
+
+            callcenters_with_roles.append(
+                {
+                    "callcenter_id": callcenter.id,
+                    "calcenter_name": callcenter.name,
+                    "roles": [role.role for role in roles_found] if len(roles_found) > 0 else []
+                }
+            )
+
+        return callcenters_with_roles
+    except PyMongoError as e:
+        raise HTTPException(
+            status_code=500, detail="Error while binding user to callcenters")
+
+
 def __format_groups(groups):
     formatted_groups = []
     for group in groups:
@@ -146,7 +181,8 @@ def add_role_to_user(user_uid: str, role_id: str) -> UserSchema:
 
             user_json["roles"] = list(set(current_user_roles))
 
-            modified_user = UserSchema(**userRepository.update_user(user_uid, user_json))
+            modified_user = UserSchema(
+                **userRepository.update_user(user_uid, user_json))
 
             return modified_user
     except PyMongoError:
