@@ -139,7 +139,7 @@ def _link_user_to_callcenters(user_uid: str) -> List[Dict[str, Any]]:
             callcenters_with_roles.append(
                 {
                     "callcenter_id": callcenter.id,
-                    "calcenter_name": callcenter.name,
+                    "callcenter_name": callcenter.name,
                     "roles": [role.role for role in roles_found] if len(roles_found) > 0 else []
                 }
             )

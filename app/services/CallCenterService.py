@@ -18,7 +18,6 @@ def find(callcenter_id: str, filters: Dict[str, Any]) -> Dict[str, Any]:
         filters = {
             **filters,
             "subscribedSellers": {"$in": group_ids},
-            "status": PartRequestStatus.CREATED.value
         }
 
         if "search_term" in filters and filters["search_term"].strip():
