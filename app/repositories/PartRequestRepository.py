@@ -36,6 +36,11 @@ def find_for_call_center(filters):
                 "path": "$group_info",
                 "preserveNullAndEmptyArrays": True
             }
+        },
+        {
+            "$sort": {
+                "_id": -1
+            }
         }
     ])
 

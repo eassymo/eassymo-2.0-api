@@ -8,13 +8,15 @@ from app.schemas.Brand import Brand
 from app.schemas.Guarantee import Guarantee
 from app.schemas.PartRequest import PartRequest, PartRequestStatus
 from app.schemas.Groups import GroupSchema
-from fastapi import HTTPException
+from fastapi import HTTPException, status
 from uuid import uuid4
 from app.schemas.Offer import OfferStatus, OfferType
 from app.repositories import OrderRepository as orderRepository
+from app.repositories import CallCenterConnectionRepository as callCenterConnectionRepository
 from app.schemas.Order import Order, OrderStatus
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from typing import List
 
 
 def insert(payload: Offer):
@@ -80,26 +82,40 @@ def find(filters: Offer):
 
 def find_by_request_id_and_group(part_request_id: str, group_id: str):
     try:
-        found_offers = offerRepository.find_by_request_id_and_group(
-            part_request_id, group_id)
 
-        found_offers = list(found_offers)
+        group_ids = []
+        if group_id != None:
+            group_info = groupRepository.find_by_id(group_id)
 
-        if len(found_offers) == 0:
+            if group_info == None:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Group info is not found")
+
+            group = GroupSchema(**group_info)
+
+            group_ids.append(group.id)
+
+            if group.is_callcenter == True:
+                # Groups that selected the callcenter as a callcenter assigned for them
+
+                callcenter_connections = callCenterConnectionRepository.find(
+                    {"callcenter_id": group.id})
+
+                group_ids = group_ids + \
+                    [callcenter_connection.group_id for callcenter_connection in callcenter_connections]
+
+        found_offers_dicts = list(offerRepository.find_by_request_id_and_group(
+            part_request_id, group_ids))
+
+        if len(found_offers_dicts) == 0:
             return []
 
-        for offer in found_offers:
-            offer["_id"] = str(offer["_id"])
-            offer["to_be_delivered_time"] = str(offer["to_be_delivered_time"])
-            offer["createdAt"] = str(offer["createdAt"])
-            offer["group_info"] = {
-                **offer["group_info"],
-                "_id": str(offer["group_info"]["_id"])
-            }
+        found_offers: List[Offer] = [
+            Offer(**offer_data).toJson() for offer_data in found_offers_dicts]
 
         return found_offers
 
-    except Exception as e:
+    except HTTPException as e:
         raise HTTPException(
             status_code=500, detail=f'Error while getting specific offer {e}')
 
@@ -253,6 +269,8 @@ def change_offer_status(request_id: str, offer_id: str, status: str):
         offer_status = OfferStatus[status.lower()]
         order_id: str = ""
         match offer_status:
+            case offer_status.created:
+                offer.update_status(OfferStatus.created)
             case offer_status.selected:
                 part_request.update_status(PartRequestStatus.OFFER_SELECTED)
                 offer.update_status(OfferStatus.selected)
@@ -263,15 +281,13 @@ def change_offer_status(request_id: str, offer_id: str, status: str):
                 order_json.pop("_id")
                 inserted_order = orderRepository.insert(order_json)
                 order_id = str(inserted_order.inserted_id)
+                part_request_json = part_request.toJson()
+                part_request_json.pop('_id')
+                partRequestRepository.edit_part_request(
+                    request_id, part_request_json)
 
-        part_request_json = part_request.toJson()
         offer_json = offer.toJson()
-
-        part_request_json.pop('_id')
         offer_json.pop('_id')
-
-        partRequestRepository.edit_part_request(
-            request_id, part_request_json)
         offerRepository.edit_offer(offer_id, offer_json)
 
         if len(order_id) > 0:
@@ -286,7 +302,8 @@ def change_offer_status(request_id: str, offer_id: str, status: str):
 
 def get_ranked_offers(request_id: str):
 
-    found_offers = list(offerRepository.find({"request_id": request_id}))
+    found_offers = list(offerRepository.find({"request_id": request_id, "status": {
+                        "$in": [OfferStatus.created.value, OfferStatus.selected.value]}}))
 
     ids = [offer["_id"] for offer in found_offers]
 

@@ -3,6 +3,7 @@ from app.schemas.Offer import Offer
 from typing import List, Dict, Any
 from bson import ObjectId
 from pymongo import ReturnDocument, ASCENDING, DESCENDING
+from typing import List
 
 
 def insert(payload: Dict[str, Any]):
@@ -13,14 +14,14 @@ def find(filters):
     return database.db["Offers"].find(filters)
 
 
-def find_by_request_id_and_group(request_id: str, group_id: str):
+def find_by_request_id_and_group(request_id: str, group_ids: List[str]):
 
     filters = {
         "request_id": request_id
     }
 
-    if group_id != None:
-        filters["group_id"] = group_id
+    if group_ids != None and len(group_ids) > 0:
+        filters["group_id"] = {"$in": group_ids}
 
     return database.db["Offers"].aggregate([
         {
@@ -61,6 +62,8 @@ def find_by_request_id_and_group(request_id: str, group_id: str):
                 "user_info.uid": 1,
                 "user_info.name": 1,
                 "createdAt": 1,
+                "call_center_that_posted_offer": 1,
+                "call_center_user_that_posted_offer": 1,
             }
         },
         {
