@@ -15,6 +15,7 @@ class OfferType(Enum):
 
 class OfferStatus(Enum):
     created = "Created"
+    pending_approval = "Pending_Approval"
     selected = "Selected"
     rejected = "Rejected"
 
@@ -53,6 +54,8 @@ class Offer(BaseModel):
     createdAt: Optional[datetime] = Field(datetime.now(ZoneInfo('UTC')))
     updatedAt: Optional[datetime] = Field(
         default=datetime.now(ZoneInfo('UTC')))
+    call_center_user_that_posted_offer: Optional[str] = Field(None)
+    call_center_that_posted_offer: Optional[GroupSchema] = Field(None, description="call center that created the offer")
 
     @root_validator(pre=True)
     def convert_objectId(cls, values):
@@ -65,7 +68,7 @@ class Offer(BaseModel):
         self.updatedAt = datetime.now(ZoneInfo('UTC'))
 
     def toJson(self):
-        data = self.dict(by_alias=True)
+        data = self.model_dump(by_alias=True)
 
         if (data.get("to_be_delivered_time") != None):
             data["to_be_delivered_time"] = str(data["to_be_delivered_time"])

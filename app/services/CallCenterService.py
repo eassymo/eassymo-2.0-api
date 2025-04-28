@@ -119,11 +119,14 @@ def find(callcenter_id: str, filters: Dict[str, Any]) -> Dict[str, Any]:
                 {"request_id": part_request.id, "group_id": {"$in": group_ids + [callcenter_id]}}))
 
             part_request.offers_amount = len(offers_for_part_request)
-            part_requests.append(part_request)
+
+            initially_subscribed = [seller for seller in part_request.subscribedSellers if seller in group_ids]
+
+            part_requests.append({**part_request.toJson(), "groups_initially_subscribed": initially_subscribed})
 
         # Return JSON representation of the part requests with offers_amount included
         return {
-            "part_requests": [part_request.toJson() for part_request in part_requests],
+            "part_requests": part_requests,
             "filter_data": filters_for_part_requests
         }
     except PyMongoError as e:
