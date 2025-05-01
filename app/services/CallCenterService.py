@@ -14,6 +14,7 @@ def find(callcenter_id: str, filters: Dict[str, Any]) -> Dict[str, Any]:
         # Extract group IDs properly using list comprehension
         group_ids = [group.group_id for group in groups_linked_to_callcenter]
 
+        
         # Use group_ids in the filter rather than the entire group objects
         filters = {
             **filters,
@@ -115,14 +116,34 @@ def find(callcenter_id: str, filters: Dict[str, Any]) -> Dict[str, Any]:
         for part_request_data in part_requests_data:
             part_request = PartRequest(**part_request_data)
 
+            # Find all offers for this part request from any of the linked groups or callcenter
             offers_for_part_request = list(OfferRepository.find(
                 {"request_id": part_request.id, "group_id": {"$in": group_ids + [callcenter_id]}}))
 
             part_request.offers_amount = len(offers_for_part_request)
 
-            initially_subscribed = [seller for seller in part_request.subscribedSellers if seller in group_ids]
+            # Find which groups from the callcenter are subscribed to this part request
+            subscribed_groups = [seller for seller in part_request.subscribedSellers if seller in group_ids]
+            
+            # Create a duplicate part request for each subscribed group
+            for group_id in subscribed_groups:
+                group_info = GroupRepository.find_by_id(group_id)
+                # Match offers to specific group
+                group_offers = [offer for offer in offers_for_part_request if offer.get("group_id") == group_id]
+                
+                # Create group details as an object (not an array)
+                subscribed_group_details = {
+                    "group_id": group_id,
+                    "owner": group_info.get("owner"),
+                    "group_name": group_info.get("name") if group_info else "Unknown",
+                    "offers_count": len(group_offers),
+                }
 
-            part_requests.append({**part_request.toJson(), "groups_initially_subscribed": initially_subscribed})
+                # Add a duplicate part request for this specific group
+                part_requests.append({
+                    **part_request.toJson(), 
+                    "subscribed_group": subscribed_group_details
+                })
 
         # Return JSON representation of the part requests with offers_amount included
         return {
