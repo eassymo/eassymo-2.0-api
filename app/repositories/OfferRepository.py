@@ -2,8 +2,9 @@ from app.config import database
 from app.schemas.Offer import Offer
 from typing import List, Dict, Any
 from bson import ObjectId
-from pymongo import ReturnDocument, ASCENDING, DESCENDING
+from pymongo import ReturnDocument, ASCENDING
 from typing import List
+from app.schemas.Offer import OfferStatus
 
 
 def insert(payload: Dict[str, Any]):
@@ -14,7 +15,7 @@ def find(filters):
     return database.db["Offers"].find(filters)
 
 
-def find_by_request_id_and_group(request_id: str, group_ids: List[str]):
+def find_by_request_id_and_group(request_id: str, group_ids: List[str], is_callcenter=False):
 
     filters = {
         "request_id": request_id
@@ -22,6 +23,10 @@ def find_by_request_id_and_group(request_id: str, group_ids: List[str]):
 
     if group_ids != None and len(group_ids) > 0:
         filters["group_id"] = {"$in": group_ids}
+
+    if is_callcenter == True:
+        filters["call_center_that_posted_offer._id"] = group_ids[0]
+        filters.pop("group_id")
 
     return database.db["Offers"].aggregate([
         {
@@ -137,4 +142,12 @@ def find_with_part_request(filters):
 
 
 def get_ranked_offers(offer_ids: List[ObjectId]):
-    return database.db["Offers"].find({"_id": {"$in": offer_ids}}).sort('price', ASCENDING)
+    return database.db["Offers"].find(
+        {
+            "_id": {"$in": offer_ids},
+            "$or": [
+                {"status": OfferStatus.created.value},
+                {"status": OfferStatus.selected.value}
+            ]
+        }
+    ).sort('price', ASCENDING)

@@ -84,6 +84,12 @@ def find_by_request_id_and_group(part_request_id: str, group_id: str):
     try:
 
         group_ids = []
+
+        part_request_data = list(partRequestRepository.find_by_id(part_request_id))
+
+        if len(part_request_data) > 0:
+            part_request = PartRequest(**part_request_data[0])
+
         if group_id != None:
             group_info = groupRepository.find_by_id(group_id)
 
@@ -95,17 +101,11 @@ def find_by_request_id_and_group(part_request_id: str, group_id: str):
 
             group_ids.append(group.id)
 
-            if group.is_callcenter == True:
-                # Groups that selected the callcenter as a callcenter assigned for them
-
-                callcenter_connections = callCenterConnectionRepository.find(
-                    {"callcenter_id": group.id})
-
-                group_ids = group_ids + \
-                    [callcenter_connection.group_id for callcenter_connection in callcenter_connections]
+        if group_id == part_request.creatorGroup:
+            group_ids = []
 
         found_offers_dicts = list(offerRepository.find_by_request_id_and_group(
-            part_request_id, group_ids))
+            part_request_id, group_ids, group.is_callcenter))
 
         if len(found_offers_dicts) == 0:
             return []

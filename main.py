@@ -20,6 +20,7 @@ from app.routers import TeamMemberInviteRouter as teamMemberInviteRouter
 from app.routers import UserRolesRouter as userRolesRouter
 from app.routers import CallCenterConnectionRouter as callCenterConnectionRouter
 from app.routers import CallCenterRouter as callCenterRouter
+from app.routers import CallCenterManagementListRouter as callCenterManagementListRouter
 import app.utils.firebase_admin
 
 from fastapi.middleware.cors import CORSMiddleware
@@ -91,3 +92,4 @@ app.include_router(teamMemberInviteRouter.teamMemberInviteRouter)
 app.include_router(userRolesRouter.userRolesRouter)
 app.include_router(callCenterConnectionRouter.callCenterConnectionRouter)
 app.include_router(callCenterRouter.callCenterRouter)
+app.include_router(callCenterManagementListRouter.callCenterManagementListRouter)

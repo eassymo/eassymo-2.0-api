@@ -51,3 +51,12 @@ def get_users_of_callcenters_from_group_ids(payload=Body()):
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except HTTPException as e:
         return JSONResponse(status_code=e.status_code, content=get_unsuccessful_response(e))
+
+
+@callCenterRouter.get("/get-related-groups/{callcenter_id}", description="gets groups that added the callcenter", tags=["Call Center"])
+def get_related_groups(callcenter_id: str):
+    try:
+        response = CallCenterService.get_related_groups(callcenter_id)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
+    except HTTPException as e:
+        return JSONResponse(status_code=e.status_code, content=get_unsuccessful_response(e))
