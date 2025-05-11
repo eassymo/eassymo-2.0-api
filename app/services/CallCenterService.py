@@ -3,6 +3,8 @@ from app.repositories import PartRequestRepository, CallCenterConnectionReposito
 from pymongo.errors import PyMongoError
 from typing import List, Dict, Any
 from app.schemas.PartRequest import PartRequestStatus, PartRequest
+from app.schemas.Groups import GroupSchema
+from bson import ObjectId
 
 
 def find(callcenter_id: str, filters: Dict[str, Any]) -> Dict[str, Any]:
@@ -118,7 +120,7 @@ def find(callcenter_id: str, filters: Dict[str, Any]) -> Dict[str, Any]:
 
             # Find all offers for this part request from any of the linked groups or callcenter
             offers_for_part_request = list(OfferRepository.find(
-                {"request_id": part_request.id, "group_id": {"$in": group_ids + [callcenter_id]}}))
+                {"request_id": part_request.id, "call_center_that_posted_offer._id": {"$in": [callcenter_id]}}))
 
             part_request.offers_amount = len(offers_for_part_request)
 
@@ -207,3 +209,23 @@ def get_users_of_callcenters_from_group_ids(group_ids: List[str]) -> List[Dict[s
     except PyMongoError as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                             detail="Error while building filters for requests filters")
+
+
+def get_related_groups(callcenter_id: str) -> List[Dict[str, Any]]:
+    try:
+        groups_linked_to_callcenter = CallCenterConnectionRepository.find_many(
+            {"callcenter_id": callcenter_id})
+        
+        group_ids = [ObjectId(group.group_id) for group in groups_linked_to_callcenter]
+
+        groups_data = list(GroupRepository.find({"_id": {"$in": group_ids}}, {}))
+
+        groups: List[Dict[str, Any]] = []
+        for group_data in groups_data:
+            group = GroupSchema(**group_data)
+            groups.append(group.toJson())
+        
+        return groups
+    except PyMongoError as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail="Error while fetching related groups")
