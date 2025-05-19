@@ -1,7 +1,7 @@
 from app.config import database
 from bson import ObjectId
 from pymongo import ReturnDocument
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 
 def insert(part_request):
@@ -77,8 +77,14 @@ def find_by_id(id: str):
     ])
 
 
-def find_sister_part_requests(parent_request_id: str):
-    return database.db["PartRequests"].find({"parent_request_uid": parent_request_id}, {"part": 1, "_id": 1})
+def find_sister_part_requests(specific_order_uid: str, status: Optional[str]):
+
+    filters = {"specific_order_uid": specific_order_uid}
+
+    if status != None:
+        filters["status"] = status
+        
+    return database.db["PartRequests"].find(filters, {"part": 1, "_id": 1})
 
 
 def find_grouped(filters, skip: int = 0, limit: int = 10):

@@ -89,6 +89,8 @@ def find_by_request_id_and_group(part_request_id: str, group_id: str):
 
         if len(part_request_data) > 0:
             part_request = PartRequest(**part_request_data[0])
+        else:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Part Request not found")
 
         if group_id != None:
             group_info = groupRepository.find_by_id(group_id)
@@ -210,7 +212,8 @@ def find_request_offers_by_groups(request_id: str):
 
     for seller in seller_dict:
         offers = list(offerRepository.find_by_request_id_and_group(
-            request_id, seller["seller_id"]))
+            request_id, [seller["seller_id"]]))
+
         if len(offers) > 0:
             seller["has_offered"] = True
             have_offered_qty += 1

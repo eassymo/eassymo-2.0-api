@@ -15,7 +15,8 @@ def find(
     search_term: Optional[str] = Query(None, title="search_term"),
     positions: Optional[List[str]] = Query(None, title="positions"),
     unitsOfMeasure: Optional[List[str]] = Query(None, title="unitsOfMeasure"),
-    statuses: Optional[List[str]] = Query(None, title="statuses")
+    statuses: Optional[List[str]] = Query(None, title="statuses"),
+    managementListIds: Optional[str] = Query(None, title="managementListIds")
 ):
     try:
 
@@ -32,6 +33,9 @@ def find(
 
         if statuses != None:
             filters["statuses"] = statuses
+
+        if managementListIds != None:
+            filters["managementListIds"] = managementListIds.split(",") if managementListIds and "," in managementListIds else [] if managementListIds else []
 
         groupSelected = request.state._state.get('groupSelected')
         response = CallCenterService.find(groupSelected, filters)

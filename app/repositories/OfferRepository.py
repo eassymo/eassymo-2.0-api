@@ -11,8 +11,8 @@ def insert(payload: Dict[str, Any]):
     return database.db["Offers"].insert_one(payload)
 
 
-def find(filters):
-    return database.db["Offers"].find(filters)
+def find(filters, projection={}):
+    return database.db["Offers"].find(filters, projection)
 
 
 def find_by_request_id_and_group(request_id: str, group_ids: List[str], is_callcenter=False):
@@ -25,8 +25,11 @@ def find_by_request_id_and_group(request_id: str, group_ids: List[str], is_callc
         filters["group_id"] = {"$in": group_ids}
 
     if is_callcenter == True:
-        filters["call_center_that_posted_offer._id"] = group_ids[0]
         filters.pop("group_id")
+        filters["$or"] = [
+            {"call_center_that_posted_offer._id":  group_ids[0]},
+            {"group_id": {"$in": group_ids}}
+        ]
 
     return database.db["Offers"].aggregate([
         {
@@ -151,3 +154,7 @@ def get_ranked_offers(offer_ids: List[ObjectId]):
             ]
         }
     ).sort('price', ASCENDING)
+
+
+def count(filters):
+    return database.db["Offers"].count_documents(filters)

@@ -11,7 +11,7 @@ class GroupVehicle(BaseModel):
         description="This indicates the production year of the car")
     maker: str = Field(description="This indicates the maker of the car")
     model: str = Field(description="This indicates the model")
-    engine: str = Field()
+    engine: Optional[str] = Field(None)
     group: str = Field(description="Group owner of this vehicle")
     user: str = Field(description="User owner of this vehicle")
     subModel: Optional[str] = Field(description="SubModel if available")

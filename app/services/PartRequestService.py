@@ -56,7 +56,7 @@ def __format_part_request(part_request):
     return part_request.toJson()
 
 
-def find(user_uid: str | None, group_id: str | None, specific_order_uid: str | None):
+def find(user_uid: str | None, group_id: str | None, specific_order_uid: str | None, status: str | None):
     try:
 
         filters: Dict[str, Any] = {}
@@ -71,6 +71,9 @@ def find(user_uid: str | None, group_id: str | None, specific_order_uid: str | N
 
         if specific_order_uid != None:
             filters = {**filters, "specific_order_uid": specific_order_uid}
+
+        if status != None:
+            filters = {**filters, "status": status}
 
         found_requests = partRequestRepository.find(filters, {})
 
@@ -108,7 +111,7 @@ def find_by_id(id):
             }
 
         found_request["partList"] = __find_sister_part_list(
-            found_request["parent_request_uid"])
+            found_request["specific_order_uid"])
 
         return found_request
     except Exception as e:
@@ -116,10 +119,10 @@ def find_by_id(id):
             status_code=500, detail=f'Error while inserting group vehicle {e}')
 
 
-def __find_sister_part_list(parent_request_uid: str):
+def __find_sister_part_list(specific_order_uid: str):
     try:
         sister_requests = list(
-            partRequestRepository.find_sister_part_requests(parent_request_uid))
+            partRequestRepository.find_sister_part_requests(specific_order_uid, status=PartRequestStatus.CREATED.value))
 
         formatted_sister_requests = []
 
@@ -453,7 +456,7 @@ def find_sibling_requests_with_offers(
     offer_owner_group: str
 ):
     sibling_part_requests = list(partRequestRepository.find(
-        {"parent_request_uid": parent_request_uid}, {}))
+        {"specific_order_uid": parent_request_uid}, {}))
 
     part_requests_with_offers = []
 
@@ -516,7 +519,8 @@ def join_seller_to_part_request(parent_request_id: str | None, new_seller_group_
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                                 detail="The request is missing information")
 
-        part_requests_documents = list(partRequestRepository.find({"specific_order_uid": parent_request_id}, None))
+        part_requests_documents = list(partRequestRepository.find(
+            {"specific_order_uid": parent_request_id}, None))
 
         part_requests: List[PartRequest] = []
         if len(part_requests_documents) > 0:
@@ -525,28 +529,28 @@ def join_seller_to_part_request(parent_request_id: str | None, new_seller_group_
         else:
             raise HTTPException(status_code=status.HTTP_204_NO_CONTENT,
                                 detail="The requested part request is not found")
-        
 
         edited_part_request_ids: List[str] = []
         for part_request in part_requests:
 
             if part_request.status != PartRequestStatus.CREATED:
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
-                                detail="The part request status does not allow this operation")
-        
+                                    detail="The part request status does not allow this operation")
+
             if part_request.subscribedSellers and new_seller_group_id in part_request.subscribedSellers:
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
-                                detail="The current seller already belongs to the request")
-        
+                                    detail="The current seller already belongs to the request")
+
             part_request.subscribedSellers.append(new_seller_group_id)
 
             edit_payload = part_request.toJson()
 
             edit_payload.pop("_id")
 
-            edited_part_request = partRequestRepository.edit_part_request(part_request.id, edit_payload)
+            edited_part_request = partRequestRepository.edit_part_request(
+                part_request.id, edit_payload)
             edited_part_request_ids.append(str(edited_part_request["_id"]))
 
         return edited_part_request_ids
     except HTTPException as e:
-        raise HTTPException(status_code=e.status_code, detail= e.detail)
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
