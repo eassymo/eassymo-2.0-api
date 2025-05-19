@@ -1,5 +1,5 @@
 from fastapi import HTTPException, status
-from app.repositories import PartRequestRepository, CallCenterConnectionRepository, OfferRepository, GroupRepository, UserRepository
+from app.repositories import PartRequestRepository, CallCenterConnectionRepository, OfferRepository, GroupRepository, UserRepository, CallCenterManagementListRepository
 from pymongo.errors import PyMongoError
 from typing import List, Dict, Any
 from app.schemas.PartRequest import PartRequestStatus, PartRequest
@@ -16,7 +16,6 @@ def find(callcenter_id: str, filters: Dict[str, Any]) -> Dict[str, Any]:
         # Extract group IDs properly using list comprehension
         group_ids = [group.group_id for group in groups_linked_to_callcenter]
 
-        
         # Use group_ids in the filter rather than the entire group objects
         filters = {
             **filters,
@@ -107,6 +106,11 @@ def find(callcenter_id: str, filters: Dict[str, Any]) -> Dict[str, Any]:
 
             filters.pop("statuses")
 
+        if "managementListIds" in filters:
+            filters = {**filters, "subscribedSellers": {
+                "$in": _get_group_ids_from_management_lists(filters["managementListIds"])
+            }}
+
         filters_for_part_requests = build_callcenter_requests_filters(
             callcenter_id, filters)
 
@@ -120,19 +124,23 @@ def find(callcenter_id: str, filters: Dict[str, Any]) -> Dict[str, Any]:
 
             # Find all offers for this part request from any of the linked groups or callcenter
             offers_for_part_request = list(OfferRepository.find(
-                {"request_id": part_request.id, "call_center_that_posted_offer._id": {"$in": [callcenter_id]}}))
+                {"request_id": part_request.id, "call_center_that_posted_offer._id": {"$in": [callcenter_id]}}, {
+                    "group_id": 1
+                }))
 
             part_request.offers_amount = len(offers_for_part_request)
 
             # Find which groups from the callcenter are subscribed to this part request
-            subscribed_groups = [seller for seller in part_request.subscribedSellers if seller in group_ids]
-            
+            subscribed_groups = [
+                seller for seller in part_request.subscribedSellers if seller in group_ids]
+
             # Create a duplicate part request for each subscribed group
             for group_id in subscribed_groups:
                 group_info = GroupRepository.find_by_id(group_id)
                 # Match offers to specific group
-                group_offers = [offer for offer in offers_for_part_request if offer.get("group_id") == group_id]
-                
+                group_offers = [offer for offer in offers_for_part_request if offer.get(
+                    "group_id") == group_id]
+
                 # Create group details as an object (not an array)
                 subscribed_group_details = {
                     "group_id": group_id,
@@ -143,7 +151,7 @@ def find(callcenter_id: str, filters: Dict[str, Any]) -> Dict[str, Any]:
 
                 # Add a duplicate part request for this specific group
                 part_requests.append({
-                    **part_request.toJson(), 
+                    **part_request.toJson(),
                     "subscribed_group": subscribed_group_details
                 })
 
@@ -155,6 +163,31 @@ def find(callcenter_id: str, filters: Dict[str, Any]) -> Dict[str, Any]:
     except PyMongoError as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                             detail="Error while finding part requests for callcenter")
+
+
+def _get_group_ids_from_management_lists(management_list_ids: List[str]):
+    try:
+        ids = [ObjectId(list_id) for list_id in management_list_ids]
+        management_lists_data = list(
+            CallCenterManagementListRepository.find({"_id": {"$in": ids}}))
+
+        # Flatten the nested lists of groups
+        all_groups = []
+        for management_list in management_lists_data:
+            all_groups.extend(management_list.groups)
+
+        # Extract IDs handling both string IDs and GroupSchema objects
+        group_ids = []
+        for group in all_groups:
+            if isinstance(group, GroupSchema):
+                group_ids.append(group.id)
+            elif isinstance(group, str):
+                group_ids.append(group)
+
+        return group_ids
+    except PyMongoError as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail="Error while getting groups from management lists")
 
 
 def build_callcenter_requests_filters(callcenter_id: str, filters: Dict[str, Any]) -> Dict[str, Any]:
@@ -187,21 +220,20 @@ def get_users_of_callcenters_from_group_ids(group_ids: List[str]) -> List[Dict[s
         callcenters_for_group = CallCenterConnectionRepository.find(
             {"group_id": {"$in": group_ids}})
 
-
-
         if len(callcenters_for_group) > 0:
             users_formatted = []
             for callcenter_connection in callcenters_for_group:
-                users_from_callcenter = UserRepository.find({"groups": callcenter_connection.callcenter_id})
-                
+                users_from_callcenter = UserRepository.find(
+                    {"groups": callcenter_connection.callcenter_id})
+
                 for user in users_from_callcenter:
                     users_formatted.append({
-                        "user_id": user.get("uid"), 
-                        "name": user.get("name"), 
+                        "user_id": user.get("uid"),
+                        "name": user.get("name"),
                         "callcenter_id": callcenter_connection.callcenter_id,
                         "group_id": callcenter_connection.group_id
                     })
-            
+
             return users_formatted
         else:
             return []
@@ -215,16 +247,18 @@ def get_related_groups(callcenter_id: str) -> List[Dict[str, Any]]:
     try:
         groups_linked_to_callcenter = CallCenterConnectionRepository.find_many(
             {"callcenter_id": callcenter_id})
-        
-        group_ids = [ObjectId(group.group_id) for group in groups_linked_to_callcenter]
 
-        groups_data = list(GroupRepository.find({"_id": {"$in": group_ids}}, {}))
+        group_ids = [ObjectId(group.group_id)
+                     for group in groups_linked_to_callcenter]
+
+        groups_data = list(GroupRepository.find(
+            {"_id": {"$in": group_ids}}, {}))
 
         groups: List[Dict[str, Any]] = []
         for group_data in groups_data:
             group = GroupSchema(**group_data)
             groups.append(group.toJson())
-        
+
         return groups
     except PyMongoError as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

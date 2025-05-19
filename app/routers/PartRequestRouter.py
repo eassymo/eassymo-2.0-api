@@ -27,11 +27,12 @@ def find(
         None, title="user_uid", description="User uid"),
     group_id: Optional[str] = Query(
         None, title="group_id", description="Group id"),
-    specific_order_uid: Optional[str] = Query(None, title="specific_order_uid")
+    specific_order_uid: Optional[str] = Query(None, title="specific_order_uid"),
+    stat: Optional[str] = Query(None)
 ):
     try:
         response = partRequestService.find(
-            user_uid, group_id, specific_order_uid)
+            user_uid, group_id, specific_order_uid, stat)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except Exception as e:
         return JSONResponse(content=get_unsuccessful_response(e))
