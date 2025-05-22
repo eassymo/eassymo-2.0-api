@@ -456,7 +456,7 @@ def find_sibling_requests_with_offers(
     offer_owner_group: str
 ):
     sibling_part_requests = list(partRequestRepository.find(
-        {"specific_order_uid": parent_request_uid}, {}))
+        {"parent_request_uid": parent_request_uid}, {}))
 
     part_requests_with_offers = []
 

@@ -12,7 +12,7 @@ def find(filters):
 
 
 def find_by_group(group_id: str):
-    return database.db["GroupCars"].find({"group": group_id, "active": True}).sort("createdAt", DESCENDING)
+    return database.db["GroupCars"].find({"group": group_id, "active": True}).sort("_id", DESCENDING)
 
 
 def find_by_id(id: str):
