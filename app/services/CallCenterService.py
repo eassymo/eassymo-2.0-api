@@ -9,6 +9,8 @@ from bson import ObjectId
 
 def find(callcenter_id: str, filters: Dict[str, Any]) -> Dict[str, Any]:
     try:
+
+        is_filtering_by_management_list = False
         # Get groups linked to the callcenter
         groups_linked_to_callcenter = CallCenterConnectionRepository.find_many(
             {"callcenter_id": callcenter_id})
@@ -107,9 +109,17 @@ def find(callcenter_id: str, filters: Dict[str, Any]) -> Dict[str, Any]:
             filters.pop("statuses")
 
         if "managementListIds" in filters:
+
+            subscribed_sellers = _get_group_ids_from_management_lists(
+                filters["managementListIds"])
+
             filters = {**filters, "subscribedSellers": {
-                "$in": _get_group_ids_from_management_lists(filters["managementListIds"])
+                "$in": subscribed_sellers,
             }}
+
+            is_filtering_by_management_list = True
+
+            filters.pop("managementListIds")
 
         filters_for_part_requests = build_callcenter_requests_filters(
             callcenter_id, filters)
@@ -118,25 +128,52 @@ def find(callcenter_id: str, filters: Dict[str, Any]) -> Dict[str, Any]:
         part_requests_data = list(
             PartRequestRepository.find_for_call_center(filters))
 
+        all_request_ids = [str(pr.get("_id")) for pr in part_requests_data]
+
+        all_offers = list(OfferRepository.find({
+            "request_id": {"$in": all_request_ids},
+            "call_center_that_posted_offer._id": {"$in": [callcenter_id]}
+        }, {"group_id": 1, "request_id": 1}))
+
+        # Group offers by request_id for fast lookup
+        offers_by_request = {}
+        for offer in all_offers:
+            request_id = offer["request_id"]
+            if request_id not in offers_by_request:
+                offers_by_request[request_id] = []
+            offers_by_request[request_id].append(offer)
+
         part_requests = []
         for part_request_data in part_requests_data:
             part_request = PartRequest(**part_request_data)
 
             # Find all offers for this part request from any of the linked groups or callcenter
-            offers_for_part_request = list(OfferRepository.find(
-                {"request_id": part_request.id, "call_center_that_posted_offer._id": {"$in": [callcenter_id]}}, {
-                    "group_id": 1
-                }))
+            offers_for_part_request = offers_by_request.get(
+                part_request.id, [])
 
             part_request.offers_amount = len(offers_for_part_request)
 
             # Find which groups from the callcenter are subscribed to this part request
             subscribed_groups = [
                 seller for seller in part_request.subscribedSellers if seller in group_ids]
+            
+            if is_filtering_by_management_list:
+                subscribed_in_list = filters["subscribedSellers"].get("$in")
+                subscribed_groups = [seller for seller in subscribed_groups if seller in subscribed_in_list]
+
+                print(subscribed_groups)
 
             # Create a duplicate part request for each subscribed group
-            for group_id in subscribed_groups:
-                group_info = GroupRepository.find_by_id(group_id)
+
+            all_groups_info = list(GroupRepository.find({
+                "_id": {
+                    "$in": [ObjectId(subscribed_group_id) for subscribed_group_id in subscribed_groups]
+                }
+            }))
+
+            for group in all_groups_info:
+
+                group_id = str(group.get("_id"))
                 # Match offers to specific group
                 group_offers = [offer for offer in offers_for_part_request if offer.get(
                     "group_id") == group_id]
@@ -144,8 +181,8 @@ def find(callcenter_id: str, filters: Dict[str, Any]) -> Dict[str, Any]:
                 # Create group details as an object (not an array)
                 subscribed_group_details = {
                     "group_id": group_id,
-                    "owner": group_info.get("owner"),
-                    "group_name": group_info.get("name") if group_info else "Unknown",
+                    "owner": group.get("owner"),
+                    "group_name": group.get("name") if group else "Unknown",
                     "offers_count": len(group_offers),
                 }
 
@@ -192,16 +229,25 @@ def _get_group_ids_from_management_lists(management_list_ids: List[str]):
 
 def build_callcenter_requests_filters(callcenter_id: str, filters: Dict[str, Any]) -> Dict[str, Any]:
     try:
-        groups_linked_to_callcenter = CallCenterConnectionRepository.find_many(
-            {"callcenter_id": callcenter_id})
-
-        group_ids = [group.group_id for group in groups_linked_to_callcenter]
 
         filters = {
             **filters,
-            "subscribedSellers": {"$in": group_ids},
             "status": PartRequestStatus.CREATED.value
         }
+
+        if "subscribedSellers" in filters and len(filters.get("subscribedSellers")) > 0:
+
+            filters["subscribedSellers"] = filters.get("subscribedSellers")
+        else:
+            groups_linked_to_callcenter = CallCenterConnectionRepository.find_many(
+                {"callcenter_id": callcenter_id})
+
+            group_ids = [
+                group.group_id for group in groups_linked_to_callcenter]
+
+            filters["subscribedSellers"] = {
+                "$in": group_ids
+            }
 
         units = PartRequestRepository.distinct("part.unitOfMeasure", filters)
         statuses = PartRequestRepository.distinct("status", filters)
