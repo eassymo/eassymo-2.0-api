@@ -35,7 +35,10 @@ def find(
             filters["statuses"] = statuses
 
         if managementListIds != None:
-            filters["managementListIds"] = managementListIds.split(",") if managementListIds and "," in managementListIds else [] if managementListIds else []
+            if(managementListIds.find(",") != -1):
+                filters["managementListIds"] = managementListIds.split(",") if managementListIds and "," in managementListIds else [] if managementListIds else []
+            else:
+                filters["managementListIds"] = [managementListIds]
 
         groupSelected = request.state._state.get('groupSelected')
         response = CallCenterService.find(groupSelected, filters)
