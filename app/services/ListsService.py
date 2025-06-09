@@ -157,7 +157,10 @@ def get_followers_list(user_uid: str, group_id: str) -> List[Dict[str, Any]]:
         user_priority_list = list(listsRepository.find(
             {"user_uid": user_uid, "group_id": group_id, "is_priority": True}))
 
-        groups_in_priority_list = user_priority_list[0].get('groups')
+        groups_in_priority_list = {}
+
+        if len(groups_in_priority_list) > 0:
+         groups_in_priority_list = user_priority_list[0].get('groups')
 
         groups_that_added_current_group = [list_data.get(
             'group_id') for list_data in lists_user_appears]

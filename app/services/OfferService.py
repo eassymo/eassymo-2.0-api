@@ -16,7 +16,7 @@ from app.repositories import CallCenterConnectionRepository as callCenterConnect
 from app.schemas.Order import Order, OrderStatus
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from typing import List
+from typing import List, Optional
 
 
 def insert(payload: Offer):
