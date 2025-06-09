@@ -14,6 +14,7 @@ from enum import Enum
 class PartRequestStatus(Enum):
     CREATED = "Created"
     OFFER_SELECTED = "Offer_selected"
+    PENDING = "Pending"
 
 
 class PartRequest(BaseModel):
