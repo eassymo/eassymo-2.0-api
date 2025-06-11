@@ -15,15 +15,48 @@ def find(filters):
         user_uid = filters["userUid"]
         group_id = filters["group_id"]
 
-        filters = build_filters(filters)
-        print(filters)
-        results = list(censusRepository.find(
-            filters, filters["limit"], filters["page"]))
+        # Check if this is a geospatial search
+        is_geospatial_search = (filters.get("lat") is not None and 
+                               filters.get("lng") is not None and 
+                               filters.get("range_km") is not None)
+
+        built_filters = build_filters(filters)
+        print(built_filters)
+        
+        if is_geospatial_search:
+            # Use geospatial aggregation for location-based search
+            range_meters = filters["range_km"] * 1000
+            results = list(censusRepository.find_with_geospatial(
+                built_filters, 
+                filters["lat"], 
+                filters["lng"], 
+                range_meters,
+                built_filters["limit"], 
+                built_filters["page"]
+            ))
+            # For geospatial search, we can't easily get accurate counts, so approximate
+            total_count = len(results)  # This is just the current page count
+            group_count = sum(1 for r in results if r.get("group_reference_id"))
+        else:
+            # Use regular find for non-geospatial searches
+            results = list(censusRepository.find(
+                built_filters, built_filters["limit"], built_filters["page"]))
+            counts = censusRepository.count(built_filters)
+            total_count = counts["total_count"]
+            group_count = counts["group_count"]
+        
+        # Apply status checking to results
         results = check_census_status(user_uid, results, group_id)
-        counts = censusRepository.count(filters)
-        total_count = counts["total_count"]
-        group_count = counts["group_count"]
-        return {"message": "ok", "body": results, "count": total_count, "group_count": group_count, "page": filters["page"], "limit": filters["limit"]}
+        
+        return {
+            "message": "ok", 
+            "body": results, 
+            "count": total_count, 
+            "group_count": group_count, 
+            "page": built_filters["page"], 
+            "limit": built_filters["limit"],
+            "is_geospatial_search": is_geospatial_search
+        }
     except PyMongoError as err:
         return {"message": f'Error getting items from census {err}'}
 
@@ -66,11 +99,23 @@ def build_filters(parameters):
             conditions.append({"Entity_Type": 2})
 
     # Apply state and city filters directly to the filters dictionary instead of conditions
+    # Create location OR conditions
+    location_conditions = []
+    
     if parameters["Entity_Location_State"] is not None and len(parameters["Entity_Location_State"]) > 0:
-        filters["Entity_Location_State"] = parameters["Entity_Location_State"]
+        location_conditions.append({"Entity_Location_State": parameters["Entity_Location_State"]})
 
     if parameters["Entity_Address_City"] is not None and len(parameters["Entity_Address_City"]) > 0:
-        filters["Entity_Address_City"] = parameters["Entity_Address_City"]
+        location_conditions.append({"Entity_Address_City": parameters["Entity_Address_City"]})
+    
+    # Add OR condition if any location filters exist
+    if len(location_conditions) > 0:
+        if len(location_conditions) == 1:
+            # If only one condition, add it directly
+            filters.update(location_conditions[0])
+        else:
+            # If multiple conditions, use $or
+            filters["$or"] = location_conditions
 
     if "show_only_census" in parameters and parameters["show_only_census"] is not None:
         conditions.append({
@@ -79,6 +124,25 @@ def build_filters(parameters):
                 {"group_reference_id": {"$exists": False}}
             ]
         })
+    
+    # Handle geospatial search
+    if (parameters.get("lat") is not None and 
+        parameters.get("lng") is not None and 
+        parameters.get("range_km") is not None):
+        
+        # Convert kilometers to meters (MongoDB uses meters)
+        range_meters = parameters["range_km"] * 1000
+        
+        # Add geospatial query using $near
+        filters["location"] = {
+            "$near": {
+                "$geometry": {
+                    "type": "Point",
+                    "coordinates": [parameters["lng"], parameters["lat"]]  # [longitude, latitude]
+                },
+                "$maxDistance": range_meters
+            }
+        }
     
     # If we have conditions, combine them with $and
     if conditions:
