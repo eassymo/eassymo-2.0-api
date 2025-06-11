@@ -3,6 +3,7 @@ from enum import Enum
 from datetime import datetime
 from typing import Optional, List
 from bson import ObjectId
+from app.schemas.GeoJsonLocation import GeoJson
 
 
 class GroupType(Enum):
@@ -20,7 +21,7 @@ class GroupSchema(BaseModel):
     city: str = Field(None, description="location city of the group")
     country: Optional[str] = Field(
         "Mexico", description="country of the group")
-    location: Optional[object] = Field(
+    location: Optional[GeoJson] = Field(
         None, description="location lat lng of the group")
     phone:  Optional[str] = Field(None, description="")
     email:  Optional[str] = Field(None, description="email")

@@ -26,7 +26,11 @@ def find(
         None, title="show_only_census", description="Show only census"),
     Entity_Type: Optional[str] = Query(None, title="Entity_Type"),
     Entity_Location_State: Optional[str] = Query(None, title="Entity_Location_State"),
-    Entity_Address_City: Optional[str] = Query(None, title="Entity_Address_City")
+    Entity_Address_City: Optional[str] = Query(None, title="Entity_Address_City"),
+    lat: Optional[float] = Query(None, title="lat", description="Latitude for geospatial search"),
+    lng: Optional[float] = Query(None, title="lng", description="Longitude for geospatial search"),
+    range_km: Optional[float] = Query(None, title="range_km", description="Search radius in kilometers"),
+    limit: Optional[int] = Query(50, title="limit")
 ):
     user = request.state._state.get('user')
     groupSelected = request.state._state.get('groupSelected')
@@ -41,9 +45,13 @@ def find(
         "show_only_census": show_only_census,
         "Entity_Location_State": Entity_Location_State,
         "Entity_Address_City": Entity_Address_City,
-        "limit": params.dict()["size"],
+        "lat": lat,
+        "lng": lng,
+        "range_km": range_km,
+        "limit": limit ,
         "page":  params.dict()["page"]
     }
+    print(parameters)
     census_items = typeUtilities.parse_json(censusService.find(parameters))
 
     return JSONResponse(status_code=status.HTTP_200_OK, content=census_items)

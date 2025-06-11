@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field, model_validator
 from typing import Optional, Dict, Any
 from bson import ObjectId
+from app.schemas.GeoJsonLocation import GeoJson
 
 class CensusSchema(BaseModel):
     id: Optional[str] = Field(None, alias="_id")
@@ -18,8 +19,8 @@ class CensusSchema(BaseModel):
     Entity_Address_City: Optional[str] = Field(None, description="City")
     Entity_Location_State: Optional[str] = Field(None, description="State")
     Entity_Phone: Optional[int] = Field(None, description="Phone")
-    Entity_Location_Lat: Optional[str] = Field(None, description="lat")
-    Entity_Location_Lon: Optional[str] = Field(None, description="lng")
+    Entity_Location_Lat: Optional[Any] = Field(None, description="lat")
+    Entity_Location_Lon: Optional[Any] = Field(None, description="lng")
     Entity_Stat_Nr1: Optional[int] = Field(None, description="Nr1")
     Entity_Stat_Nr2: Optional[str] = Field(None, description="Nr2")
     Entity_Stat_Activity_Code: Optional[int] = Field(
@@ -47,6 +48,9 @@ class CensusSchema(BaseModel):
         None, description="reference of eassymo group")
     Entity_Active: Optional[str] = Field(default="Y")
     can_be_invited: Optional[bool] = Field(None)
+    location: Optional[GeoJson] = Field(None, description="GeoJSON location coordinates")
+    distance_meters: Optional[float] = Field(None, description="Distance in meters from search point")
+    distance_km: Optional[float] = Field(None, description="Distance in kilometers from search point")
 
     @model_validator(mode='before')
     @classmethod
