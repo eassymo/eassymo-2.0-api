@@ -297,7 +297,7 @@ def verify_for_similitudes(lat: float, lng: float, name: str, range_meters=500):
                 search_name_lower, entity_name_lower)
 
             # Consider it a match if similarity is above threshold (0.6 = 60%)
-            if similarity_score >= 0.6:
+            if similarity_score >= 0.7:
                 census_schema = CensusSchema(**census_data)
                 result = census_schema.toJson()
                 result["similarity_score"] = similarity_score
