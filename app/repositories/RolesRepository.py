@@ -2,8 +2,8 @@ from app.config import database
 from bson import ObjectId
 
 
-def find():
-    return database.db["Roles"].find({})
+def find(filters):
+    return database.db["Roles"].find(filters)
 
 
 def find_by_id(id: str):

@@ -18,6 +18,7 @@ def insert(payload: UserRoles) -> str:
 
         if len(currentUserRoles) > 0:
             raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
                 detail="Role already exists for user, role type and group")
 
         return str(UserRolesRepository.insert(payload).inserted_id)
