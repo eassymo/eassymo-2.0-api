@@ -13,9 +13,15 @@ partRequestRouter = APIRouter(prefix="/partRequest")
 
 
 @partRequestRouter.post("", response_description="Created id of the part request", tags=["PartRequest"])
-def create(payload: PartRequest):
+def create(request: Request, payload: PartRequest):
     try:
-        response = partRequestService.insert(payload)
+        # Extract user token from Authorization header
+        user_token = None
+        authorization = request.headers.get("Authorization")
+        if authorization and authorization.startswith("Bearer "):
+            user_token = authorization.replace("Bearer ", "")
+        
+        response = partRequestService.insert(payload, user_token)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except Exception as e:
         return JSONResponse(content=get_unsuccessful_response(e))

@@ -38,6 +38,7 @@ class GroupSchema(BaseModel):
     owner: Optional[str] = Field(None, description="User owner")
     can_be_invited: Optional[bool] = Field(None)
     is_callcenter: Optional[bool] = Field(False)
+    is_commissioner: Optional[bool] = Field(False, description="Makrs if the group will be of type commission")
 
     @root_validator(pre=True)
     def convert_objectId(cls, value):

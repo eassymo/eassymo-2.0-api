@@ -25,8 +25,11 @@ def insert(payload: ListsSchema = Body()):
         return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=get_unsuccessful_response(str(e)))
 
 
-@listRouter.get("/{userId}/{groupId}", response_description="created lists for user", tags=["Lists"])
-def find_lists(userId: str, groupId: str):
+@listRouter.get("", response_description="created lists for user", tags=["Lists"])
+def find_lists(userId: str = Query(None, title="userId",
+                          description="The current selected user"), 
+               groupId: str = Query(None, title="groupId",
+                          description="The current selected group")):
     response = typeUtilities.parse_json(
         listService.get_lists_by_user_and_group(userId, groupId))
     return JSONResponse(status_code=status.HTTP_201_CREATED, content=response)

@@ -1,0 +1,35 @@
+from pydantic import BaseModel
+
+from enum import Enum
+
+class NotificationType(Enum):
+    PART_REQUEST_CREATED = 'PART_REQUEST_CREATED'
+    OFFER_CREATED = 'OFFER_CREATED'
+    OFFER_SELECTED = 'OFFER_SELECTED'
+    ORDER_CONFIRMED = 'ORDER_CONFIRMED'
+    ORDER_READY_TO_BE_SENT = 'ORDER_READY_TO_BE_SENT'
+    ORDER_SENT = 'ORDER_SENT'
+    ORDER_RECIEVED = 'ORDER_RECIEVED'
+    ORDER_CANCELED = 'ORDER_CANCELED'
+    INVITE_ACCEPTED = 'INVITE_ACCEPTED'
+    PART_REQUEST_INVITE = 'PART_REQUEST_INVITE'
+    CALLCENTER_CONNECTED_GROUP_SELECTED_FOR_REQUEST = 'CALLCENTER_CONNECTED_GROUP_SELECTED_FOR_REQUEST'
+    OFFER_APPROVAL_REQUEST = 'OFFER_APPROVAL_REQUEST'
+    CALLCENTER_OFFER_APPROVAL_APPROVED = 'CALLCENTER_OFFER_APPROVAL_APPROVED'
+    WORKSHOP_PENDING_APPROVAL = 'WORKSHOP_PENDING_APPROVAL',
+    OFFER_SELECTED_BY_COMMISSIONER_TO_ORIGIN_GROUP = 'OFFER_SELECTED_BY_COMMISSIONER_TO_ORIGIN_GROUP'
+
+class Notification(BaseModel):
+    type: NotificationType
+    message: str
+    ownerGroup: str
+    owner: str
+    metaData: dict
+    visibleRoles: list[str] | None = None
+    uid: str | None = None
+    navigateToUrl: str | None = None
+    read: bool
+    timestamp: int | None = None
+    id: str | None = None
+    callcenterId: str | None = None
+    callcenterName: str | None = None

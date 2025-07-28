@@ -1,5 +1,5 @@
 from fastapi.responses import JSONResponse
-from fastapi import APIRouter, Body, status, Query
+from fastapi import APIRouter, Body, status, Query, Request
 from app.schemas.Offer import Offer
 from app.services import OfferService as offerService
 from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response
@@ -9,9 +9,14 @@ offerRouter = APIRouter(prefix="/offer")
 
 
 @offerRouter.post("", description="Creation of an offer for a request", tags=["Offers"])
-def insert(payload: Offer = Body(...)):
+def insert(request: Request, payload: Offer = Body(...)):
     try:
-        response = offerService.insert(payload)
+        user_token = None
+        authorization = request.headers.get("Authorization")
+        if authorization and authorization.startswith("Bearer "):
+            user_token = authorization.replace("Bearer ", "")
+
+        response = offerService.insert(payload, user_token)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except Exception as e:
         return JSONResponse(content=get_unsuccessful_response(e))
@@ -82,10 +87,15 @@ def find_offer_by_id(id: str):
 
 
 @offerRouter.post("/change-offer-status", tags=["Offers"])
-def change_offer_status(payload=Body(...)):
+def change_offer_status(request: Request, payload=Body(...)):
     try:
+        user_token = None
+        authorization = request.headers.get("Authorization")
+        if authorization and authorization.startswith("Bearer "):
+            user_token = authorization.replace("Bearer ", "")
+
         response = offerService.change_offer_status(
-            request_id=payload["request_id"], offer_id=payload["offer_id"], status=payload["status"])
+            request_id=payload["request_id"], offer_id=payload["offer_id"], status=payload["status"], user_token=user_token)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
         return JSONResponse(content=get_unsuccessful_response(e))

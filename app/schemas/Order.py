@@ -8,6 +8,8 @@ from typing import List, Optional
 from bson import ObjectId
 from uuid import uuid4
 from zoneinfo import ZoneInfo
+from app.schemas.PartRequest import PartRequest
+from app.schemas.Groups import GroupSchema
 
 
 class OrderStatus(Enum):
@@ -65,6 +67,8 @@ class Order(BaseModel):
     current_deliver_promise_delayed: Optional[bool] = Field(
         None, description="This is marked as true in case the new deliver promise is greater than the previous promise time")
     updated_at: datetime = Field(default=datetime.now(ZoneInfo('UTC')))
+    offer_group: Optional[GroupSchema] = Field(None)
+    request_group: Optional[GroupSchema] = Field(None)
 
     @root_validator(pre=True)
     def convert_objectId(cls, values):
@@ -82,6 +86,12 @@ class Order(BaseModel):
 
         for histoic_status in self.status_history:
             historical_status.append(histoic_status.toJson())
+
+        if self.offer_group != None:
+            data["offer_group"] = self.offer_group.toJson()
+
+        if self.request_group != None:
+            data["request_group"] = self.request_group.toJson()
 
         data["status_history"] = historical_status
         data["status"] = self.status.value

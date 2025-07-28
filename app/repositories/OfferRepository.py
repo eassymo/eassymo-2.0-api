@@ -1,9 +1,8 @@
 from app.config import database
 from app.schemas.Offer import Offer
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from bson import ObjectId
-from pymongo import ReturnDocument, ASCENDING
-from typing import List
+from pymongo import ReturnDocument, ASCENDING, DESCENDING
 from app.schemas.Offer import OfferStatus
 
 
@@ -97,15 +96,18 @@ def find_by_request_id_and_group(request_id: str, group_ids: List[str], is_callc
     ])
 
 
-def find_by_request_ids(request_ids, group_id):
+def find_by_request_ids(request_ids, group_id, additional_filters: None | Dict[str, any] = None):
     filters = {
         "request_id": {"$in": request_ids}
     }
 
+    if additional_filters != None:
+        filters = {**filters, **additional_filters}
+
     if group_id is not None and len(group_id) > 0:
         filters["group_id"] = group_id
 
-    return database.db["Offers"].find(filters)
+    return database.db["Offers"].find(filters).sort("_id", DESCENDING)
 
 
 def build_filter(propName):
@@ -144,14 +146,21 @@ def find_with_part_request(filters):
     ])
 
 
-def get_ranked_offers(offer_ids: List[ObjectId]):
+def get_ranked_offers(offer_ids: List[ObjectId], extra_status: Optional[List[Dict[str, Any]]] = None):
+
+    status_list = [
+        {"status": OfferStatus.created.value},
+        {"status": OfferStatus.selected.value},
+    ]
+
+    if extra_status is not None:
+        status_list.extend(extra_status)
+
+
     return database.db["Offers"].find(
         {
             "_id": {"$in": offer_ids},
-            "$or": [
-                {"status": OfferStatus.created.value},
-                {"status": OfferStatus.selected.value}
-            ]
+            "$or": status_list
         }
     ).sort('price', ASCENDING)
 

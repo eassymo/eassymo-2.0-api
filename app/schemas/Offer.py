@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, root_validator
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from enum import Enum
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -7,14 +7,13 @@ from bson import ObjectId
 from app.schemas.Groups import GroupSchema
 
 # TODO: THE BRANDS ARE A DIFFERENT COLLECTION
-
-
 class OfferType(Enum):
     PartOffer = "PartOffer"
 
 
 class OfferStatus(Enum):
     created = "Created"
+    workshop_approval_pending = "Workshop_Approval_Pending"
     pending_approval = "Pending_Approval"
     selected = "Selected"
     rejected = "Rejected"
@@ -56,6 +55,8 @@ class Offer(BaseModel):
         default=datetime.now(ZoneInfo('UTC')))
     call_center_user_that_posted_offer: Optional[str] = Field(None)
     call_center_that_posted_offer: Optional[GroupSchema] = Field(None, description="call center that created the offer")
+    request_info: Optional[Dict[str, Any]] = Field(None)
+    commissioner_price: Optional[float] = Field(None)
 
     @root_validator(pre=True)
     def convert_objectId(cls, values):

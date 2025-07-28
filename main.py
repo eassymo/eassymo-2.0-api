@@ -21,6 +21,7 @@ from app.routers import UserRolesRouter as userRolesRouter
 from app.routers import CallCenterConnectionRouter as callCenterConnectionRouter
 from app.routers import CallCenterRouter as callCenterRouter
 from app.routers import CallCenterManagementListRouter as callCenterManagementListRouter
+from app.routers import CommissionerRoutes as commissionerRoutes
 import app.utils.firebase_admin
 
 from fastapi.middleware.cors import CORSMiddleware
@@ -70,7 +71,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 app.include_router(userRouter.userRouter)
 app.include_router(rolesRouter.rolesRouter)
 app.include_router(censusRouter.censusRouter)
@@ -93,3 +93,4 @@ app.include_router(userRolesRouter.userRolesRouter)
 app.include_router(callCenterConnectionRouter.callCenterConnectionRouter)
 app.include_router(callCenterRouter.callCenterRouter)
 app.include_router(callCenterManagementListRouter.callCenterManagementListRouter)
+app.include_router(commissionerRoutes.commissionerRouter)

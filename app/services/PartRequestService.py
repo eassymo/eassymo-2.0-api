@@ -1,8 +1,10 @@
 from app.repositories import PartRequestRepository as partRequestRepository
 from app.schemas.PartRequest import PartRequest, PartRequestEdit, PartRequestStatus
+from app.schemas.Offer import OfferStatus
 from app.repositories import GroupCarRepository as groupCarRepository
 from app.repositories import GroupRepository as groupRepository
 from app.repositories import OfferRepository as offerRepository
+from app.repositories import ListsRepository as listRepository
 from app.schemas.Groups import GroupType, GroupSchema
 from app.schemas.Offer import Offer
 from fastapi import HTTPException, status
@@ -11,11 +13,19 @@ from bson import ObjectId
 from typing import List, Any, Dict
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from app.services import GroupService as groupService
+from app.factories.NotificationsCreator import (
+    create_part_request_notification,
+)
+from app.utils.notifications import send_notification
 
 
-def insert(part_request: PartRequest):
+def insert(part_request: PartRequest, user_token: str = None):
     try:
         inserted_ids = []
+
+        users_from_groups: List[str] = []
+
         if part_request.parent_request_uid != None and len(part_request.parent_request_uid) > 0:
             parent_request_uid = part_request.parent_request_uid
         else:
@@ -23,6 +33,26 @@ def insert(part_request: PartRequest):
         part_req = part_request.dict()
         vehicle_information = groupCarRepository.find_by_id(
             part_req["vehicleId"])
+
+        creator_group_data = groupRepository.find_by_id(
+            part_request.creatorGroup)
+
+        if creator_group_data != None:
+            part_request.group_info = GroupSchema(**creator_group_data)
+
+        subscribed_sellers = part_request.subscribedSellers
+
+        if part_request.commissioner_group != None:
+            nearby_commissioner_groups = __find_commissioner_group_connections(
+                creator_group_id=part_request.creatorGroup,
+                commissioner_group_id=part_request.commissioner_group
+            )
+
+            users_from_groups = nearby_commissioner_groups["users_from_groups"]
+
+            for commissioner_group in nearby_commissioner_groups["commissioner_groups_from_lists"]:
+                if commissioner_group.id not in subscribed_sellers:
+                    subscribed_sellers.append(commissioner_group.id)
 
         for car_part in part_request.partList:
             part_request_payload = {
@@ -32,6 +62,7 @@ def insert(part_request: PartRequest):
                 "parent_request_uid": parent_request_uid,
                 "status": part_request.status.value,
                 "specific_order_uid": part_request.specific_order_uid,
+                "subscribedSellers": subscribed_sellers,
                 "createdAt": datetime.now(ZoneInfo('UTC'))
             }
             del part_request_payload["partList"]
@@ -45,10 +76,106 @@ def insert(part_request: PartRequest):
         found_part_requests = [__format_part_request(
             part_request) for part_request in found_part_requests]
 
+        if part_request.commissioner_group != None and user_token:
+            for part_part_request in found_part_requests:
+                __build_and_send_commissioner_notifications(
+                    users_from_groups=users_from_groups,
+                    part_request_data=part_part_request,
+                    creator_group_id=part_request.creatorGroup,
+                    creator_name=part_request.group_info.name,
+                    user_token=user_token
+                )
+
         return found_part_requests
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f'Error while inserting part request {e}')
+
+
+def __find_commissioner_group_connections(creator_group_id: str, commissioner_group_id: str) -> Dict[str, Any]:
+    # TODO: Encontrar a los grupos del comisionado que esten cercanos a el grupo que esta creando la solicitud
+    try:
+        creator_group_data = groupRepository.find_by_id(creator_group_id)
+        if creator_group_data != None:
+            creator_group = GroupSchema(**creator_group_data)
+
+            if creator_group.location is None:
+                return []
+
+            commissioner_group_lists = list(
+                listRepository.find_all_groups_in_user_lists(None, commissioner_group_id))
+
+            all_group_ids = []
+            for list_data in commissioner_group_lists:
+                if 'all_groups' in list_data:
+                    all_group_ids.extend(list_data['all_groups'])
+
+            unique_group_ids = list(set(all_group_ids))
+
+            if not unique_group_ids:
+                return []
+
+            users_from_groups = groupService.find_users_by_groups_ids_v2(
+                unique_group_ids)
+
+            nearby_groups = list(groupRepository.find_within_radius(
+                group_ids=unique_group_ids,
+                center_location=creator_group.location.dict(),
+                radius_meters=500
+            ))
+
+            commissioner_groups_from_lists: List[GroupSchema] = []
+            for group_data in nearby_groups:
+                commissioner_groups_from_lists.append(
+                    GroupSchema(**group_data))
+
+            return {
+                "commissioner_groups_from_lists": commissioner_groups_from_lists,
+                "users_from_groups": users_from_groups
+            }
+        else:
+            return []
+
+    except HTTPException as e:
+        raise HTTPException(e)
+
+
+def build_and_send_notification(
+    user_id: str,
+    group_id: str,
+    created_part_request_id: str,
+    part_name: str,
+    store_name: str,
+    user_token: str
+) -> None:
+    try:
+        # Handle different user_id formats
+        if isinstance(user_id, dict):
+            owner_id = user_id.get("_id") or user_id.get(
+                "uid") or user_id.get("id")
+        else:
+            owner_id = user_id
+
+        if not owner_id:
+            print(f"⚠️ Warning: Invalid user_id format: {user_id}")
+            return
+
+        notification = create_part_request_notification(
+            store_name=store_name,
+            part_name=part_name,
+            owner=owner_id,
+            owner_group=group_id,
+            navigate_to_url=f"/dashboard/part-request/{created_part_request_id}",
+            meta_data={"requestId": created_part_request_id}
+        )
+
+        send_notification(notification, user_token)
+
+    except Exception as error:
+        print(f"❌ Critical error in notification system: {error}")
+        print(
+            f"📧 Failed notification - User: {user_id}, Part: {part_name}, Store: {store_name}")
+        # Log the error but don't re-raise to avoid breaking part request creation
 
 
 def __format_part_request(part_request):
@@ -182,14 +309,12 @@ def find_grouped(
         part_requests = list(
             partRequestRepository.find_grouped(filters, skip, limit))
 
-        print(part_requests)
-
         if len(part_requests) > 0:
             found_offers = __find_offers_for_requests(
                 part_requests, group_id if role == GroupType.CAR_SHOP.value else None)
 
             __format_offers_with_found_requests(
-                requests=part_requests, offers=found_offers)
+                requests=part_requests, offers=found_offers, group_id=group_id)
             __format_grouped_part_requests(part_requests)
 
         total_count = partRequestRepository.count_grouped(filters)
@@ -218,10 +343,10 @@ def __find_offers_for_requests(requests, group_id: str):
     return offers_found
 
 
-def __format_offers_with_found_requests(requests, offers):
+def __format_offers_with_found_requests(requests, offers, group_id: str):
     for request in requests:
         offers_found = __filter_part_offer_by_request_id(
-            offers, str(request["_id"]))
+            offers, request, group_id)
         if len(offers_found) > 0:
             request["offers"] = offers_found
         else:
@@ -241,17 +366,27 @@ def __format_grouped_part_requests(part_requests):
         part_request["updatedAt"] = str(part_request["updatedAt"])
 
 
-def __filter_part_offer_by_request_id(offers, requestId):
+def __filter_part_offer_by_request_id(offers, request, group_id: str):
+
+    creator_group = str(request["creatorGroup"].get("_id"))
+
     matching_offers = [
         offer for offer in offers
-        if offer["request_id"] == requestId
+        if offer["request_id"] == str(request["_id"])
     ]
+
+    if len(matching_offers) > 0:
+        if group_id == creator_group:
+            matching_offers = [
+                offer for offer in matching_offers if offer["status"] != OfferStatus.pending_approval.value
+        ]
 
     for offer in matching_offers:
         offer["_id"] = str(offer["_id"])
         offer["to_be_delivered_time"] = str(offer["to_be_delivered_time"])
         offer["updatedAt"] = str(offer["updatedAt"])
         offer["createdAt"] = str(offer["createdAt"])
+
     return matching_offers
 
 
@@ -554,3 +689,49 @@ def join_seller_to_part_request(parent_request_id: str | None, new_seller_group_
         return edited_part_request_ids
     except HTTPException as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
+
+
+def __build_and_send_commissioner_notifications(
+    users_from_groups: List[str],
+    part_request_data: Dict[str, Any],
+    creator_group_id: str,
+    creator_name: str,
+    user_token: str
+):
+    """
+    Build and send notifications to commissioner group users
+
+    Args:
+        users_from_groups: List of user IDs from nearby commissioner groups
+        part_request_data: The part request data
+        creator_group_id: The ID of the group that created the request
+        creator_name: The name of the creator group
+        user_token: Firebase user ID token for authentication
+    """
+    if not users_from_groups:
+        print("ℹ️ No commissioner users found for notifications")
+        return
+
+    notification_errors = []
+
+    for user in users_from_groups:
+        try:
+            for user_uid in user["users"]:
+                build_and_send_notification(
+                    user_id=user_uid,
+                    group_id=user.get("_id"),
+                    created_part_request_id=part_request_data["_id"],
+                    part_name=part_request_data["part"]["tipoParteDescripcion"],
+                    store_name=creator_name,
+                    user_token=user_token
+                )
+        except Exception as error:
+            notification_errors.append(f"group {user}: {error}")
+
+    if notification_errors:
+        print(f"⚠️ Some commissioner notifications failed:")
+        for error in notification_errors:
+            print(f"   - {error}")
+    else:
+        print(
+            f"✅ All commissioner notifications sent successfully ({len(users_from_groups)} users)")

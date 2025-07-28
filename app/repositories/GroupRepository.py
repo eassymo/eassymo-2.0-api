@@ -13,9 +13,9 @@ def find(filters: Dict[str, Any], projection: Optional[Dict[str, Any]] = {}):
     return database.db["groups"].find(filters, projection)
 
 
-def find_by_id(id: str):
+def find_by_id(id: str, projection: Dict[str, Any] = None):
     mongo_id = ObjectId(id)
-    return database.db["groups"].find_one({"_id": mongo_id})
+    return database.db["groups"].find_one({"_id": mongo_id}, projection)
 
 
 def find_by_user(uid: str):
@@ -24,6 +24,21 @@ def find_by_user(uid: str):
 
 def find_by_id_list(ids: List[ObjectId]):
     return database.db["groups"].find({"_id": {"$in": ids}})
+
+
+def find_within_radius(group_ids: List[str], center_location: Dict[str, Any], radius_meters: int = 500):
+    """Find groups within a specific radius of a center location"""
+    object_ids = [ObjectId(group_id) for group_id in group_ids]
+    
+    return database.db["groups"].find({
+        "_id": {"$in": object_ids},
+        "location": {
+            "$near": {
+                "$geometry": center_location,
+                "$maxDistance": radius_meters
+            }
+        }
+    })
 
 
 def distinct_by_id():
