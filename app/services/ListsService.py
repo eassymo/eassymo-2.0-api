@@ -63,9 +63,13 @@ def check_if_name_is_repeated(name: str, user_uid: str, group_id: str) -> bool:
     return len(results_found) > 0
 
 
-def get_lists_by_user_and_group(user_uid: str, group_id: str):
+def get_lists_by_user_and_group(user_uid: str | None, group_id: str):
     try:
-        filters = {"user_uid": user_uid, "group_id": group_id}
+        filters = {"group_id": group_id}
+
+        if user_uid != None:
+            filters["user_uid"] = user_uid,
+
         user_lists = list(
             listsRepository.find_by_user_and_group(filters))
         user_lists = [ListsSchema(**list_data).toJson()

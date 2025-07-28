@@ -127,6 +127,10 @@ def find(filters):
     ])
 
 
+def find_one(filters):
+    return database.db["Orders"].find_one(filters)
+
+
 def edit(id: ObjectId, new_data):
     return database.db["Orders"].find_one_and_update(
         {"_id": id},

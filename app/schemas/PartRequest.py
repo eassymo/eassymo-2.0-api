@@ -47,6 +47,7 @@ class PartRequest(BaseModel):
         None, description="this is a field that is calculated in the runtime to determine if we should show the ranking for all users")
     group_info: Optional[GroupSchema] = Field(None, description="detailed information of the group")
     offers_amount: Optional[int] = Field(None)
+    commissioner_group: Optional[str] = Field(None)
 
     @root_validator(pre=True)
     def convert_objectId(cls, values):

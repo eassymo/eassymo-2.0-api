@@ -8,6 +8,7 @@ from app.schemas.Brand import Brand
 from app.schemas.Guarantee import Guarantee
 from app.schemas.PartRequest import PartRequest, PartRequestStatus
 from app.schemas.Groups import GroupSchema
+from app.schemas.Notification import Notification
 from fastapi import HTTPException, status
 from uuid import uuid4
 from app.schemas.Offer import OfferStatus, OfferType
@@ -17,9 +18,12 @@ from app.schemas.Order import Order, OrderStatus
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import List, Optional
+from app.factories.NotificationsCreator import (
+    create_offer_workshop_approval, create_offer_notification)
+from app.utils.notifications import send_notification
 
 
-def insert(payload: Offer):
+def insert(payload: Offer, user_token: str):
     try:
         if payload.offer_group_uid == None:
             offer_group_uid = str(uuid4())
@@ -59,6 +63,20 @@ def insert(payload: Offer):
 
         payload.createdAt = datetime.now(ZoneInfo('UTC'))
 
+        part_request_data = partRequestRepository.find_one_by_id(
+            payload.request_id)
+
+        part_request: PartRequest | None = None
+
+        if part_request_data != None:
+            part_request = PartRequest(**part_request_data)
+
+            if part_request.commissioner_group != None:
+                payload.status = OfferStatus.workshop_approval_pending
+
+                __send_workshop_notification_for_approval(
+                    part_request.creatorGroup, part_request, payload, user_token)
+
         offer_payload = payload.toJson()
 
         offer_payload.pop('_id')
@@ -69,6 +87,32 @@ def insert(payload: Offer):
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f'Error while creating offer Error: {e}')
+
+
+def __send_workshop_notification_for_approval(request_creator_id: str,
+                                              part_request_data: PartRequest,
+                                              offer_data: Offer,
+                                              user_token: str
+                                              ):
+
+    request_creator_user_list = groupRepository.find_users_by_group_id(
+        request_creator_id)
+
+    if request_creator_user_list == None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail='Cannot find users to notify')
+
+    for user_id in request_creator_user_list.get("users"):
+        build_and_send_notification(
+            user_id=user_id,
+            group_id=request_creator_id,
+            part_name=part_request_data.part.get("tipoParteDescripcion"),
+            offer_id=offer_data.id,
+            part_request_id=part_request_data.id,
+            store_name=offer_data.group_info.name,
+            user_token=user_token,
+            status=OfferStatus.workshop_approval_pending
+        )
 
 
 def find(filters: Offer):
@@ -85,12 +129,14 @@ def find_by_request_id_and_group(part_request_id: str, group_id: str):
 
         group_ids = []
 
-        part_request_data = list(partRequestRepository.find_by_id(part_request_id))
+        part_request_data = list(
+            partRequestRepository.find_by_id(part_request_id))
 
         if len(part_request_data) > 0:
             part_request = PartRequest(**part_request_data[0])
         else:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Part Request not found")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Part Request not found")
 
         if group_id != None:
             group_info = groupRepository.find_by_id(group_id)
@@ -265,7 +311,7 @@ def find_offer_by_id(offer_uid: str):
             status_code=500, detail=f'Error while fetching offer {e}')
 
 
-def change_offer_status(request_id: str, offer_id: str, status: str):
+def change_offer_status(request_id: str, offer_id: str, status: str, user_token: str):
     try:
         part_request: PartRequest = _get_part_request_data(request_id)
         offer: Offer = _get_offer_data(offer_id)
@@ -274,6 +320,15 @@ def change_offer_status(request_id: str, offer_id: str, status: str):
         match offer_status:
             case offer_status.created:
                 offer.update_status(OfferStatus.created)
+            case offer_status.pending_approval:
+                if offer.status == OfferStatus.workshop_approval_pending:
+                    __create_workshop_approved_for_commissioner_notification(
+                        part_request.commissioner_group,
+                        part_request,
+                        offer,
+                        user_token
+                    )
+                offer.update_status(OfferStatus.pending_approval)
             case offer_status.selected:
                 part_request.update_status(PartRequestStatus.OFFER_SELECTED)
                 offer.update_status(OfferStatus.selected)
@@ -303,10 +358,55 @@ def change_offer_status(request_id: str, offer_id: str, status: str):
             status_code=500, detail=f'Error while changing offer status {e}')
 
 
+def __create_workshop_approved_for_commissioner_notification(
+    commissioner_id: str,
+    part_request_data: PartRequest,
+    offer_data: Offer,
+    user_token: str
+):
+
+    commissioner_user_list = groupRepository.find_users_by_group_id(
+        commissioner_id)
+
+    if commissioner_user_list == None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail='Cannot find users to notify')
+
+    for user_id in commissioner_user_list.get("users"):
+        build_and_send_notification(
+            user_id=user_id,
+            group_id=commissioner_id,
+            part_name=part_request_data.part.get("tipoParteDescripcion"),
+            offer_id=offer_data.id,
+            part_request_id=part_request_data.id,
+            store_name=offer_data.group_info.name,
+            user_token=user_token,
+            status=OfferStatus.pending_approval
+        )
+
+
 def get_ranked_offers(request_id: str):
 
-    found_offers = list(offerRepository.find({"request_id": request_id, "status": {
-                        "$in": [OfferStatus.created.value, OfferStatus.selected.value]}}))
+    found_request = partRequestRepository.find_one_by_id(request_id)
+
+    if found_request == None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail=f'Part Request with id {request_id} not found')
+
+    part_request: PartRequest = PartRequest(**found_request)
+
+    filters = {"request_id": request_id, "status": {
+        "$in": [OfferStatus.created.value, OfferStatus.selected.value]}}
+
+    if part_request.commissioner_group != None:
+        filters = {
+            **filters,
+            "status": {
+                "$in": [OfferStatus.created.value, OfferStatus.selected.value, OfferStatus.pending_approval.value]
+            }
+        }
+
+    found_offers = list(offerRepository.find(filters))
 
     ids = [offer["_id"] for offer in found_offers]
 
@@ -314,7 +414,10 @@ def get_ranked_offers(request_id: str):
 
     counter = 1
 
-    offers = list(offerRepository.get_ranked_offers(ids))
+    offers = list(offerRepository.get_ranked_offers(
+        ids,
+        [{"status": OfferStatus.pending_approval.value}] if part_request.commissioner_group != None else None)
+    )
 
     for offer_item in offers:
         ranked_offers[str(offer_item["_id"])] = counter
@@ -343,3 +446,56 @@ def _get_offer_data(offer_id: str) -> Offer:
     except Exception as e:
         HTTPException(
             status_code=500, detail=f'Error while fetching part offer {e}')
+
+
+def build_and_send_notification(
+    user_id: str,
+    group_id: str,
+    part_name: str,
+    store_name: str,
+    user_token: str,
+    part_request_id: str,
+    offer_id: str,
+    status: OfferStatus
+) -> None:
+    try:
+        if isinstance(user_id, dict):
+            owner_id = user_id.get("_id") or user_id.get(
+                "uid") or user_id.get("id")
+        else:
+            owner_id = user_id
+
+        if not owner_id:
+            print(f"⚠️ Warning: Invalid user_id format: {user_id}")
+            return
+
+        meta_data = {"offer": offer_id}
+
+        notification: Notification
+
+        if status == OfferStatus.workshop_approval_pending:
+            notification = create_offer_workshop_approval(
+                owner=owner_id,
+                owner_group=group_id,
+                store_name=store_name,
+                part_name=part_name,
+                navigate_to_url=f"/dashboard/part-request/{part_request_id}",
+                meta_data=meta_data,
+            )
+
+        if status == OfferStatus.pending_approval:
+            notification = create_offer_notification(
+                owner=owner_id,
+                owner_group=group_id,
+                store_name=store_name,
+                part_name=part_name,
+                navigate_to_url=f"/dashboard/part-request/{part_request_id}",
+                meta_data=meta_data,
+            )
+
+        send_notification(notification, user_token)
+
+    except Exception as error:
+        print(f"❌ Critical error in notification system: {error}")
+        print(
+            f"📧 Failed notification - User: {user_id}, Part: {part_name}, Store: {store_name}")
