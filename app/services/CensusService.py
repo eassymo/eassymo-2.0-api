@@ -44,6 +44,7 @@ def find(filters):
             # Use regular find for non-geospatial searches
             results = list(censusRepository.find(
                 built_filters, built_filters["limit"], built_filters["page"]))
+            print(built_filters)
             counts = censusRepository.count(built_filters)
             total_count = counts["total_count"]
             group_count = counts["group_count"]
@@ -120,7 +121,7 @@ def build_filters(parameters):
             filters.update(location_conditions[0])
         else:
             # If multiple conditions, use $or
-            filters["$or"] = location_conditions
+            filters["$and"] = location_conditions
 
     if "show_only_census" in parameters and parameters["show_only_census"] is not None:
         conditions.append({
@@ -163,8 +164,13 @@ def build_filters(parameters):
 
 def get_states():
     try:
-        states_found = censusRepository.find_states()
-        return {"message": "ok", "body": states_found}
+        states_found:List[str] = censusRepository.find_states()
+
+        unique_states = []
+        states_found = [state.upper() for state in states_found]
+        unique_states = list(set(states_found))
+
+        return {"message": "ok", "body": unique_states}
     except PyMongoError as err:
         return {"message": f'Error getting states from census {err}'}
 
@@ -172,7 +178,12 @@ def get_states():
 def get_cities(state: str):
     try:
         cities_found = censusRepository.find_city(state)
-        return {"message": "ok", "body": cities_found}
+
+        unique_cities = []
+        cities_found = [state.upper() for state in cities_found]
+        unique_cities = list(set(cities_found))
+
+        return {"message": "ok", "body": unique_cities}
     except PyMongoError as err:
         return {"message": f'Error getting cities from census {err}'}
 
