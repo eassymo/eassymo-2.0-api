@@ -27,16 +27,47 @@ def create_list(data: ListsSchema):
         **data.dict()
     }
     try:
-        user_lists = list(listsRepository.find(
-            {"user_uid": data.user_uid, "group_id": data.group_id}))
-        if user_lists is not None and len(user_lists) > 0:
-            list_id = user_lists[0]["_id"]
-            listsRepository.insert_group_to_list(list_id, data.groups[0])
-            return {"body": str(list_id)}
-        created_list = listsRepository.insert(list_info)
-        return {"body": str(created_list.inserted_id)}
+
+        group_info = groupRepository.find_by_id(data.groups[0])
+
+        if group_info != None:
+            group = GroupSchema(**group_info)
+            user_lists = list(listsRepository.find(
+                {"user_uid": data.user_uid, "group_id": data.group_id}))
+            print(user_lists)
+            if user_lists is not None and len(user_lists) > 0:
+                if group.is_commissioner == False:
+                    priority_lists = [
+                        user_list for user_list in user_lists if user_list.get("is_priority") == True]
+                    priority_list_id = str(priority_lists[0].get("_id"))
+                    listsRepository.insert_group_to_list(
+                        priority_list_id, data.groups[0])
+                    return {"body": priority_list_id}
+                else:
+                    commissionable_list = [user_list for user_list in user_lists if user_list.get(
+                        "name") == "Comisionables"]
+                    if len(commissionable_list) > 0:
+                        commissionable_list_id = str(
+                            commissionable_list[0].get("_id"))
+                        listsRepository.insert_group_to_list(
+                            commissionable_list_id, data.groups[0])
+                        return {"body": commissionable_list_id}
+                    else:
+                        commissionable_list_payload = {
+                            **data.toJson(), "name": "Comisionables", "is_priority": False}
+                        commissionable_list_payload.pop("_id")
+                        created_list = listsRepository.insert(
+                            commissionable_list_payload)
+                        return {"body": str(created_list.inserted_id)}
+            else:
+                created_list = listsRepository.insert(list_info)
+                return {"body": str(created_list.inserted_id)}
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="")
     except PyMongoError as error:
-        raise InternalServerError(str(error))
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail="Error while adding user to list")
 
 
 def insert_list(list: ListsSchema):
@@ -68,7 +99,7 @@ def get_lists_by_user_and_group(user_uid: str | None, group_id: str):
         filters = {"group_id": group_id}
 
         if user_uid != None:
-            filters["user_uid"] = user_uid,
+            filters = {**filters, "user_uid": user_uid}
 
         user_lists = list(
             listsRepository.find_by_user_and_group(filters))
@@ -164,7 +195,7 @@ def get_followers_list(user_uid: str, group_id: str) -> List[Dict[str, Any]]:
         groups_in_priority_list = {}
 
         if len(groups_in_priority_list) > 0:
-         groups_in_priority_list = user_priority_list[0].get('groups')
+            groups_in_priority_list = user_priority_list[0].get('groups')
 
         groups_that_added_current_group = [list_data.get(
             'group_id') for list_data in lists_user_appears]
@@ -188,7 +219,7 @@ def get_followers_list(user_uid: str, group_id: str) -> List[Dict[str, Any]]:
 
             follower_list_json = [follower.toJson()
                                   for follower in follower_list]
-            
+
         return follower_list_json
     except PyMongoError as error:
         raise InternalServerError(str(error))

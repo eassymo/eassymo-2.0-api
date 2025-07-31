@@ -44,7 +44,7 @@ def find(filters):
             # Use regular find for non-geospatial searches
             results = list(censusRepository.find(
                 built_filters, built_filters["limit"], built_filters["page"]))
-            print(built_filters)
+
             counts = censusRepository.count(built_filters)
             total_count = counts["total_count"]
             group_count = counts["group_count"]
