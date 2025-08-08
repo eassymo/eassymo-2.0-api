@@ -167,3 +167,7 @@ def get_ranked_offers(offer_ids: List[ObjectId], extra_status: Optional[List[Dic
 
 def count(filters):
     return database.db["Offers"].count_documents(filters)
+
+
+def distinct(prop_name: str, filters):
+    return database.db["Offers"].distinct(prop_name, filters)
