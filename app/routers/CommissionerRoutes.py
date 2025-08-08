@@ -4,18 +4,35 @@ from app.services import CommissionerService as commissionerService
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response
-
+from typing import Optional
 
 commissionerRouter = APIRouter(prefix="/commissioner")
 
+
 @commissionerRouter.get("/{commissioner_id}/offers")
-def find_offers(commissioner_id: str):
+def find_offers(
+    commissioner_id: str,
+    min_price: Optional[float] = Query(title="min_price", default=None),
+    max_price: Optional[float] = Query(title="max_price", default=None),
+    from_date: Optional[str] = Query(title="from_date", default=None),
+    to_date: Optional[str] = Query(title="to_date", default=None),
+    offer_status: Optional[str] = Query(title="offer_status", default=None),
+    search_argument: Optional[str] = Query(title="search_argument", default=None)
+):
     try:
-        response = commissionerService.get_commissioner_offers(commissioner_id)
+        response = commissionerService.get_commissioner_offers(
+            commissioner_id=commissioner_id,
+            min_price=min_price,
+            max_price=max_price,
+            from_date=from_date,
+            to_date=to_date,
+            offer_status=offer_status,
+            search_argument=search_argument
+        )
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except HTTPException as e:
         return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=get_unsuccessful_response(str(e)))
-    
+
 
 @commissionerRouter.get("/{commissioner_id}/orders")
 def find_orders(commissioner_id: str):

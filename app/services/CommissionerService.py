@@ -9,7 +9,8 @@ from app.schemas.Groups import GroupSchema
 from app.schemas.Offer import Offer, OfferStatus
 from app.schemas.Order import Order
 from app.schemas.PartRequest import PartRequest
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
+from datetime import datetime, timedelta
 from app.services import OfferService as offerService
 from app.factories.NotificationsCreator import (
     create_offer_selected_notification, create_offer_selected_by_commissioner_to_origin_group_notification)
@@ -17,7 +18,15 @@ from app.schemas.Notification import Notification
 from app.utils.notifications import send_notification
 
 
-def get_commissioner_offers(commissioner_id: str):
+def get_commissioner_offers(
+    commissioner_id: str,
+    min_price: Optional[float] = None,
+    max_price: Optional[float] = None,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    offer_status: Optional[str] = None,
+    search_argument: Optional[str] = None
+):
     try:
         group_data = groupRepository.find_by_id(commissioner_id)
 
@@ -57,16 +66,68 @@ def get_commissioner_offers(commissioner_id: str):
         if len(part_requests) == 0:
             return []
 
+        additional_filters = {
+            "status": {
+                "$in": [
+                    OfferStatus.pending_approval.value,
+                    OfferStatus.rejected.value,
+                    OfferStatus.selected.value
+                ]
+            }
+        }
+
+        if min_price is not None or max_price is not None:
+            price_filter = {}
+            if min_price is not None:
+                price_filter["$gte"] = min_price
+            if max_price is not None:
+                price_filter["$lte"] = max_price
+            additional_filters["price"] = price_filter
+
+        date_filter = {}
+        
+        if from_date is not None:
+            try:
+                from_datetime = datetime.fromisoformat(from_date.replace('Z', '+00:00'))
+                date_filter["$gte"] = str(from_datetime)
+            except (ValueError, AttributeError):
+                pass
+        else:
+            """ ten_days_ago = datetime.utcnow() - timedelta(days=10)
+            date_filter["$gte"] = str(ten_days_ago) """
+            
+        if to_date is not None:
+            try:
+                to_datetime = datetime.fromisoformat(to_date.replace('Z', '+00:00'))
+                date_filter["$lte"] = str(to_datetime)
+            except (ValueError, AttributeError):
+                pass
+                
+        if date_filter:
+            additional_filters["createdAt"] = date_filter
+
+        if offer_status is not None and offer_status.strip():
+            try:
+                status_list = [status.strip() for status in offer_status.split(',') if status.strip()]
+                
+                valid_statuses = []
+                for status in status_list:
+                    try:
+                        status_value = OfferStatus(status).value
+                        valid_statuses.append(status_value)
+                    except ValueError:
+                        continue
+                
+                if valid_statuses:
+                    if len(valid_statuses) == 1:
+                        additional_filters["status"] = valid_statuses[0]
+                    else:
+                        additional_filters["status"] = {"$in": valid_statuses}
+            except (ValueError, AttributeError):
+                pass
+
         offers_data = list(
-            offerRepository.find_by_request_ids(part_request_ids, None, {
-                "status": {
-                    "$in": [
-                        OfferStatus.pending_approval.value,
-                        OfferStatus.rejected.value,
-                        OfferStatus.selected.value
-                    ]
-                }
-            })
+            offerRepository.find_by_request_ids(part_request_ids, None, additional_filters)
         )
 
         offers: List[Offer] = []
@@ -75,9 +136,67 @@ def get_commissioner_offers(commissioner_id: str):
             offers = [Offer(**offer) for offer in offers_data]
 
         specific_orders_uids_dicts = {}
+
+        if search_argument is not None and search_argument.strip():
+            search_term = search_argument.strip().lower()
+            filtered_offers = []
+            
+            for offer in offers:
+                include_offer = False
+                
+                # Search in offer fields
+                if (offer.brand and search_term in str(offer.brand).lower()):
+                    include_offer = True
+                
+                # Search in offer group info name
+                if not include_offer and offer.group_info and hasattr(offer.group_info, 'name'):
+                    if search_term in str(offer.group_info.name).lower():
+                        include_offer = True
+                
+                # Search in part request data
+                if not include_offer:
+                    for part_request in part_requests:
+                        if offer.request_id == part_request.id:
+                            # Search in creator group name
+                            if (part_request.group_info and 
+                                hasattr(part_request.group_info, 'name') and
+                                search_term in str(part_request.group_info.name).lower()):
+                                include_offer = True
+                                break
+                            
+                            # Search in part description (specifically in tipoParteDescripcion)
+                            if (part_request.part and 
+                                isinstance(part_request.part, dict) and
+                                part_request.part.get("tipoParteDescripcion") and
+                                search_term in str(part_request.part.get("tipoParteDescripcion")).lower()):
+                                include_offer = True
+                                break
+                            
+                            # Search in vehicle information (model, maker/brand, year)
+                            if (part_request.vehicleInformation and
+                                hasattr(part_request.vehicleInformation, 'toJson')):
+                                vehicle_data = part_request.vehicleInformation.toJson()
+                                # Search only in specific vehicle fields: model, maker, year
+                                searchable_fields = ['model', 'maker', 'year']
+                                for field in searchable_fields:
+                                    if (vehicle_data.get(field) and 
+                                        search_term in str(vehicle_data.get(field)).lower()):
+                                        include_offer = True
+                                        break
+                                if include_offer:
+                                    break
+                
+                if include_offer:
+                    filtered_offers.append(offer)
+            
+            # If search was applied and we have filtered results, use them
+            if filtered_offers:
+                offers = filtered_offers
+
         for offer in offers:
             for part_request in part_requests:
                 if offer.request_id == part_request.id:
+                    offer.request_info = part_request.toJson()
 
                     if not specific_orders_uids_dicts.get(f'{part_request.specific_order_uid}-{part_request.id}'):
                         specific_orders_uids_dicts[f'{part_request.specific_order_uid}-{part_request.id}'] = [
@@ -86,8 +205,6 @@ def get_commissioner_offers(commissioner_id: str):
                     else:
                         specific_orders_uids_dicts[f'{part_request.specific_order_uid}-{part_request.id}'].append(
                             offer.toJson())
-
-                    offer.request_info = part_request.toJson()
 
         for order_uid, offers_list in specific_orders_uids_dicts.items():
             if len(offers_list) > 1:

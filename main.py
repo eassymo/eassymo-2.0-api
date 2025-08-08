@@ -22,6 +22,8 @@ from app.routers import CallCenterConnectionRouter as callCenterConnectionRouter
 from app.routers import CallCenterRouter as callCenterRouter
 from app.routers import CallCenterManagementListRouter as callCenterManagementListRouter
 from app.routers import CommissionerRoutes as commissionerRoutes
+from app.routers import CommissionerFilterRoutes as commissionerFilterRoutes
+
 import app.utils.firebase_admin
 
 from fastapi.middleware.cors import CORSMiddleware
@@ -94,3 +96,4 @@ app.include_router(callCenterConnectionRouter.callCenterConnectionRouter)
 app.include_router(callCenterRouter.callCenterRouter)
 app.include_router(callCenterManagementListRouter.callCenterManagementListRouter)
 app.include_router(commissionerRoutes.commissionerRouter)
+app.include_router(commissionerFilterRoutes.commisionerFilterRouter)
