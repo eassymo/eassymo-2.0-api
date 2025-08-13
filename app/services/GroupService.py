@@ -13,6 +13,8 @@ from fastapi import HTTPException, Request, status
 from typing import List, Dict, Any
 from app.dto.group_dto import EditGroupDto
 from bson import ObjectId
+from app.schemas.GeoJsonLocation import GeoJson
+
 
 
 def create_group(group: GroupSchema, censusReference: str | None, user_id: str):
@@ -62,7 +64,8 @@ def create_group(group: GroupSchema, censusReference: str | None, user_id: str):
             Entity_Type=group.type,
             Entity_Visible="Y",
             Entity_Status="Y",
-            group_reference_id=created_group_id
+            group_reference_id=created_group_id,
+            location=group.location
         )
         census_json = census_data.dict()
         censusRepository.insert(census_json)
