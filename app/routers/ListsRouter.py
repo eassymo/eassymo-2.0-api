@@ -12,8 +12,11 @@ listRouter = APIRouter(prefix="/lists")
 
 @listRouter.post("", response_description="id of the created list", tags=["Lists"])
 def create_list(payload: ListsSchema = Body(...)):
-    response = typeUtilities.parse_json(listService.create_list(payload))
-    return JSONResponse(status_code=status.HTTP_201_CREATED, content=response)
+    try:
+        response = typeUtilities.parse_json(listService.create_list(payload))
+        return JSONResponse(status_code=status.HTTP_201_CREATED, content=response)
+    except Exception as e:
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=get_unsuccessful_response(str(e)))
 
 
 @listRouter.post("/create", response_description="id of the inserted list", tags=["Lists"])

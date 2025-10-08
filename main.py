@@ -23,6 +23,7 @@ from app.routers import CallCenterRouter as callCenterRouter
 from app.routers import CallCenterManagementListRouter as callCenterManagementListRouter
 from app.routers import CommissionerRoutes as commissionerRoutes
 from app.routers import CommissionerFilterRoutes as commissionerFilterRoutes
+from app.routers import AcesVehiclesRoutes as acesVehiclesRoutes
 
 import app.utils.firebase_admin
 
@@ -97,3 +98,4 @@ app.include_router(callCenterRouter.callCenterRouter)
 app.include_router(callCenterManagementListRouter.callCenterManagementListRouter)
 app.include_router(commissionerRoutes.commissionerRouter)
 app.include_router(commissionerFilterRoutes.commisionerFilterRouter)
+app.include_router(acesVehiclesRoutes.AcesVehiclesRouter)

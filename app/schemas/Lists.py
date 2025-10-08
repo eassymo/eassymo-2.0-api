@@ -1,8 +1,9 @@
+from zoneinfo import ZoneInfo
 from pydantic import BaseModel, Field, root_validator
 from typing import List, Optional
 from bson import ObjectId
 from app.schemas.Groups import GroupSchema
-
+from datetime import datetime
 
 class ListsSchema(BaseModel):
     id: Optional[str] = Field(None, alias="_id")
@@ -13,6 +14,8 @@ class ListsSchema(BaseModel):
     is_priority: bool = Field(
         description="this field determines if it is a priority")
     groups_info: Optional[List[GroupSchema]] = Field(None)
+    is_favorite: Optional[bool] = Field(default=False, description="If True then the list is favorite")
+    last_modified: Optional[datetime]= Field(default=datetime.now(ZoneInfo('UTC')))
 
     @root_validator(pre=True)
     def convert_objectId(cls, values):
@@ -32,4 +35,8 @@ class ListsSchema(BaseModel):
                 groups.append(group.toJson())
 
             data["groups_info"] = groups
+
+        if self.last_modified != None:
+            data["last_modified"] = str(self.last_modified)
+
         return data

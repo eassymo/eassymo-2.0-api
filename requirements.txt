@@ -1,7 +1,9 @@
 aiohappyeyeballs==2.4.3
 aiohttp==3.11.6
 aiohttp-retry==2.8.3
+aiomysql==0.2.0
 aiosignal==1.3.1
+alembic==1.16.5
 annotated-types==0.6.0
 anyio==4.3.0
 async-timeout==5.0.1
@@ -37,7 +39,11 @@ grpcio-status==1.68.1
 h11==0.14.0
 httplib2==0.22.0
 idna==3.6
+inflect==7.5.0
 jmespath==1.0.1
+Mako==1.3.10
+MarkupSafe==3.0.2
+more-itertools==10.8.0
 msgpack==1.1.0
 multidict==6.1.0
 numpy==2.1.3
@@ -52,6 +58,7 @@ pydantic==2.6.3
 pydantic_core==2.16.3
 PyJWT==2.10.0
 pymongo==4.6.2
+PyMySQL==1.1.2
 pyparsing==3.2.0
 python-dateutil==2.9.0.post0
 python-dotenv==1.0.1
@@ -62,9 +69,13 @@ rsa==4.9
 s3transfer==0.10.2
 six==1.16.0
 sniffio==1.3.1
+sqlacodegen==3.1.1
+SQLAlchemy==2.0.29
 starlette==0.36.3
+tomli==2.2.1
 twilio==9.3.7
-typing_extensions==4.10.0
+typeguard==4.4.4
+typing_extensions==4.15.0
 tzdata==2024.2
 uritemplate==4.1.1
 urllib3==2.2.1
