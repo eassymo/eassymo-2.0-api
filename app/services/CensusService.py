@@ -79,7 +79,7 @@ def build_filters(parameters):
     if parameters["limit"] is not None:
         filters["limit"] = parameters["limit"]
     else:
-        filters["limit"] = 20
+        filters["limit"] = 50
 
     if parameters["page"] is not None:
         filters["page"] = parameters["page"]

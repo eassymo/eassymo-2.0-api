@@ -7,6 +7,7 @@ from app.exceptions.InternalServerError import InternalServerError
 from typing import Dict, Any, List
 from bson import ObjectId
 from fastapi import HTTPException, status
+from pymongo import DESCENDING
 
 from functools import wraps
 import warnings
@@ -103,6 +104,7 @@ def get_lists_by_user_and_group(user_uid: str | None, group_id: str):
 
         user_lists = list(
             listsRepository.find_by_user_and_group(filters))
+        
         user_lists = [ListsSchema(**list_data).toJson()
                       for list_data in user_lists]
         return {"body": user_lists}

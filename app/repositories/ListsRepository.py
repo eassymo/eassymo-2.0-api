@@ -1,9 +1,11 @@
+from zoneinfo import ZoneInfo
 from app.config import database
 from bson import ObjectId
 from app.schemas.Lists import ListsSchema
 from pymongo.results import UpdateResult
 from bson import ObjectId
 from typing import Dict, Any
+from datetime import datetime
 
 
 def insert(data):
@@ -42,7 +44,8 @@ def find_by_user_and_group(filters: Dict[str, Any]):
                 "group_id": 1,
                 "groups": 1,
                 "is_priority": 1,
-                "groups_info": 1
+                "groups_info": 1,
+                "is_favorite": 1
             }
         },
     ])
@@ -121,4 +124,7 @@ def find_all_groups_in_user_lists(user_uid: str | None, group_id: str):
 
 def update(list_id: str, payload: Dict[str, Any]) -> UpdateResult:
     id = ObjectId(list_id)
+
+    utc_date = datetime.now(ZoneInfo('UTC'))
+    payload["last_modified"] = utc_date
     return database.db["Lists"].find_one_and_update({"_id": id}, {"$set": payload}, return_document=True)
