@@ -37,8 +37,21 @@ class AcesVehiclesService:
             if year_int <= 2017:
                 vehicles = AcesVehiclesRepository.find_vehicle_by_description(mysql_db, search_argument, year_int)
             else:
+                vehicle_dict = {}
                 vehicles = find_non_aces_by_name(search_argument, year_int)
-            
+
+                formatted_vehicles = []
+                print(vehicles)
+                for vehicle in vehicles:
+                    vehicle_id = f'{vehicle.VehiculoModelo}-{vehicle.VehiculoFabricante}'
+                    if vehicle_dict.get(vehicle_id) == None:
+                        vehicle_dict[vehicle_id] = vehicle
+
+                for key in vehicle_dict:
+                    formatted_vehicles.append(vehicle_dict.get(key))
+
+                vehicles = formatted_vehicles
+
             return vehicles
             
         except HTTPException:
@@ -60,4 +73,20 @@ class AcesVehiclesService:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Error while searchig for vehicle with id {id}"
+            )
+    
+
+    @staticmethod
+    def find_non_aces_engines(vehicle_model: str, vehicle_maker: str, vehicle_year: str) -> List[str]:
+        try:
+
+            v_year = int(vehicle_year)
+
+            engines = AcesVehiclesRepository.find_engines(vehicle_model=vehicle_model, vehicle_maker=vehicle_maker, vehicle_year=v_year)
+
+            return engines
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error while searching for non aces engines {id}"
             )
