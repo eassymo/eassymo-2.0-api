@@ -47,3 +47,24 @@ def find(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unexpected error: {str(e)}"
         )
+
+
+@AcesVehiclesRouter.get("/engines", tags=["Non Aces Vehicles"])
+def find_engines(
+    vehicle_model: str = Query(None, title="vehicle_model"),
+    vehicle_maker: str = Query(None, title="vehicle_maker"),
+    vehicle_year: str = Query(None, title="vehicle_year")
+):
+    try:
+        engines = AcesVehiclesService.find_non_aces_engines(
+            vehicle_model, vehicle_maker, vehicle_year)
+
+        return get_successful_response(engines)
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error: {str(e)}"
+        )
