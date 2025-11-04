@@ -103,18 +103,18 @@ def find_grouped(filters, skip: int = 0, limit: int = 10):
                         }
                     }
                 ],
-                "as": "creatorGroup"
+                "as": "group_info"
             }
         },
         {
             "$unwind": {
-                "path": "$creatorGroup",
+                "path": "$group_info",
                 "preserveNullAndEmptyArrays": True
             }
         },
         {
             "$sort": {
-                "_id": -1
+                "createdAt": -1
             }
         },
         {
