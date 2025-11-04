@@ -40,25 +40,28 @@ class PartRequest(BaseModel):
     partList: Optional[List[object]] = Field(
         [], description="Optional part list")
     parent_request_uid: Optional[str] = Field("")
-    specific_order_uid: Optional[str] = Field(None, description="This id groups the different part requests as a single order, independent to the vehicle")
+    specific_order_uid: Optional[str] = Field(
+        None, description="This id groups the different part requests as a single order, independent to the vehicle")
     status: PartRequestStatus = Field(
         default=PartRequestStatus.CREATED.value, description="Current status of part request")
     show_ranking: Optional[bool] = Field(
         None, description="this is a field that is calculated in the runtime to determine if we should show the ranking for all users")
-    group_info: Optional[GroupSchema] = Field(None, description="detailed information of the group")
+    group_info: Optional[GroupSchema] = Field(
+        None, description="detailed information of the group")
     offers_amount: Optional[int] = Field(None)
     commissioner_group: Optional[str] = Field(None)
+    offers: Optional[Offer] = Field(default=None, exclude=True)
 
     @root_validator(pre=True)
     def convert_objectId(cls, values):
         if '_id' in values and isinstance(values['_id'], ObjectId):
             values["_id"] = str(values["_id"])
-        
+
         if 'createdAt' not in values or values['createdAt'] is None:
             values['createdAt'] = datetime.now(ZoneInfo('UTC'))
         if 'updatedAt' not in values or values['updatedAt'] is None:
             values['updatedAt'] = datetime.now(ZoneInfo('UTC'))
-            
+
         return values
 
     def update_status(self, new_status: PartRequestStatus):
@@ -73,6 +76,9 @@ class PartRequest(BaseModel):
 
         if self.group_info:
             data["group_info"] = self.group_info.toJson()
+
+        if self.offers != None and len(self.offers) > 0:
+            data["offers"] = [offer.toJson() for offer in self.offers]
 
         data["createdAt"] = self.createdAt.isoformat() if self.createdAt else None
         data["updatedAt"] = self.updatedAt.isoformat() if self.updatedAt else None
@@ -91,3 +97,16 @@ class PartRequestEdit(BaseModel):
 
     def toJson(self):
         return self.dict(by_alias=True)
+
+
+class PartRequestGroupedByDate(BaseModel):
+    date: str = Field(None)
+    part_requests: List[PartRequest] = Field([])
+
+    def toJson(self):
+        data = self.model_dump()
+
+        if len(self.part_requests) > 0:
+            data["part_requests"] = [part_request.toJson()
+                                     for part_request in self.part_requests]
+        return data

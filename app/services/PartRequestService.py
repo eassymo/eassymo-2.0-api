@@ -1,5 +1,5 @@
 from app.repositories import PartRequestRepository as partRequestRepository
-from app.schemas.PartRequest import PartRequest, PartRequestEdit, PartRequestStatus
+from app.schemas.PartRequest import PartRequest, PartRequestEdit, PartRequestStatus, PartRequestGroupedByDate
 from app.schemas.Offer import OfferStatus
 from app.repositories import GroupCarRepository as groupCarRepository
 from app.repositories import GroupRepository as groupRepository
@@ -309,18 +309,53 @@ def find_grouped(
         part_requests = list(
             partRequestRepository.find_grouped(filters, skip, limit))
 
-        if len(part_requests) > 0:
-            found_offers = __find_offers_for_requests(
+        if len(part_requests) == 0:
+            return {
+                "data": part_requests,
+                "pagination": {
+                    "total": 0,
+                    "page": page,
+                    "limit": limit,
+                    "total_pages": 0
+                }
+            }
+
+        print(part_requests)
+
+        grouped_by_created_date = {}
+
+        part_requests = [PartRequest(**part_request)
+                         for part_request in part_requests]
+
+        print(part_requests)
+
+        found_offers = __find_offers_for_requests(
                 part_requests, group_id if role == GroupType.CAR_SHOP.value else None)
 
-            __format_offers_with_found_requests(
+        __format_offers_with_found_requests(
                 requests=part_requests, offers=found_offers, group_id=group_id)
-            __format_grouped_part_requests(part_requests)
+
+        for part_request in part_requests:
+
+            date_string = part_request.createdAt.strftime('%Y-%m-%d')
+
+            if grouped_by_created_date.get(date_string) == None:
+                grouped_by_created_date[date_string] = [part_request]
+            else:
+                grouped_by_created_date[date_string].append(part_request)
+        
+        grouped_part_requests: List[PartRequestGroupedByDate] = []
+
+        for date_key in grouped_by_created_date:
+            grouped_part_requests.append(PartRequestGroupedByDate(
+                date=date_key,
+                part_requests=grouped_by_created_date[date_key]
+            ))
 
         total_count = partRequestRepository.count_grouped(filters)
 
         return {
-            "data": part_requests,
+            "data": [grouped_part_request.toJson() for grouped_part_request in grouped_part_requests],
             "pagination": {
                 "total": total_count,
                 "page": page,
@@ -333,59 +368,41 @@ def find_grouped(
             status_code=500, detail=f'Error finding grouped requests {e}')
 
 
-def __find_offers_for_requests(requests, group_id: str):
-    request_ids = []
-    for request in requests:
-        request_ids.append(str(request["_id"]))
+def __find_offers_for_requests(requests: List[PartRequest], group_id: str) -> List[Offer]:
+    request_ids = [request.id for request in requests]
 
     offers_found = list(
         offerRepository.find_by_request_ids(request_ids, group_id))
+
+    offers_found = [Offer(**offer) for offer in offers_found]
+
     return offers_found
 
 
-def __format_offers_with_found_requests(requests, offers, group_id: str):
+def __format_offers_with_found_requests(requests: List[PartRequest], offers: List[Offer], group_id: str):
     for request in requests:
         offers_found = __filter_part_offer_by_request_id(
             offers, request, group_id)
         if len(offers_found) > 0:
-            request["offers"] = offers_found
+            request.offers = offers_found
         else:
-            request["offers"] = []
+            request.offers = []
 
 
-def __format_grouped_part_requests(part_requests):
-    for part_request in part_requests:
-        part_request["_id"] = str(part_request["_id"])
-        part_request["creatorGroup"]["_id"] = str(
-            part_request["creatorGroup"]["_id"])
-        part_request["vehicleInformation"]["_id"] = str(
-            part_request["vehicleInformation"]["_id"])
-        part_request["vehicleInformation"]["createdAt"] = str(
-            part_request["vehicleInformation"]["createdAt"])
-        part_request["createdAt"] = str(part_request["createdAt"])
-        part_request["updatedAt"] = str(part_request["updatedAt"])
+def __filter_part_offer_by_request_id(offers: List[Offer], request: PartRequest, group_id: str):
 
-
-def __filter_part_offer_by_request_id(offers, request, group_id: str):
-
-    creator_group = str(request["creatorGroup"].get("_id"))
+    creator_group = request.creatorGroup
 
     matching_offers = [
         offer for offer in offers
-        if offer["request_id"] == str(request["_id"])
+        if offer.request_id == request.id
     ]
 
     if len(matching_offers) > 0:
         if group_id == creator_group:
             matching_offers = [
-                offer for offer in matching_offers if offer["status"] != OfferStatus.pending_approval.value
-        ]
-
-    for offer in matching_offers:
-        offer["_id"] = str(offer["_id"])
-        offer["to_be_delivered_time"] = str(offer["to_be_delivered_time"])
-        offer["updatedAt"] = str(offer["updatedAt"])
-        offer["createdAt"] = str(offer["createdAt"])
+                offer for offer in matching_offers if offer.status != OfferStatus.pending_approval.value
+            ]
 
     return matching_offers
 
