@@ -23,12 +23,12 @@ def insert(request: Request, payload: Offer = Body(...)):
 
 
 @offerRouter.get("/find_by_request_id_and_group", description="Get a specific offer for a request", tags=["Offers"])
-def find_by_id(part_request_id: str = Query(None, title="part_request_id",
+def find_by_id(request: Request, part_request_id: str = Query(None, title="part_request_id",
                                             description="The id of the offer"),
                group_id: str = Query(None, title="group_id",
                                      description="The id of the group")):
     try:
-        response = offerService.find_by_request_id_and_group(
+        response = offerService.find_by_request_id_and_group(request,
             part_request_id, group_id)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:

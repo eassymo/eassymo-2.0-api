@@ -3,13 +3,14 @@ from app.repositories import GroupRepository as groupRepository
 from app.repositories import PartRequestRepository as partRequestRepository
 from app.services import BrandService as brandService
 from app.services import GuaranteeService as guaranteeService
+from app.services import ListsService as listService
 from app.schemas.Offer import Offer
 from app.schemas.Brand import Brand
 from app.schemas.Guarantee import Guarantee
 from app.schemas.PartRequest import PartRequest, PartRequestStatus
 from app.schemas.Groups import GroupSchema
 from app.schemas.Notification import Notification
-from fastapi import HTTPException, status
+from fastapi import HTTPException, Request, status
 from uuid import uuid4
 from app.schemas.Offer import OfferStatus, OfferType
 from app.repositories import OrderRepository as orderRepository
@@ -17,10 +18,12 @@ from app.repositories import CallCenterConnectionRepository as callCenterConnect
 from app.schemas.Order import Order, OrderStatus
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from typing import List, Optional
+from typing import List, Optional, Dict
 from app.factories.NotificationsCreator import (
     create_offer_workshop_approval, create_offer_notification)
 from app.utils.notifications import send_notification
+
+from app.repositories import ListsRepository as listsRepository
 
 
 def insert(payload: Offer, user_token: str):
@@ -124,10 +127,14 @@ def find(filters: Offer):
             status_code=500, detail=f'Error while fetching offer Error: {e}')
 
 
-def find_by_request_id_and_group(part_request_id: str, group_id: str):
+def find_by_request_id_and_group(request: Request, part_request_id: str, group_id: str):
     try:
 
         group_ids = []
+
+        user_info = request.state._state.get('user')
+
+        logged_in_user = user_info.get("uid")
 
         part_request_data = list(
             partRequestRepository.find_by_id(part_request_id))
@@ -138,8 +145,15 @@ def find_by_request_id_and_group(part_request_id: str, group_id: str):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail="Part Request not found")
 
+        followers = []
+
+        group: GroupSchema
+
         if group_id != None:
             group_info = groupRepository.find_by_id(group_id)
+
+            followers = listService.get_followers_list(
+            logged_in_user, group_id)
 
             if group_info == None:
                 raise HTTPException(
@@ -158,8 +172,17 @@ def find_by_request_id_and_group(part_request_id: str, group_id: str):
         if len(found_offers_dicts) == 0:
             return []
 
-        found_offers: List[Offer] = [
+        found_offers: List[Dict[str, any]] = [
             Offer(**offer_data).toJson() for offer_data in found_offers_dicts]
+
+        for follower in followers:
+            for offer in found_offers:
+                if follower.get('_id') == offer.get('group_id'):
+                    offer['createdByFollower'] = True
+                else:
+                    offer['createdByFollower'] = False
+            
+            offer["creatorIsFavoriteAtSomeList"] = __check_if_group_is_favorite(group)
 
         return found_offers
 
@@ -167,6 +190,11 @@ def find_by_request_id_and_group(part_request_id: str, group_id: str):
         raise HTTPException(
             status_code=500, detail=f'Error while getting specific offer {e}')
 
+
+def __check_if_group_is_favorite(group: GroupSchema) -> bool:
+    favorite_lists = list(listsRepository.find({"is_favorite": True, "groups": group.id }))
+    
+    return len(favorite_lists) > 0
 
 def __format_filters(payload: Offer):
     offer_filters = {}

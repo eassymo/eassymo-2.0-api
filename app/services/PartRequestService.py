@@ -7,17 +7,22 @@ from app.repositories import OfferRepository as offerRepository
 from app.repositories import ListsRepository as listRepository
 from app.schemas.Groups import GroupType, GroupSchema
 from app.schemas.Offer import Offer
-from fastapi import HTTPException, status
+from fastapi import HTTPException, Request, status
 from uuid import uuid4
 from bson import ObjectId
-from typing import List, Any, Dict
-from datetime import datetime
+from typing import List, Any, Dict, Optional
+from datetime import datetime, timedelta
+from dateutil import parser as date_parser
 from zoneinfo import ZoneInfo
 from app.services import GroupService as groupService
 from app.factories.NotificationsCreator import (
     create_part_request_notification,
 )
 from app.utils.notifications import send_notification
+from app.services import ListsService as listService
+from app.repositories import ListsRepository as listRepository
+
+import pymongo
 
 
 def insert(part_request: PartRequest, user_token: str = None):
@@ -330,10 +335,10 @@ def find_grouped(
         print(part_requests)
 
         found_offers = __find_offers_for_requests(
-                part_requests, group_id if role == GroupType.CAR_SHOP.value else None)
+            part_requests, group_id if role == GroupType.CAR_SHOP.value else None)
 
         __format_offers_with_found_requests(
-                requests=part_requests, offers=found_offers, group_id=group_id)
+            requests=part_requests, offers=found_offers, group_id=group_id)
 
         for part_request in part_requests:
 
@@ -343,7 +348,7 @@ def find_grouped(
                 grouped_by_created_date[date_string] = [part_request]
             else:
                 grouped_by_created_date[date_string].append(part_request)
-        
+
         grouped_part_requests: List[PartRequestGroupedByDate] = []
 
         for date_key in grouped_by_created_date:
@@ -604,11 +609,85 @@ def __find_groups_and_format(group_ids: List[ObjectId]):
 
 
 def find_sibling_requests_with_offers(
+    request: Request,
     parent_request_uid: str,
-    offer_owner_group: str
+    offer_owner_group: str,
+    status: Optional[str],
+    filters_dict: List[Dict[str, Any]]
 ):
-    sibling_part_requests = list(partRequestRepository.find(
-        {"parent_request_uid": parent_request_uid}, {}))
+    user_info = request.state._state.get('user')
+    logged_in_user = user_info.get("uid")
+
+    from app.config import database
+
+    # Build aggregation pipeline to handle createdAt as both Date and String
+    # Step 1: Match by parent_request_uid and optional status
+    match_stage = {"parent_request_uid": parent_request_uid}
+    if status != None:
+        match_stage["status"] = status
+
+    # Step 2: Convert createdAt to Date for consistent comparison
+    pipeline_first = [
+        {"$match": match_stage},
+        {
+            "$addFields": {
+                "createdAtDate": {
+                    "$cond": {
+                        "if": {"$eq": [{"$type": "$createdAt"}, "string"]},
+                        "then": {"$dateFromString": {"dateString": "$createdAt"}},
+                        "else": "$createdAt"
+                    }
+                }
+            }
+        },
+        {"$sort": {"createdAtDate": -1}},
+        {"$limit": 1}
+    ]
+
+    # Get the newest request to calculate time window
+    newest_requests = list(database.db["PartRequests"].aggregate(pipeline_first))
+    
+    if len(newest_requests) == 0:
+        return []
+
+    newest_part_request = PartRequest(**newest_requests[0])
+    
+    # Parse the createdAtDate from aggregation result
+    created_at = newest_requests[0].get("createdAtDate")
+    if isinstance(created_at, str):
+        created_at = date_parser.parse(created_at)
+    
+    # Normalize to absolute days (start and end of day)
+    newest_date_start = created_at.replace(hour=0, minute=0, second=0, microsecond=0)
+    newest_date_end = newest_date_start.replace(hour=23, minute=59, second=59, microsecond=999999)
+    three_days_before = newest_date_start - timedelta(days=3)
+
+    # Build aggregation pipeline for time window query
+    pipeline_time_window = [
+        {"$match": match_stage},
+        {
+            "$addFields": {
+                "createdAtDate": {
+                    "$cond": {
+                        "if": {"$eq": [{"$type": "$createdAt"}, "string"]},
+                        "then": {"$dateFromString": {"dateString": "$createdAt"}},
+                        "else": "$createdAt"
+                    }
+                }
+            }
+        },
+        {
+            "$match": {
+                "createdAtDate": {
+                    "$gte": three_days_before,
+                    "$lte": newest_date_end
+                }
+            }
+        },
+        {"$sort": {"createdAtDate": -1}}
+    ]
+
+    sibling_part_requests = list[Any](database.db["PartRequests"].aggregate(pipeline_time_window))
 
     part_requests_with_offers = []
 
@@ -616,13 +695,30 @@ def find_sibling_requests_with_offers(
         part_request_dict = PartRequest(**part_request_data).toJson()
 
         offer_filters = {
-            "request_id": part_request_dict.get("_id")
+            "request_id": part_request_dict.get("_id"),
         }
 
+        if status != None:
+            offer_filters["status"] = status
+
+        # Apply custom filters for followers/connected/favorites
+        if filters_dict and len(filters_dict) > 0:
+            custom_filters = __build_filters_for_sibling_requests(
+                filters_dict, 
+                newest_part_request.creatorGroup, 
+                logged_in_user
+            )
+            offer_filters.update(custom_filters)
+        
+        # If a specific offer_owner_group is provided, it takes precedence
         if offer_owner_group != None and len(offer_owner_group) > 0:
             offer_filters["group_id"] = offer_owner_group
 
-        part_request_offers = list(offerRepository.find(offer_filters))
+        part_request_offers = list[Any](offerRepository.find(offer_filters))
+
+        followers = []
+        followers = listService.get_followers_list(
+            logged_in_user, newest_part_request.creatorGroup)
 
         offers = []
         for offer_data in part_request_offers:
@@ -630,12 +726,78 @@ def find_sibling_requests_with_offers(
             group_info = groupRepository.find_by_id(offer_json["group_id"])
             group = GroupSchema(**group_info)
             offer_json["group_info"] = group.toJson()
+
+            for follower in followers:
+                if follower.get('_id') == offer_json.get('group_id'):
+                    offer_json['createdByFollower'] = True
+                else:
+                    offer_json['createdByFollower'] = False
+
+            offer_json["creatorIsFavoriteAtSomeList"] = __check_if_group_is_favorite(
+                group)
             offers.append(offer_json)
+
         part_request_dict["offers"] = offers
 
         part_requests_with_offers.append(part_request_dict)
 
     return part_requests_with_offers
+
+
+def __build_filters_for_sibling_requests(
+    filters_dict: List[Dict[str, Any]], 
+    creator_group_id: str, 
+    logged_in_user: str
+) -> Dict[str, Any]:
+
+    # Collect all group IDs from all applicable filters
+    all_group_ids = []
+
+    for filter_item in filters_dict:
+        filter_type = filter_item.get("type")
+        filter_values = filter_item.get("values", [])
+        
+        if filter_type == "followers_custom":
+            # Show offers only from follower groups (groups that follow creator but creator doesn't follow back)
+            all_group_ids.extend(filter_values)
+            
+        elif filter_type == "connected_custom":
+            # Show offers only from connected groups (groups in creator's lists)
+            all_group_ids.extend(filter_values)
+            
+        elif filter_type == "favorites":
+            # Check if we should apply favorite filtering
+            if filter_values and filter_values[0] == 'true':
+                favorite_lists = list(listRepository.find({
+                    "group_id": creator_group_id,
+                    "user_uid": logged_in_user,
+                    "is_favorite": True
+                }))
+                
+                # Collect all group IDs from these favorite lists
+                for favorite_list in favorite_lists:
+                    groups_in_list = favorite_list.get("groups", [])
+                    all_group_ids.extend(groups_in_list)
+            # If filter_values[0] is False, don't apply any favorite filtering
+    
+    # Remove duplicates in case same group appears in multiple filter types
+    unique_group_ids = list(set(all_group_ids))
+    
+    # If we have group IDs to filter by, return the MongoDB $in filter
+    if len(unique_group_ids) > 0:
+        return {
+            "group_id": {"$in": unique_group_ids}
+        }
+    
+    # No applicable filters, return empty dict (no additional filtering)
+    return {}
+
+
+def __check_if_group_is_favorite(group: GroupSchema) -> bool:
+    favorite_lists = list[Any](listRepository.find(
+        {"is_favorite": True, "groups": group.id}))
+
+    return len(favorite_lists) > 0
 
 
 def edit_part_request(part_request_data: List[PartRequestEdit]):
