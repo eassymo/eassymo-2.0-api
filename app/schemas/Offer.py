@@ -57,6 +57,8 @@ class Offer(BaseModel):
     call_center_that_posted_offer: Optional[GroupSchema] = Field(None, description="call center that created the offer")
     request_info: Optional[Dict[str, Any]] = Field(None)
     commissioner_price: Optional[float] = Field(None)
+    createdByFollower: Optional[bool] = Field(False, exclude=True)
+    creatorIsFavoriteAtSomeList: Optional[bool] = Field(False, exclude=True)
 
     @root_validator(pre=True)
     def convert_objectId(cls, values):

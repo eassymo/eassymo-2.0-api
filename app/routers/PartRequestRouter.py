@@ -3,7 +3,7 @@ from fastapi import APIRouter, Body, status, Query
 from app.services import PartRequestService as partRequestService
 from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response
 from app.schemas.PartRequest import PartRequest, PartRequestEdit
-from typing import List
+from typing import List, Dict, Any
 from fastapi.encoders import jsonable_encoder
 from typing import Optional
 from fastapi import Request, HTTPException
@@ -135,12 +135,24 @@ def build_filter(prop_name: Optional[str] = Query(None, title="prop_name")):
 
 @partRequestRouter.get("/sibling-requests-with-offers/{parent_request_uid}", response_description="part request with offers")
 def find_sibling_requests_with_offers(
+    request: Request,
     parent_request_uid: str,
-    offer_owner_group: Optional[str] = Query(None, title="offer_owner_group")
+    offer_owner_group: Optional[str] = Query(None, title="offer_owner_group"),
+    part_request_status: Optional[str] = Query(None, title="status"),
+    filters: Optional[str] = Query(None, title="filters", description="Filters as a JSON string")
 ):
     try:
-        part_requests_with_offers = partRequestService.find_sibling_requests_with_offers(
-            parent_request_uid, offer_owner_group)
+        filters_dict: List[Dict[str, Any]] = []
+        if filters is not None:
+            import json
+            try:
+                filters_dict = json.loads(filters)
+            except Exception:
+                filters_dict = []
+
+        print(filters_dict)
+        part_requests_with_offers = partRequestService.find_sibling_requests_with_offers(request,
+            parent_request_uid, offer_owner_group, part_request_status, filters_dict)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(part_requests_with_offers))
     except Exception as e:
         return JSONResponse(content=get_unsuccessful_response(e))
