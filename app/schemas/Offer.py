@@ -17,6 +17,8 @@ class OfferStatus(Enum):
     pending_approval = "Pending_Approval"
     selected = "Selected"
     rejected = "Rejected"
+    no_inventory = "No_Inventory"
+    pending_changes = "Pending_Changes"
 
 
 class Offer(BaseModel):
