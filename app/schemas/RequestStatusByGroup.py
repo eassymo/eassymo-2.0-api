@@ -6,11 +6,11 @@ from typing import Optional
 from app.schemas.Offer import OfferStatus
 
 
-class OfferStatusByGroup(BaseModel):
+class RequestStatusByGroup(BaseModel):
     id: Optional[str] = Field(None, alias="_id")
     group_id: str = Field(
         None, description="id of the group that holds this status")
-    offer_id: str = Field(
+    request_id: str = Field(
         None, description="id of the offer that is linked to this")
     createdAt: Optional[datetime] = Field(datetime.now(ZoneInfo('UTC')))
     updatedAt: Optional[datetime] = Field(

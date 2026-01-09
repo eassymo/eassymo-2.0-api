@@ -15,6 +15,8 @@ class PartRequestStatus(Enum):
     CREATED = "Created"
     OFFER_SELECTED = "Offer_selected"
     PENDING = "Pending"
+    NO_INVENTORY = "No_Inventory"
+    REJECTED = "Rejected"
 
 
 class PartRequest(BaseModel):
