@@ -701,7 +701,6 @@ def find_sibling_requests_with_offers(
         if status != None:
             offer_filters["status"] = status
 
-        # Apply custom filters for followers/connected/favorites
         if filters_dict and len(filters_dict) > 0:
             custom_filters = __build_filters_for_sibling_requests(
                 filters_dict, 
@@ -710,9 +709,9 @@ def find_sibling_requests_with_offers(
             )
             offer_filters.update(custom_filters)
         
-        # If a specific offer_owner_group is provided, it takes precedence
+        """    # If a specific offer_owner_group is provided, it takes precedence
         if offer_owner_group != None and len(offer_owner_group) > 0:
-            offer_filters["group_id"] = offer_owner_group
+            offer_filters["group_id"] = offer_owner_group """
 
         part_request_offers = list[Any](offerRepository.find(offer_filters))
 

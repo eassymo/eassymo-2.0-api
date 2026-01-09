@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 from bson import ObjectId
 from app.schemas.Groups import GroupSchema
 
-# TODO: THE BRANDS ARE A DIFFERENT COLLECTION
+
 class OfferType(Enum):
     PartOffer = "PartOffer"
 
@@ -17,6 +17,8 @@ class OfferStatus(Enum):
     pending_approval = "Pending_Approval"
     selected = "Selected"
     rejected = "Rejected"
+    pending_changes = "Pending_Changes"
+    no_inventory = "No_Inventory"
 
 
 class Offer(BaseModel):
@@ -27,14 +29,14 @@ class Offer(BaseModel):
     group_id: str = Field(description="group that created the offer")
     offer_group_uid: Optional[str] = Field(default=None,
                                            description="This is the uid that will be used in case this offer has sub offers")
-    brand: str = Field(
+    brand: Optional[str] = Field(None,
         description="This is the brand of the offered part or item")
-    guarantee: str = Field(description="Guarantee of the offered part")
-    price: float = Field(description="price")
+    guarantee: Optional[str] = Field(None, description="Guarantee of the offered part")
+    price: Optional[float] = Field(None, description="price")
     unit_of_measure: str = Field(description="Unit of measure of item offered")
     to_be_delivered_time: Optional[datetime] = Field(
         default=datetime.now(ZoneInfo('UTC')))
-    code: Optional[str] = Field(description="code of item")
+    code: Optional[str] = Field(None, description="code of item")
     location: Optional[object] = Field(
         default=None,
         description="this will be the location of the part")
@@ -79,7 +81,7 @@ class Offer(BaseModel):
         if data.get("status") != None:
             data["status"] = self.status.value
 
-        if data.get("type") != None:
+        if "type" in data and data["type"] is not None and not isinstance(data["type"], str):
             data["type"] = self.type.value
 
         if data.get("updatedAt") != None:
