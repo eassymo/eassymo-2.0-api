@@ -77,6 +77,23 @@ def find_grouped(
     except Exception as e:
         return JSONResponse(content=get_unsuccessful_response(e))
 
+@partRequestRouter.get("/group/group-by-parent", response_description="part requests grouped by parent_request_uid", tags=["PartRequest"])
+def find_grouped_by_parent_request_uid(
+    creator_group_id: Optional[str] = Query(None, title="creator_group_id"),
+    seller_group_id: Optional[str] = Query(None, title="seller_group_id"),
+    part_request_status: Optional[str] = Query(None, title="status")
+):
+    try:
+        results = partRequestService.find_grouped_by_parent_request_uid(
+            creator_group_id,
+            seller_group_id,
+            part_request_status
+        )
+
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(results)))
+    except Exception as e:
+        return JSONResponse(content=get_unsuccessful_response(e))
+
 
 @partRequestRouter.get("/{id}", response_description="Will return the specific part response")
 def find_by_id(id: str):

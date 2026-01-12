@@ -913,3 +913,38 @@ def __build_and_send_commissioner_notifications(
     else:
         print(
             f"✅ All commissioner notifications sent successfully ({len(users_from_groups)} users)")
+
+
+def find_grouped_by_parent_request_uid(creator_group_id: Optional[str], seller_group_id: Optional[str], status: Optional[str]):
+    try:
+        status_enum = PartRequestStatus(status) if status else None
+        
+        results = list(partRequestRepository.find_grouped_by_parent_request_uid(
+            creator_group_id,
+            seller_group_id,
+            status_enum
+        ))
+
+        for group_result in results:
+            base_request = group_result.get("part_requests")[0]
+
+            vehicle_information = base_request.get("vehicleInformation")
+            
+            creator_group_data = groupRepository.find_by_id(base_request.get("creatorGroup"))
+
+            group_result["creator_group"] = creator_group_data.get("name")
+            group_result["car_data"] = f'{vehicle_information.get("maker")} {vehicle_information.get("model")} {vehicle_information.get("year")}'
+
+            part_requests_jsons = []
+
+            for part_request_data in group_result.get("part_requests"):
+                part_request_data = PartRequest(**part_request_data).toJson()
+
+                part_requests_jsons.append(part_request_data)
+            
+            group_result["part_requests"] = part_requests_jsons
+
+        return results
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f'Error while finding part requests grouped by parent_request_uid: {e}')
