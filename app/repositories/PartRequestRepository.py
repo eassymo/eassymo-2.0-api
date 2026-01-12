@@ -1,7 +1,10 @@
+from pymongo.errors import PyMongoError
 from app.config import database
 from bson import ObjectId
 from pymongo import ReturnDocument
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional
+
+from app.schemas.PartRequest import PartRequest, PartRequestStatus
 
 
 def insert(part_request):
@@ -218,3 +221,32 @@ def count(filters) -> int:
 
 def distinct(property_name: str, filters: Dict[str, Any]):
     return database.db["PartRequests"].distinct(property_name, filters)
+
+
+def find_grouped_by_parent_request_uid(creator_group_id: Optional[str], seller_group_id: Optional[str], status: Optional[PartRequestStatus]):
+    try:
+        filters = {}
+
+        if creator_group_id != None and len(creator_group_id.strip()) > 0:
+            filters["creatorGroup"] = creator_group_id
+        
+        if seller_group_id != None and len(seller_group_id.strip()) > 0:
+            filters["subscribedSellers"] = seller_group_id
+        
+        if status != None:
+            filters["status"] = status.value
+
+        return database.db["PartRequests"].aggregate([
+            {"$match": filters},
+            {
+                "$group": {
+                    "_id": "$parent_request_uid",
+                    "part_requests": {"$push": "$$ROOT"}
+                }
+            },
+            {
+                "$sort": {"_id": -1}
+            }
+        ])
+    except PyMongoError as e:
+        raise PyMongoError(f"Error while finding part requests grouped by parent_request_uid: {str(e)}")
