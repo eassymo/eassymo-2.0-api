@@ -148,3 +148,12 @@ def transfer_ownership(req: Request, payload=Body(...)):
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except (PyMongoError, HTTPException) as e:
         return JSONResponse(status_code=e.status_code if hasattr(e, 'status_code') else status.HTTP_500_INTERNAL_SERVER_ERROR, content=get_unsuccessful_response(e))
+
+
+@groupRouter.post("/find-bulk", tags=["Groups"])
+def find_bulk(req: Request, payload=Body(...)):
+    try:
+        response = groupService.find_bulk(payload["groups_ids"])
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
+    except (PyMongoError, HTTPException) as e:
+        return JSONResponse(status_code=e.status_code if hasattr(e, 'status_code') else status.HTTP_500_INTERNAL_SERVER_ERROR, content=get_unsuccessful_response(e))
