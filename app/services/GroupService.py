@@ -16,7 +16,6 @@ from bson import ObjectId
 from app.schemas.GeoJsonLocation import GeoJson
 
 
-
 def create_group(group: GroupSchema, censusReference: str | None, user_id: str):
 
     group_data = {
@@ -81,7 +80,7 @@ def find(request: Request, filters: Dict[str, Any]) -> List[GroupSchema]:
         groupSelected = request.state._state.get('groupSelected')
 
         search_filters = {}
-        if("is_callcenter" in filters):
+        if ("is_callcenter" in filters):
             search_filters["is_callcenter"] = filters["is_callcenter"]
 
         if (filters["search_argument"] != None):
@@ -207,23 +206,25 @@ def add_employee_to_group(group_id: str, employee_uid: str) -> str | None:
 
         if len(employee_info) > 0:
             employee_data = employee_info[0]
-            employee_groups = [str(group["_id"]) for group in employee_data["groups"]]
+            employee_groups = [str(group["_id"])
+                               for group in employee_data["groups"]]
             employee_data["groups"] = employee_groups
             employee_info[0] = employee_data
 
         if group_ifo != None and len(employee_info) > 0:
             employee = UserSchema(**employee_info[0])
-            group = GroupSchema(**group_ifo)            
+            group = GroupSchema(**group_ifo)
             group.add_user_to_group(employee.uid)
             employee.add_group_to_user(group_id)
-            
+
             employee_data = employee.toJson()
             employee_data.pop("_id")
 
             group_data = group.toJson()
             group_data.pop("_id")
             print(group_data)
-            modified_users = userRepository.update_user(employee.uid, employee_data).modified_count
+            modified_users = userRepository.update_user(
+                employee.uid, employee_data).modified_count
             modified_groups = groupRepository.edit_group(group.id, group_data)
 
             return {
@@ -231,19 +232,20 @@ def add_employee_to_group(group_id: str, employee_uid: str) -> str | None:
                 "group": group if modified_groups != None else None
             }
     except PyMongoError as err:
-        raise HTTPException(status_code=500, detail=f'Error while adding employee to group {err}')
+        raise HTTPException(
+            status_code=500, detail=f'Error while adding employee to group {err}')
 
 
 def find_users_by_group_id(group_id: str) -> List[Dict[str, Any]]:
     """
     Retrieves all users that belong to a specific group.
-    
+
     Args:
         group_id: The ID of the group to find users for
-        
+
     Returns:
         A list of user data dictionaries
-        
+
     Raises:
         HTTPException: If there's an error retrieving the users
     """
@@ -253,13 +255,13 @@ def find_users_by_group_id(group_id: str) -> List[Dict[str, Any]]:
         if group_info is None:
             raise HTTPException(
                 status_code=404, detail=f"Group with ID {group_id} not found")
-        
+
         group = GroupSchema(**group_info)
-        
+
         # If the group has no users, return an empty list
         if not group.users or len(group.users) == 0:
             return []
-        
+
         # Get detailed user information for each user in the group
         users_data = []
         for user_uid in group.users:
@@ -270,23 +272,24 @@ def find_users_by_group_id(group_id: str) -> List[Dict[str, Any]]:
                 # Convert ObjectId to string if present
                 if "_id" in user_data and not isinstance(user_data["_id"], str):
                     user_data["_id"] = str(user_data["_id"])
-                
+
                 # Format groups if present
                 if "groups" in user_data and isinstance(user_data["groups"], list):
-                    user_data["groups"] = [GroupSchema(**g).toJson() if not isinstance(g, str) else g for g in user_data["groups"]]
-                
+                    user_data["groups"] = [GroupSchema(
+                        **g).toJson() if not isinstance(g, str) else g for g in user_data["groups"]]
+
                 users_data.append(user_data)
-        
+
         return users_data
     except PyMongoError as err:
         raise HTTPException(
             status_code=500, detail=f'Error while finding users for group {err}')
-    
+
 
 def transfer_ownership(request: Request, group_id: str, new_owner: str):
     try:
         user = request.state._state.get('user')
-        
+
         group_info = groupRepository.find_by_id(group_id)
         if group_info != None:
             group = GroupSchema(**group_info)
@@ -301,16 +304,19 @@ def transfer_ownership(request: Request, group_id: str, new_owner: str):
                 group_payload = group.toJson()
 
                 group_payload.pop("_id")
-                edited_group = groupRepository.edit_group(group.id, group_payload)
+                edited_group = groupRepository.edit_group(
+                    group.id, group_payload)
 
                 return GroupSchema(**edited_group).toJson()
             else:
-                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Only the owner can change the ownership of the group")
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                                    detail="Only the owner can change the ownership of the group")
         print(user)
-        
+
     except (HTTPException, PyMongoError) as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f'Error while transfering ownership of group {e}')
-    
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f'Error while transfering ownership of group {e}')
+
 
 def _find_user(uid: str) -> UserSchema | None:
     try:
@@ -320,4 +326,20 @@ def _find_user(uid: str) -> UserSchema | None:
             return user
         return None
     except (HTTPException, PyMongoError) as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Error while getting user ')
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail='Error while getting user ')
+
+
+def find_bulk(group_ids: List[str]) -> List[Dict[str, Any]]:
+    try:
+
+        ids: List[ObjectId] = [ObjectId(group_id) for group_id in group_ids]
+
+        groups = list(groupRepository.find({"_id": {"$in": ids}}))
+
+        groups_objs: List[GroupSchema] = [GroupSchema(**group) for group in groups]
+        
+        return [group.toJson() for group in groups_objs]
+    except (HTTPException) as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail='Error while getting groups in bulk')
