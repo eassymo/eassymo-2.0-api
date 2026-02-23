@@ -16,7 +16,8 @@ def find(
     search_argument: Optional[str] = Query(None, title="search_argument")
 ):
     try:
-        response = OrderService.find(id, group_id, current_role, search_argument)
+        response = OrderService.find(
+            id, group_id, current_role, search_argument)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
         return JSONResponse(content=get_unsuccessful_response(e))
@@ -27,13 +28,21 @@ def change_order_status(data: dict = Body(...)):
     try:
         new_status = data.get("new_status")
         order_id = data.get("order_id")
+
+        delivery_notes_buyer = data.get("delivery_notes_buyer")
+        delivery_pictures_buyer = data.get("delivery_pictures_buyer")
+
+        delivery_notes_seller = data.get("delivery_notes_seller")
+        delivery_pictures_seller = data.get("delivery_pictures_seller")
+
         if not new_status:
             return JSONResponse(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 content=get_unsuccessful_response(
                     "new_status is required in the request body")
             )
-        response = OrderService.change_order_status(order_id, new_status)
+        response = OrderService.change_order_status(order_id, new_status, delivery_notes_buyer=delivery_notes_buyer, delivery_notes_seller=delivery_notes_seller,
+                                                    delivery_pictures_buyer=delivery_pictures_buyer, delivery_pictures_seller=delivery_pictures_seller)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
         return JSONResponse(content=get_unsuccessful_response(e))

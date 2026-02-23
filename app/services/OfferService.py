@@ -153,7 +153,7 @@ def find_by_request_id_and_group(request: Request, part_request_id: str, group_i
             group_info = groupRepository.find_by_id(group_id)
 
             followers = listService.get_followers_list(
-            logged_in_user, group_id)
+                logged_in_user, group_id)
 
             if group_info == None:
                 raise HTTPException(
@@ -181,8 +181,9 @@ def find_by_request_id_and_group(request: Request, part_request_id: str, group_i
                     offer['createdByFollower'] = True
                 else:
                     offer['createdByFollower'] = False
-            
-            offer["creatorIsFavoriteAtSomeList"] = __check_if_group_is_favorite(group)
+
+            offer["creatorIsFavoriteAtSomeList"] = __check_if_group_is_favorite(
+                group)
 
         return found_offers
 
@@ -192,9 +193,11 @@ def find_by_request_id_and_group(request: Request, part_request_id: str, group_i
 
 
 def __check_if_group_is_favorite(group: GroupSchema) -> bool:
-    favorite_lists = list(listsRepository.find({"is_favorite": True, "groups": group.id }))
-    
+    favorite_lists = list(listsRepository.find(
+        {"is_favorite": True, "groups": group.id}))
+
     return len(favorite_lists) > 0
+
 
 def __format_filters(payload: Offer):
     offer_filters = {}
@@ -361,8 +364,19 @@ def change_offer_status(request_id: str, offer_id: str, status: str, user_token:
                 part_request.update_status(PartRequestStatus.OFFER_SELECTED)
                 offer.update_status(OfferStatus.selected)
 
+                order_created_at = datetime.now(ZoneInfo('UTC'))
+                order_to_be_delivered_time = None
+                if offer.to_be_delivered_time:
+                    offer_time = offer.to_be_delivered_time
+                    order_to_be_delivered_time = order_created_at.replace(
+                        hour=offer_time.hour,
+                        minute=offer_time.minute,
+                        second=offer_time.second,
+                        microsecond=0
+                    )
+
                 order = Order(offer=offer, part_request=part_request, status=OrderStatus.WAITING_FOR_CONFIRMATION,
-                              creator_user=part_request.creatorUser, group=part_request.creatorGroup, created_at=datetime.now(ZoneInfo('UTC')))
+                              creator_user=part_request.creatorUser, group=part_request.creatorGroup, created_at=order_created_at, to_be_delivered_time=order_to_be_delivered_time)
                 order_json = order.toJson()
                 order_json.pop("_id")
                 inserted_order = orderRepository.insert(order_json)
