@@ -69,6 +69,10 @@ class Order(BaseModel):
     updated_at: datetime = Field(default=datetime.now(ZoneInfo('UTC')))
     offer_group: Optional[GroupSchema] = Field(None)
     request_group: Optional[GroupSchema] = Field(None)
+    delivery_notes_buyer: Optional[str] = Field(None)
+    delivery_pictures_buyer: Optional[List[str]] = Field([])
+    delivery_notes_seller: Optional[str] = Field(None)
+    delivery_pictures_seller: Optional[List[str]] = Field([])
 
     @root_validator(pre=True)
     def convert_objectId(cls, values):

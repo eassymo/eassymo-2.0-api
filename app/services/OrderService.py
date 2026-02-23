@@ -5,7 +5,7 @@ from app.schemas.Groups import GroupSchema
 from bson import ObjectId
 from datetime import datetime
 
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 
 def find(order_id: str, group_id: str | None, current_role: str, search_argument: str | None):
@@ -18,7 +18,8 @@ def find(order_id: str, group_id: str | None, current_role: str, search_argument
             "sales": []
         }
 
-        filters = _build_order_filters(current_role, order_id, group_id, search_argument)
+        filters = _build_order_filters(
+            current_role, order_id, group_id, search_argument)
 
         orders = list(orderRepository.find(filters))
 
@@ -85,13 +86,29 @@ def find_by_id(id: str):
             status_code=500, detail=f'Error while fetching order by id {e}')
 
 
-def change_order_status(order_id: str, new_status: str):
+def change_order_status(
+    order_id: str,
+    new_status: str,
+    delivery_notes_buyer: str | None,
+    delivery_notes_seller: str | None,
+    delivery_pictures_buyer: List[str] | None = [],
+    delivery_pictures_seller: List[str] | None = []
+):
     try:
         order_id = ObjectId(order_id)
         order: Order
         order_found = list(orderRepository.find_by_id(order_id))
-        if order_found != None and len(order_found) > 0:
-            order = Order(**order_found[0])
+
+        order_found = {
+            **order_found[0],
+            "delivery_notes_buyer": delivery_notes_buyer,
+            "delivery_pictures_buyer": delivery_pictures_buyer,
+            "delivery_notes_seller": delivery_notes_seller,
+            "delivery_pictures_seller": delivery_pictures_seller
+        }
+
+        if order_found != None:
+            order = Order(**order_found)
 
         order.change_status(new_status)
 
