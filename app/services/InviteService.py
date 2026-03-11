@@ -59,6 +59,29 @@ def _append_created_group_to_lists(census_id: str, inviter_groups: List[str], in
     return modified_lists
 
 
+def find_by_id(id: str):
+    try:
+        invite = inviteRepository.find_by_id(id)
+
+        if invite is None:
+            raise HTTPException(status_code=404, detail=f"Invite with id {id} not found")
+
+        if invite.get('censusUser') and isinstance(invite['censusUser'], dict):
+            census_data = invite['censusUser']
+            if '_id' not in census_data:
+                census_data['_id'] = None
+            invite['censusUser'] = CensusSchema(**census_data)
+        else:
+            invite['censusUser'] = None
+
+        invite_data = InvitationsSchema(**invite)
+        return invite_data.toJson()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error finding invite by id: {e}")
+
+
 def find(user_id: str | None, group_id: str | None, status: str | None, final_contact_info: str | None):
     try:
         filters: Dict[str, Any] = {}
