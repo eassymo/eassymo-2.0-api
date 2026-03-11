@@ -41,6 +41,7 @@ def change_order_status(data: dict = Body(...)):
                 content=get_unsuccessful_response(
                     "new_status is required in the request body")
             )
+
         response = OrderService.change_order_status(order_id, new_status, delivery_notes_buyer=delivery_notes_buyer, delivery_notes_seller=delivery_notes_seller,
                                                     delivery_pictures_buyer=delivery_pictures_buyer, delivery_pictures_seller=delivery_pictures_seller)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))

@@ -26,6 +26,15 @@ def find(
         return JSONResponse(get_unsuccessful_response(e))
 
 
+@inviteRouter.get("/{id}", tags=["Invites"])
+def find_by_id(id: str):
+    try:
+        invite = inviteService.find_by_id(id)
+        return JSONResponse(get_successful_response(jsonable_encoder(invite)))
+    except Exception as e:
+        return JSONResponse(get_unsuccessful_response(e))
+
+
 @inviteRouter.put("/change_status/{census_id}", description="Change the status of an invite", tags=["Invites"])
 def change_status(census_id: str, data=Body(...)):
     try:
