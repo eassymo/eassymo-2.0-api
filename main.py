@@ -26,6 +26,8 @@ from app.routers import CommissionerFilterRoutes as commissionerFilterRoutes
 from app.routers import AcesVehiclesRoutes as acesVehiclesRoutes
 from app.routers import PreloadedFiltersRoutes as preloadedFiltersRoutes
 from app.routers import RequestStatusByGroupRoutes as RequestStatusByGroupRoutes
+from app.routers import VehiculoRouter as vehiculoRouter
+from app.routers import EstandarizadorRouter as estandarizadorRouter
 
 
 import app.utils.firebase_admin
@@ -104,3 +106,5 @@ app.include_router(commissionerFilterRoutes.commisionerFilterRouter)
 app.include_router(acesVehiclesRoutes.AcesVehiclesRouter)
 app.include_router(preloadedFiltersRoutes.preloadedFiltersRouter)
 app.include_router(RequestStatusByGroupRoutes.requestStatusByGroupRouter)
+app.include_router(vehiculoRouter.vehiculoRouter)
+app.include_router(estandarizadorRouter.estandarizadorRouter)
