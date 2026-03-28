@@ -24,6 +24,7 @@ from app.factories.NotificationsCreator import (
 from app.utils.notifications import send_notification
 
 from app.repositories import ListsRepository as listsRepository
+from app.repositories import RequestStatusByGroupRepository as requestStatusByGroupRepository
 
 
 def insert(payload: Offer, user_token: str):
@@ -280,12 +281,11 @@ def find_request_offers_by_groups(request_id: str):
     part_request = PartRequest(**part_request_data)
     subscribed_sellers = part_request.subscribedSellers
 
-    groups_found = []
-
-    have_offered_qty = 0
-
     seller_dict = list(map(lambda seller_id: {
-                       "seller_id": seller_id, "has_offered": False}, subscribed_sellers))
+        "seller_id": seller_id,
+        "has_offered": False,
+        "no_stock": False,
+    }, subscribed_sellers))
 
     for seller in seller_dict:
         offers = list(offerRepository.find_by_request_id_and_group(
@@ -293,20 +293,37 @@ def find_request_offers_by_groups(request_id: str):
 
         if len(offers) > 0:
             seller["has_offered"] = True
-            have_offered_qty += 1
+
+        request_status = requestStatusByGroupRepository.find_by_group_and_request_id(
+            seller["seller_id"], request_id)
+
+        if request_status is not None and request_status.status == OfferStatus.no_inventory:
+            seller["no_stock"] = True
+
+    have_offered = []
+    have_not_offered = []
+    no_stock = []
 
     for seller in seller_dict:
         group_data = groupRepository.find_by_id(seller["seller_id"])
-        if group_data == None:
+        if group_data is None:
             continue
 
-        group_item = GroupSchema(**group_data)
+        group_json = GroupSchema(**group_data).toJson()
 
-        group_json = group_item.toJson()
-        group_json["has_offered"] = seller["has_offered"]
-        groups_found.append(group_json)
+        if seller["has_offered"]:
+            have_offered.append(group_json)
+        else:
+            have_not_offered.append(group_json)
 
-    return {"groups_found": groups_found, "have_offered": have_offered_qty, "have_not_offered": len(seller_dict) - have_offered_qty}
+        if seller["no_stock"]:
+            no_stock.append(group_json)
+
+    return {
+        "have_offered": have_offered,
+        "have_not_offered": have_not_offered,
+        "no_stock": no_stock,
+    }
 
 
 def edit_offer(offer_uid: str, payload: Offer):

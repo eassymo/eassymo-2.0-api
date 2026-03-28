@@ -1,3 +1,5 @@
+from typing import List
+
 from app.repositories import GroupCarRepository
 from app.schemas.GroupVehicle import GroupVehicle
 from pymongo.errors import PyMongoError
@@ -63,6 +65,18 @@ def find_by_id(id: str):
         raise HTTPException(
             status_code=500, detail=f'Error while finding group vehicle by id {err}')
 
+
+def find_by_ids(ids: List[str]) -> List[dict]:
+    """Full GroupVehicle payloads for each valid id, in the same order as `ids` (skips missing/invalid)."""
+    if not ids:
+        return []
+    docs = GroupCarRepository.find_by_ids(ids)
+   
+    result: List[dict] = []
+    for doc in docs:
+        vehicle = GroupVehicle(**doc)
+        result.append(vehicle.toJson())
+    return result
 
 def edit(id: str, payload: GroupVehicle):
     try:

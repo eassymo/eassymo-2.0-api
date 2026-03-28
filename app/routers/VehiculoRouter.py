@@ -1,12 +1,17 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Body, Depends, status
 from fastapi.responses import JSONResponse
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 
 from app.config.database import get_mysql_db
 from app.schemas.VehiculoPartesSearch import SearchPartesPaginatorRequest
 from app.schemas.CheckSensibilidades import CheckSensibilidadesRequest
+from app.schemas.VehiculoVehiclesByIds import VehiclesByIdsRequest
 from app.services.VehiculoPartesService import search_partes_paginator
 from app.services.VehiculoSensibilidadesService import check_sensibilidades
+from app.services import GroupCarService
+from app.utils import TypeUtilities as typeUtilities
+from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response
 
 vehiculoRouter = APIRouter(prefix="/vehiculo", tags=["Vehiculo"])
 
@@ -58,4 +63,20 @@ def check_sensibilidades_endpoint(
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={"success": False, "code": "GENERIC_ERROR"},
+        )
+
+
+@vehiculoRouter.post("/vehicles-by-ids")
+def vehicles_by_ids(payload = Body(...)):
+    try:
+        vehicles = GroupCarService.find_by_ids(payload.get("vehicleIds"))
+        formatted = typeUtilities.parse_json(vehicles)
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content=get_successful_response(jsonable_encoder(formatted)),
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content=get_unsuccessful_response(e),
         )
