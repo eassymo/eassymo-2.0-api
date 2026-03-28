@@ -133,6 +133,10 @@ def count_grouped(filters):
     return database.db["PartRequests"].count_documents(filters)
 
 
+def distinct_vehicle_ids_grouped(filters: Dict[str, Any]) -> List[Any]:
+    """Distinct vehicleId values for documents matching the same filter as find_grouped $match."""
+    return database.db["PartRequests"].distinct("vehicleId", filters)
+
 def search_reduced(filters):
 
     aggregation = [

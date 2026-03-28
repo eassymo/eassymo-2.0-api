@@ -289,6 +289,7 @@ def find_grouped(
         group_role: str,
         creator_group: str,
         vehicle_model: str,
+        vehicle_id: str,
         created_at: str,
         search_argument: str,
         page: int = 1,
@@ -300,6 +301,7 @@ def find_grouped(
             group_role,
             creator_group,
             vehicle_model,
+            vehicle_id,
             created_at,
             search_argument,
         )
@@ -373,6 +375,38 @@ def find_grouped(
             status_code=500, detail=f'Error finding grouped requests {e}')
 
 
+def find_distinct_vehicle_ids_in_requests(
+    group_id: Optional[str],
+    group_role: Optional[str],
+):
+    """
+    Same filter pipeline as find_grouped (group_id, group_role, optional filters),
+    returns sorted distinct vehicleId strings from matching PartRequests.
+    """
+    filters = __format_grouped_filters(
+        group_id,
+        group_role
+    )
+
+    if group_role is not None and len(str(group_role)) > 0:
+        role = int(group_role)
+        if role == 2:
+            filters["status"] = PartRequestStatus.CREATED.value
+    raw_ids = partRequestRepository.distinct_vehicle_ids_grouped(filters)
+    seen = set()
+    out: List[str] = []
+    for vid in raw_ids:
+        if vid is None:
+            continue
+        s = str(vid).strip()
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    out.sort()
+    return out
+
+
 def __find_offers_for_requests(requests: List[PartRequest], group_id: str) -> List[Offer]:
     request_ids = [request.id for request in requests]
 
@@ -415,10 +449,11 @@ def __filter_part_offer_by_request_id(offers: List[Offer], request: PartRequest,
 def __format_grouped_filters(
     group_id: str,
     group_role: str,
-    creatorGroup: str,
-    vehicle_model: str,
-    created_at: str,
-    search_argument: str,
+    creatorGroup: str | None,
+    vehicle_model: str | None,
+    vehicle_id: str | None,
+    created_at: str | None,
+    search_argument: str | None,
 ):
 
     current_group_role: int
@@ -452,6 +487,13 @@ def __format_grouped_filters(
         filters["$and"].append(
             {
                 "vehicleInformation.model": {"$in": vehicle_models_array}
+            }
+        )
+
+    if vehicle_id is not None:
+        filters["$and"].append(
+            {
+                "vehicleId": vehicle_id
             }
         )
 

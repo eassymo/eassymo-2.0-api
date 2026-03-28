@@ -55,6 +55,7 @@ def find_grouped(
         None, title="creator_group"),
     vehicle_model: Optional[str] = Query(
         None, title="vehicle_model"),
+    vehicle_id: Optional[str] = Query(None, title="vehicle_id"),
     created_at: Optional[str] = Query(
         None, title="created_at"),
     page: Optional[int] = Query(1, title="page", description="Page number"),
@@ -67,6 +68,7 @@ def find_grouped(
             group_role,
             creator_group,
             vehicle_model,
+            vehicle_id,
             created_at,
             search_argument,
             page,
@@ -76,6 +78,26 @@ def find_grouped(
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(part_requests))
     except Exception as e:
         return JSONResponse(content=get_unsuccessful_response(e))
+
+
+@partRequestRouter.get("/vehicles-available-in-requests", tags=["PartRequest"])
+def vehicles_available_in_requests(
+    group_id: Optional[str] = Query(None, title="group_id", description=""),
+    group_role: Optional[str] = Query(
+        None, title="group_role", description="current logged in role")
+):
+    try:
+        vehicle_ids = partRequestService.find_distinct_vehicle_ids_in_requests(
+            group_id,
+            group_role,
+        )
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content=get_successful_response({"vehicleIds": vehicle_ids}),
+        )
+    except Exception as e:
+        return JSONResponse(content=get_unsuccessful_response(e))
+
 
 @partRequestRouter.get("/group/group-by-parent", response_description="part requests grouped by parent_request_uid", tags=["PartRequest"])
 def find_grouped_by_parent_request_uid(
