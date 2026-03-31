@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Body, Depends, status
+import os
+
+from fastapi import APIRouter, Body, Depends, Query, status
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
@@ -9,6 +11,7 @@ from app.schemas.CheckSensibilidades import CheckSensibilidadesRequest
 from app.schemas.VehiculoVehiclesByIds import VehiclesByIdsRequest
 from app.services.VehiculoPartesService import search_partes_paginator
 from app.services.VehiculoSensibilidadesService import check_sensibilidades
+from app.repositories.VehiculoSensibilidadesRepository import VehiculoSensibilidadesRepository
 from app.services import GroupCarService
 from app.utils import TypeUtilities as typeUtilities
 from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response
@@ -59,6 +62,54 @@ def check_sensibilidades_endpoint(
     try:
         result = check_sensibilidades(mysql_db, payload)
         return JSONResponse(status_code=status.HTTP_200_OK, content=result)
+    except Exception:
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"success": False, "code": "GENERIC_ERROR"},
+        )
+
+
+@vehiculoRouter.get("/findAllVersiones")
+def find_all_versiones(
+    vehiculoFabricante: str = Query(...),
+    vehiculoModelo: str = Query(...),
+    vehiculoAno: int = Query(...),
+    mysql_db: Session = Depends(get_mysql_db),
+):
+    try:
+        country_id = int(os.getenv("COUNTRY_ID", "484"))
+        rows = VehiculoSensibilidadesRepository.find_all_versiones(
+            mysql_db, vehiculoFabricante, vehiculoModelo, vehiculoAno, country_id
+        )
+        data = [
+            {"vehiculoSubModelo": r.VehiculoSubModelo, "vehiculoMotorId": r.VehiculoMotorId}
+            for r in rows
+        ]
+        return JSONResponse(status_code=status.HTTP_200_OK, content={"data": data})
+    except Exception:
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"success": False, "code": "GENERIC_ERROR"},
+        )
+
+
+@vehiculoRouter.get("/findAllMotorDesc")
+def find_all_motor_desc(
+    vehiculoFabricante: str = Query(...),
+    vehiculoModelo: str = Query(...),
+    vehiculoAno: int = Query(...),
+    mysql_db: Session = Depends(get_mysql_db),
+):
+    try:
+        country_id = int(os.getenv("COUNTRY_ID", "484"))
+        rows = VehiculoSensibilidadesRepository.find_all_motor_desc(
+            mysql_db, vehiculoFabricante, vehiculoModelo, vehiculoAno, country_id
+        )
+        data = [
+            {"vehiculoMotorDescripcion": r.VehiculoMotorDescripcion, "vehiculoMotorId": r.VehiculoMotorId}
+            for r in rows
+        ]
+        return JSONResponse(status_code=status.HTTP_200_OK, content={"data": data})
     except Exception:
         return JSONResponse(
             status_code=status.HTTP_200_OK,

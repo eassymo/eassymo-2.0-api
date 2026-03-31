@@ -1,6 +1,7 @@
 from typing import List, Optional, Tuple
 
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 
 from models import (
     Vehiculos,
@@ -53,3 +54,50 @@ class VehiculoSensibilidadesRepository:
     @staticmethod
     def find_all_posiciones(mysql_db: Session) -> List[Posiciones]:
         return mysql_db.query(Posiciones).all()
+
+    @staticmethod
+    def find_all_versiones(
+        mysql_db: Session,
+        fabricante: str,
+        modelo: str,
+        ano: int,
+        country_id: int,
+    ) -> List[Tuple]:
+        return (
+            mysql_db.query(
+                Vehiculos.VehiculoSubModelo,
+                Vehiculos.VehiculoMotorId,
+            )
+            .filter(
+                Vehiculos.VehiculoFabricante == fabricante,
+                Vehiculos.VehiculoModelo == modelo,
+                Vehiculos.VehiculoAno == ano,
+                or_(Vehiculos.PaisId == country_id, Vehiculos.PaisId == None),
+            )
+            .group_by(Vehiculos.VehiculoSubModelo)
+            .all()
+        )
+
+    @staticmethod
+    def find_all_motor_desc(
+        mysql_db: Session,
+        fabricante: str,
+        modelo: str,
+        ano: int,
+        country_id: int,
+    ) -> List[Tuple]:
+        return (
+            mysql_db.query(
+                Vehiculomotores.VehiculoMotorId,
+                Vehiculomotores.VehiculoMotorDescripcion,
+            )
+            .join(Vehiculos, Vehiculos.VehiculoMotorId == Vehiculomotores.VehiculoMotorId)
+            .filter(
+                Vehiculos.VehiculoFabricante == fabricante,
+                Vehiculos.VehiculoModelo == modelo,
+                Vehiculos.VehiculoAno == ano,
+                or_(Vehiculos.PaisId == country_id, Vehiculos.PaisId == None),
+            )
+            .group_by(Vehiculomotores.VehiculoMotorDescripcion)
+            .all()
+        )
