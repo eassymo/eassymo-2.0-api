@@ -1,6 +1,7 @@
 from app.repositories import ChatRepository as chatRepository
 from app.schemas.Chat import Chat
 from app.schemas.Message import Message
+from typing import List
 from pymongo.errors import PyMongoError
 from fastapi import HTTPException
 from bson import ObjectId
@@ -79,6 +80,22 @@ def to_be_read(id: str, userUid: str, type: str):
     except PyMongoError as err:
         raise HTTPException(
             status_code=500, detail=f'Error while finding chat {err}')
+
+
+def to_be_read_v2(ids: List[str]) -> dict:
+    try:
+        result = {id: 0 for id in ids}
+        chats = chatRepository.find_by_request_ids(ids)
+        for chat in chats:
+            request_id = chat.get("requestId")
+            if request_id not in result:
+                continue
+            messages = chat.get("messages") or []
+            result[request_id] = sum(1 for msg in messages if msg.get("isRead") == False)
+        return result
+    except PyMongoError as err:
+        raise HTTPException(
+            status_code=500, detail=f'Error while finding chat to be read messages {err}')
 
 
 def read_messages(id: str, user_uid: str, type: str):

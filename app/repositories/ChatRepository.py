@@ -78,5 +78,12 @@ def find_to_be_read(filters):
     return 0
 
 
+def find_by_request_ids(ids: list):
+    return database.db["Chats"].find(
+        {"requestId": {"$in": ids}},
+        {"requestId": 1, "messages": 1},
+    )
+
+
 def update_chat(id: ObjectId, chat_payload: dict):
     return database.db["Chats"].update_one({"_id": id}, {"$set": {**chat_payload}})
