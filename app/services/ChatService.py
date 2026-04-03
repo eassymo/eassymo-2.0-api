@@ -82,23 +82,37 @@ def to_be_read(id: str, userUid: str, type: str):
             status_code=500, detail=f'Error while finding chat {err}')
 
 
-def to_be_read_v2(ids: List[str]) -> dict:
+def to_be_read_v2(ids: List[str], group_id: str, user_uid: str, type = 'request') -> dict:
     try:
         result = {id: 0 for id in ids}
-        chats = chatRepository.find_by_request_ids(ids)
+        
+        chats = []
+        if type == 'request':
+            chats = list(chatRepository.find_by_request_ids(ids))
+
+        if type == 'order':
+            chats = list(chatRepository.find_by_order_ids(ids))
+
+        id_field = "orderId" if type == "order" else "requestId"
+        user_group_concat = f'{user_uid}-{group_id}'
+
         for chat in chats:
-            request_id = chat.get("requestId")
+            request_id = chat.get(id_field)
             if request_id not in result:
                 continue
             messages = chat.get("messages") or []
-            result[request_id] = sum(1 for msg in messages if msg.get("isRead") == False)
+
+            result[request_id] = sum(
+                1 for msg in messages
+                if (msg.get("usersThatRead") or {}).get(user_group_concat) != True
+            )
         return result
     except PyMongoError as err:
         raise HTTPException(
             status_code=500, detail=f'Error while finding chat to be read messages {err}')
 
 
-def read_messages(id: str, user_uid: str, type: str):
+def read_messages(id: str, user_uid: str, type: str, group_selected: str):
     try:
         filters = {}
 
@@ -110,12 +124,13 @@ def read_messages(id: str, user_uid: str, type: str):
         chat_data = list(chatRepository.find(filters))[0]
         chat = Chat(**chat_data)
 
+        user_group_concat = f'{user_uid}-{group_selected}'
+
         for message in chat.messages:
             if message.usersThatRead is not None:
-                if user_uid in message.usersThatRead:
-                    message.usersThatRead[user_uid] = True
+                message.usersThatRead[user_group_concat] = True
             else:
-                message.usersThatRead = {user_uid: True}
+                message.usersThatRead = {user_group_concat: True}
 
         chat_json = chat.toJson()
         chat_id = ObjectId(chat_json["_id"])
@@ -128,11 +143,16 @@ def read_messages(id: str, user_uid: str, type: str):
             status_code=500, detail=f'Error while reading messages {err}')
 
 
-def add_message(message: Message):
+def add_message(message: Message, user_uid: str, group_id: str):
     try:
         chat_id = ObjectId(message.chatId)
+
         chat_data = chatRepository.find_by_id(chat_id)
         chat = Chat(**chat_data)
+
+        user_group_concat = f'{user_uid}-{group_id}'
+
+        message.usersThatRead = { user_group_concat : True }
 
         chat.insert_message(message)
 
