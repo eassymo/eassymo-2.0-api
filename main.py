@@ -28,6 +28,7 @@ from app.routers import PreloadedFiltersRoutes as preloadedFiltersRoutes
 from app.routers import RequestStatusByGroupRoutes as RequestStatusByGroupRoutes
 from app.routers import VehiculoRouter as vehiculoRouter
 from app.routers import EstandarizadorRouter as estandarizadorRouter
+from app.routers import PendingCartRouter as pendingCartRouter
 
 
 import app.utils.firebase_admin
@@ -108,3 +109,4 @@ app.include_router(preloadedFiltersRoutes.preloadedFiltersRouter)
 app.include_router(RequestStatusByGroupRoutes.requestStatusByGroupRouter)
 app.include_router(vehiculoRouter.vehiculoRouter)
 app.include_router(estandarizadorRouter.estandarizadorRouter)
+app.include_router(pendingCartRouter.pendingCartRouter)
