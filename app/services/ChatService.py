@@ -85,6 +85,9 @@ def to_be_read(id: str, userUid: str, type: str):
 def to_be_read_v2(ids: List[str], group_id: str, user_uid: str, type = 'request') -> dict:
     try:
         result = {id: 0 for id in ids}
+
+        if type is None:
+            type = 'request'
         
         chats = []
         if type == 'request':

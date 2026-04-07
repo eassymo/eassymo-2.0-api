@@ -91,10 +91,7 @@ def build_filters(parameters):
 
     if parameters["search_argument"] is not None and len(parameters["search_argument"]) > 0:
         search_term = parameters["search_argument"]
-        if not (search_term.startswith('"') and search_term.endswith('"')):
-            search_term = f'"{search_term}"'
-
-        conditions.append({"$text": {"$search": search_term}})
+        conditions.append({"Entity_Name": {"$regex": search_term, "$options": "i"}})
 
     if parameters["Entity_Type"] is not None and len(parameters["Entity_Type"]) > 0:
         if parameters["Entity_Type"] == "Refa":
