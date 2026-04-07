@@ -103,7 +103,7 @@ def vehicles_available_in_requests(
 def find_grouped_by_parent_request_uid(
     creator_group_id: Optional[str] = Query(None, title="creator_group_id"),
     seller_group_id: Optional[str] = Query(None, title="seller_group_id"),
-    part_request_status: Optional[str] = Query(None, title="status")
+    part_request_status: Optional[str] = Query(None, title="part_request_status")
 ):
     try:
         results = partRequestService.find_grouped_by_parent_request_uid(

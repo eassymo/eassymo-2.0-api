@@ -30,14 +30,11 @@ def find(filters, limit=20, skip=0):
 
 
 def count(filters):
-    census_filters = {
-        **filters,
-        "Entity_Visible": "Y",
-        "Entity_Active": "Y"
-    }
+    census_filters = {**filters}
 
-    census_filters.pop("limit")
-    census_filters.pop("page")
+    census_filters.pop("limit", None)
+    census_filters.pop("page", None)
+    census_filters.pop("show_only_census", None)
 
     total_count = database.db["Census"].count_documents(census_filters)
     group_count = database.db["Census"].count_documents(
@@ -138,7 +135,8 @@ def find_with_geospatial(filters, lat, lng, max_distance_meters, limit=20, skip=
         pipeline.append({
             "$sort": {
                 "distance_meters": 1,  # Closest first
-                "Entity_Name": 1  # Then by name
+                "Entity_Name": 1,  # Then by name
+                "group_reference_id": 1
             }
         })
         
