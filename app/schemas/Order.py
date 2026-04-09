@@ -73,6 +73,8 @@ class Order(BaseModel):
     delivery_pictures_buyer: Optional[List[str]] = Field([])
     delivery_notes_seller: Optional[str] = Field(None)
     delivery_pictures_seller: Optional[List[str]] = Field([])
+    packaged_notes_seller: Optional[str] = Field(None)
+    packaged_pictures_seller: Optional[List[str]] = Field([])
 
     @root_validator(pre=True)
     def convert_objectId(cls, values):
