@@ -35,6 +35,9 @@ def change_order_status(data: dict = Body(...)):
         delivery_notes_seller = data.get("delivery_notes_seller")
         delivery_pictures_seller = data.get("delivery_pictures_seller")
 
+        packaged_notes_seller = data.get("packaged_notes_seller")
+        packaged_pictures_seller = data.get("packaged_pictures_seller")
+
         if not new_status:
             return JSONResponse(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -43,7 +46,7 @@ def change_order_status(data: dict = Body(...)):
             )
 
         response = OrderService.change_order_status(order_id, new_status, delivery_notes_buyer=delivery_notes_buyer, delivery_notes_seller=delivery_notes_seller,
-                                                    delivery_pictures_buyer=delivery_pictures_buyer, delivery_pictures_seller=delivery_pictures_seller)
+                                                    delivery_pictures_buyer=delivery_pictures_buyer, delivery_pictures_seller=delivery_pictures_seller, packaged_notes_seller=packaged_notes_seller, packaged_pictures_seller=packaged_pictures_seller)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
         return JSONResponse(content=get_unsuccessful_response(e))

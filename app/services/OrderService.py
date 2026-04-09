@@ -91,8 +91,10 @@ def change_order_status(
     new_status: str,
     delivery_notes_buyer: str | None,
     delivery_notes_seller: str | None,
+    packaged_notes_seller: str | None,
     delivery_pictures_buyer: List[str] | None = [],
-    delivery_pictures_seller: List[str] | None = []
+    delivery_pictures_seller: List[str] | None = [],
+    packaged_pictures_seller: List[str] | None = [],
 ):
     try:
         order_id = ObjectId(order_id)
@@ -104,7 +106,9 @@ def change_order_status(
             "delivery_notes_buyer": delivery_notes_buyer,
             "delivery_pictures_buyer": delivery_pictures_buyer,
             "delivery_notes_seller": delivery_notes_seller,
-            "delivery_pictures_seller": delivery_pictures_seller
+            "delivery_pictures_seller": delivery_pictures_seller,
+            "packaged_notes_seller": packaged_notes_seller,
+            "packaged_pictures_seller": packaged_pictures_seller
         }
 
         if order_found != None:
