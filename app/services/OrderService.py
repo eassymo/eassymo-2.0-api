@@ -1,11 +1,11 @@
 from app.repositories import OrderRepository as orderRepository
 from fastapi import HTTPException
-from app.schemas.Order import Order
+from app.schemas.Order import Order, OrderStatus
 from app.schemas.Groups import GroupSchema
 from bson import ObjectId
 from datetime import datetime
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 
 def find(order_id: str, group_id: str | None, current_role: str, search_argument: str | None):
@@ -127,6 +127,93 @@ def change_order_status(
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f'Error while changing order status {e}')
+
+
+def assign_delivery(
+    order_id: str,
+    assignment_type: str,
+    requesting_user_uid: str,
+    user_id: Optional[str] = None,
+    guest_name: Optional[str] = None,
+    guest_phone: Optional[str] = None,
+    guest_token: Optional[str] = None,
+) -> dict:
+    """
+    Assigns a delivery person to an order and advances its status to DISPATCHED.
+    Raises HTTPException on any validation failure.
+    """
+    from app.services import DeliveryService
+    from app.services.WhatsappService import WhatsappService
+
+    try:
+        oid = ObjectId(order_id)
+        order_docs = list(orderRepository.find_by_id(oid))
+
+        if not order_docs:
+            raise HTTPException(status_code=404, detail="Order not found")
+
+        order_doc = order_docs[0]
+        order = Order(**order_doc)
+
+        _assignable_statuses = {OrderStatus.READY_TO_BE_DISPATCHED, OrderStatus.WAITING_FOR_COLLECTION}
+        if order.status not in _assignable_statuses:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Order must be in READY_TO_BE_DISPATCHED or WAITING_FOR_COLLECTION status to assign delivery (current: {order.status.value})"
+            )
+
+        offer_group_id = order_doc.get("offer", {}).get("group_id") or (
+            order_doc.get("offer_group") or {}
+        ).get("_id")
+
+        if not offer_group_id:
+            raise HTTPException(status_code=500, detail="Could not determine the selling group for this order")
+
+        offer_group_id = str(offer_group_id)
+
+        DeliveryService._assert_user_in_group(requesting_user_uid, offer_group_id)
+
+        assignment = DeliveryService.build_delivery_assignment(
+            assignment_type=assignment_type,
+            user_id=user_id,
+            guest_name=guest_name,
+            guest_phone=guest_phone,
+            guest_token=guest_token,
+            group_id=offer_group_id,
+        )
+
+        order.delivery_assignment = assignment
+
+        if assignment_type == "guest":
+            new_status = OrderStatus.WAITING_FOR_COLLECTION.name
+        else:
+            new_status = OrderStatus.DISPATCHED.name
+
+        order.change_status(new_status)
+
+        order_data = order.toJson()
+        order_data.pop("_id", None)
+
+        updated_doc = orderRepository.edit(oid, order_data)
+        result = Order(**updated_doc).toJson()
+
+        if assignment_type == "guest" and guest_phone and guest_name and assignment.guest_token:
+            invite_url = f"https://eassymo.mx/delivery-invite/{assignment.guest_token}"
+            try:
+                WhatsappService().send_delivery_invite(
+                    guest_phone=guest_phone,
+                    guest_name=guest_name,
+                    invite_url=invite_url,
+                )
+            except Exception:
+                pass
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error while assigning delivery: {e}")
 
 
 def change_delivery_time(order_id: str | ObjectId, new_delivery_time: datetime, is_delayed: bool):

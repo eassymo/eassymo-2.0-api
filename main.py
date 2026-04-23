@@ -29,6 +29,7 @@ from app.routers import RequestStatusByGroupRoutes as RequestStatusByGroupRoutes
 from app.routers import VehiculoRouter as vehiculoRouter
 from app.routers import EstandarizadorRouter as estandarizadorRouter
 from app.routers import PendingCartRouter as pendingCartRouter
+from app.routers import DeliveryRouter as deliveryRouter
 
 
 import app.utils.firebase_admin
@@ -45,15 +46,29 @@ app = FastAPI()
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
-    # List of paths that don't require authentication
     public_paths = [
         "/docs",
         "/redoc",
         "/openapi.json",
-        "/users/create"
+        "/users/create",
+        "/delivery/guest-orders",
     ]
 
-    if request.url.path in public_paths:
+    # Prefix-based public paths (delivery invite pages)
+    public_prefixes = [
+        "/delivery-invite/",
+    ]
+
+    path = request.url.path
+
+    if path in public_paths:
+        return await call_next(request)
+
+    if any(path.startswith(prefix) for prefix in public_prefixes):
+        return await call_next(request)
+
+    # Allow guest token auth to pass through for change-status
+    if path == "/order/change-status" and request.headers.get("X-Guest-Token"):
         return await call_next(request)
 
     try:
@@ -110,3 +125,4 @@ app.include_router(RequestStatusByGroupRoutes.requestStatusByGroupRouter)
 app.include_router(vehiculoRouter.vehiculoRouter)
 app.include_router(estandarizadorRouter.estandarizadorRouter)
 app.include_router(pendingCartRouter.pendingCartRouter)
+app.include_router(deliveryRouter.deliveryRouter)

@@ -12,10 +12,31 @@ from app.schemas.PartRequest import PartRequest
 from app.schemas.Groups import GroupSchema
 
 
+class DeliveryAssignmentType(str, Enum):
+    GROUP_MEMBER = "group_member"
+    GUEST = "guest"
+
+
+class DeliveryAssignment(BaseModel):
+    type: DeliveryAssignmentType = Field(..., description="Whether assigned to a group member or a guest")
+    user_id: Optional[str] = Field(None, description="User _id — only for type=group_member")
+    guest_token: Optional[str] = Field(None, description="UUID token — only for type=guest")
+    guest_name: Optional[str] = Field(None)
+    guest_phone: Optional[str] = Field(None, description="E.164 format")
+    assigned_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo('UTC')))
+
+    def toJson(self):
+        data = self.model_dump()
+        data["type"] = self.type.value
+        data["assigned_at"] = str(self.assigned_at)
+        return data
+
+
 class OrderStatus(Enum):
     WAITING_FOR_CONFIRMATION = "WAITING_FOR_CONFIRMATION"
     CONFIRMED = "CONFIRMED"
     READY_TO_BE_DISPATCHED = "READY_TO_BE_DISPATCHED"
+    WAITING_FOR_COLLECTION = "WAITING_FOR_COLLECTION"
     DISPATCHED = "DISPATCHED"
     RECIEVED = "RECIEVED"
     CANCELED = "CANCELED"
@@ -75,6 +96,7 @@ class Order(BaseModel):
     delivery_pictures_seller: Optional[List[str]] = Field([])
     packaged_notes_seller: Optional[str] = Field(None)
     packaged_pictures_seller: Optional[List[str]] = Field([])
+    delivery_assignment: Optional[DeliveryAssignment] = Field(None)
 
     @root_validator(pre=True)
     def convert_objectId(cls, values):
@@ -106,6 +128,9 @@ class Order(BaseModel):
 
         if self.to_be_delivered_time != None:
             data["to_be_delivered_time"] = str(self.to_be_delivered_time)
+
+        if self.delivery_assignment is not None:
+            data["delivery_assignment"] = self.delivery_assignment.toJson()
 
         return data
 
