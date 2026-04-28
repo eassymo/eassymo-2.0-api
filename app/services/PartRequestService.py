@@ -1,5 +1,12 @@
 from app.repositories import PartRequestRepository as partRequestRepository
-from app.schemas.PartRequest import PartRequest, PartRequestEdit, PartRequestStatus, PartRequestGroupedByDate
+from app.schemas.PartRequest import (
+    PartRequest,
+    PartRequestEdit,
+    PartRequestStatus,
+    PartRequestGroupedByDate,
+    FulfillmentType,
+    validate_delivery_fulfillment,
+)
 from app.schemas.Offer import OfferStatus
 from app.repositories import GroupCarRepository as groupCarRepository
 from app.repositories import GroupRepository as groupRepository
@@ -25,8 +32,23 @@ from app.repositories import ListsRepository as listRepository
 import pymongo
 
 
+def _default_fulfillment_type_on_dict(doc: Dict[str, Any]) -> Dict[str, Any]:
+    if not doc.get("fulfillment_type"):
+        return {**doc, "fulfillment_type": FulfillmentType.delivery.value}
+    return doc
+
+
 def insert(part_request: PartRequest, user_token: str = None):
     try:
+        try:
+            validate_delivery_fulfillment(
+                part_request.fulfillment_type,
+                part_request.delivery_address,
+                part_request.delivery_contact,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
         inserted_ids = []
 
         users_from_groups: List[str] = []
@@ -36,6 +58,7 @@ def insert(part_request: PartRequest, user_token: str = None):
         else:
             parent_request_uid = str(uuid4())
         part_req = part_request.dict()
+        part_req["fulfillment_type"] = part_request.fulfillment_type.value
         vehicle_information = groupCarRepository.find_by_id(
             part_req["vehicleId"])
 
@@ -241,9 +264,10 @@ def find_by_id(id):
                     "_id": str(found_request["_id"])
                 },
             }
+            found_request = _default_fulfillment_type_on_dict(found_request)
 
-        found_request["partList"] = __find_sister_part_list(
-            found_request["specific_order_uid"])
+            found_request["partList"] = __find_sister_part_list(
+                found_request["specific_order_uid"])
 
         return found_request
     except Exception as e:
@@ -259,10 +283,12 @@ def __find_sister_part_list(specific_order_uid: str):
         formatted_sister_requests = []
 
         for sister_part in sister_requests:
-            formatted_sister_requests.append({
-                **sister_part,
-                "_id": str(sister_part["_id"])
-            })
+            formatted_sister_requests.append(
+                _default_fulfillment_type_on_dict({
+                    **sister_part,
+                    "_id": str(sister_part["_id"]),
+                })
+            )
 
         return formatted_sister_requests
     except Exception as e:
@@ -273,14 +299,16 @@ def __find_sister_part_list(specific_order_uid: str):
 def format_part_requests(part_requests):
     formatted_requests = []
     for part_request in part_requests:
-        formatted_requests.append({
-            **part_request,
-            "vehicleInformation": {
-                **part_request["vehicleInformation"],
-                "_id": str(part_request["vehicleInformation"]["_id"])
-            },
-            "_id": str(part_request["_id"])
-        })
+        formatted_requests.append(
+            _default_fulfillment_type_on_dict({
+                **part_request,
+                "vehicleInformation": {
+                    **part_request["vehicleInformation"],
+                    "_id": str(part_request["vehicleInformation"]["_id"])
+                },
+                "_id": str(part_request["_id"])
+            })
+        )
     return formatted_requests
 
 
@@ -612,11 +640,13 @@ def __format_search_arguments(search_argument: str, category: str, sub_category:
 
 
 def __format_reduced_requests(part_requests):
-    for part_request in part_requests:
+    for i, part_request in enumerate(part_requests):
+        part_request = _default_fulfillment_type_on_dict(part_request)
         part_request["_id"] = str(part_request["_id"])
         part_request["vehicleInformation"]["_id"] = str(
             part_request["vehicleInformation"]["_id"])
         part_request["createdAt"] = str(part_request["createdAt"])
+        part_requests[i] = part_request
 
 
 def build_filter(prop_name: str):
@@ -845,19 +875,58 @@ def edit_part_request(part_request_data: List[PartRequestEdit]):
     try:
         edited_ids = []
         for part_request_edit in part_request_data:
+            if not part_request_edit.id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Each edit item must include id",
+                )
             found_part_request = list(
                 partRequestRepository.find_by_id(part_request_edit.id))
             if len(found_part_request) > 0:
 
                 current_part_request = PartRequest(**found_part_request[0])
+                merged = current_part_request.model_copy(deep=True)
+
+                if part_request_edit.fulfillment_type is not None:
+                    merged.fulfillment_type = part_request_edit.fulfillment_type
+                if part_request_edit.delivery_address is not None:
+                    merged.delivery_address = part_request_edit.delivery_address
+                if part_request_edit.delivery_contact is not None:
+                    merged.delivery_contact = part_request_edit.delivery_contact
+
+                if merged.fulfillment_type == FulfillmentType.pickup:
+                    merged.delivery_address = None
+                    merged.delivery_contact = None
+
+                try:
+                    validate_delivery_fulfillment(
+                        merged.fulfillment_type,
+                        merged.delivery_address,
+                        merged.delivery_contact,
+                    )
+                except ValueError as e:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+                subs = list(current_part_request.subscribedSellers or [])
+                if part_request_edit.subscribedSellers is not None:
+                    subs = list(set(subs + part_request_edit.subscribedSellers))
+
                 part_request_json = {
                     "part": {
                         **current_part_request.part,
                         "comments": part_request_edit.comment,
                         "amount": part_request_edit.amount
                     },
-                    "subscribedSellers": list(set(current_part_request.subscribedSellers + part_request_edit.subscribedSellers))
+                    "subscribedSellers": subs,
+                    "fulfillment_type": merged.fulfillment_type.value,
+                    "delivery_address": merged.delivery_address.model_dump()
+                    if merged.delivery_address is not None else None,
+                    "delivery_contact": merged.delivery_contact.model_dump()
+                    if merged.delivery_contact is not None else None,
+                    "updatedAt": datetime.now(ZoneInfo('UTC')),
                 }
+
                 edited_part_request = partRequestRepository.edit_part_request(
                     part_request_edit.id, part_request_json)
                 edited_ids.append(str(edited_part_request["_id"]))

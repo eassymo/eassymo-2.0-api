@@ -1,9 +1,8 @@
-from pydantic import BaseModel, Field, root_validator
+from pydantic import BaseModel, Field, field_validator, root_validator
 from typing import List
 from app.schemas.GroupVehicle import GroupVehicle
 from app.schemas.Groups import GroupSchema
 from app.schemas.Offer import Offer
-from app.schemas.Location import Location
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import Optional
@@ -19,6 +18,65 @@ class PartRequestStatus(Enum):
     REJECTED = "Rejected"
 
 
+class FulfillmentType(str, Enum):
+    delivery = "delivery"
+    pickup = "pickup"
+
+
+class DeliveryAddress(BaseModel):
+    address: Optional[str] = Field(None)
+    lat: Optional[float] = Field(None)
+    lng: Optional[float] = Field(None)
+    state: Optional[str] = Field(None)
+    city: Optional[str] = Field(None)
+    postalCode: Optional[str] = Field(None)
+
+
+class DeliveryContact(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    phone: str = Field(..., min_length=1, max_length=30)
+
+    @field_validator("name", "phone", mode="before")
+    @classmethod
+    def _strip_whitespace(cls, v: object) -> object:
+        if isinstance(v, str):
+            return v.strip()
+        return v
+
+
+def delivery_address_is_meaningful(addr: Optional[DeliveryAddress]) -> bool:
+    if addr is None:
+        return False
+    if addr.address and str(addr.address).strip():
+        return True
+    if addr.lat is not None and addr.lng is not None:
+        return True
+    return False
+
+
+def validate_delivery_fulfillment(
+    fulfillment_type: FulfillmentType,
+    delivery_address: Optional[DeliveryAddress],
+    delivery_contact: Optional[DeliveryContact],
+) -> None:
+    if fulfillment_type == FulfillmentType.pickup:
+        return
+    if delivery_contact is None:
+        raise ValueError(
+            "delivery_contact is required when fulfillment_type is delivery"
+        )
+    name = (delivery_contact.name or "").strip()
+    phone = (delivery_contact.phone or "").strip()
+    if not name or not phone:
+        raise ValueError(
+            "delivery_contact name and phone are required when fulfillment_type is delivery"
+        )
+    if not delivery_address_is_meaningful(delivery_address):
+        raise ValueError(
+            "delivery_address is required when fulfillment_type is delivery (address or lat/lng)"
+        )
+
+
 class PartRequest(BaseModel):
     id: Optional[str] = Field(None, alias="_id")
     creatorGroup: str = Field(
@@ -29,8 +87,6 @@ class PartRequest(BaseModel):
         description="Id of the vehicle, this will be used to fetch the vehicle info from db")
     vehicleInformation: Optional[GroupVehicle] = Field(None,
                                                        description="Info of vehicle")
-    """location: Optional[Location] = Field(
-       None) """
     createdAt: Optional[datetime] = Field(None)
     photos: Optional[List[str]] = Field([], description="list of urls")
     updatedAt: Optional[datetime] = Field(None)
@@ -52,6 +108,12 @@ class PartRequest(BaseModel):
         None, description="detailed information of the group")
     offers_amount: Optional[int] = Field(None)
     commissioner_group: Optional[str] = Field(None)
+    fulfillment_type: FulfillmentType = Field(
+        default=FulfillmentType.delivery,
+        description="delivery: ship to delivery_address; pickup: buyer collects at seller",
+    )
+    delivery_address: Optional[DeliveryAddress] = Field(None)
+    delivery_contact: Optional[DeliveryContact] = Field(None)
     offers: Optional[Offer] = Field(default=None, exclude=True)
 
     @root_validator(pre=True)
@@ -63,6 +125,9 @@ class PartRequest(BaseModel):
             values['createdAt'] = datetime.now(ZoneInfo('UTC'))
         if 'updatedAt' not in values or values['updatedAt'] is None:
             values['updatedAt'] = datetime.now(ZoneInfo('UTC'))
+
+        if values.get("fulfillment_type") is None:
+            values["fulfillment_type"] = FulfillmentType.delivery.value
 
         return values
 
@@ -88,6 +153,8 @@ class PartRequest(BaseModel):
         if data.get("status") != None:
             data["status"] = self.status.value
 
+        data["fulfillment_type"] = self.fulfillment_type.value
+
         return data
 
 
@@ -96,6 +163,9 @@ class PartRequestEdit(BaseModel):
     comment: Optional[str] = Field(None)
     amount: Optional[int] = Field(None)
     subscribedSellers: Optional[List[str]] = Field(None)
+    fulfillment_type: Optional[FulfillmentType] = Field(None)
+    delivery_address: Optional[DeliveryAddress] = Field(None)
+    delivery_contact: Optional[DeliveryContact] = Field(None)
 
     def toJson(self):
         return self.dict(by_alias=True)
