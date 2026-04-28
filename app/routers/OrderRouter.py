@@ -80,6 +80,8 @@ def change_order_status(request: Request, data: dict = Body(...)):
         packaged_notes_seller = data.get("packaged_notes_seller")
         packaged_pictures_seller = data.get("packaged_pictures_seller")
 
+        to_be_delivered_time = data.get("to_be_delivered_time")
+
         if not new_status:
             return JSONResponse(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -100,6 +102,16 @@ def change_order_status(request: Request, data: dict = Body(...)):
             order_doc = orderRepository.find_one({"_id": ObjectId(order_id)})
             if not order_doc:
                 return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content=get_unsuccessful_response("Order not found"))
+            if (
+                new_status == OrderStatus.RECIEVED.name
+                and order_doc.get("status") == OrderStatus.WAITING_FOR_CUSTOMER_PICKUP.value
+            ):
+                return JSONResponse(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    content=get_unsuccessful_response(
+                        "Guest delivery flow cannot confirm pickup orders as received"
+                    ),
+                )
             assigned_token = (order_doc.get("delivery_assignment") or {}).get("guest_token")
             if assigned_token != guest_token:
                 return JSONResponse(
@@ -114,6 +126,8 @@ def change_order_status(request: Request, data: dict = Body(...)):
                 delivery_pictures_seller=delivery_pictures_seller,
                 packaged_notes_seller=packaged_notes_seller,
                 packaged_pictures_seller=packaged_pictures_seller,
+                to_be_delivered_time=to_be_delivered_time,
+                requesting_user_uid=None,
             )
             return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
 
@@ -132,6 +146,16 @@ def change_order_status(request: Request, data: dict = Body(...)):
             order_doc = orderRepository.find_one({"_id": ObjectId(order_id)})
             if not order_doc:
                 return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content=get_unsuccessful_response("Order not found"))
+            if (
+                new_status == OrderStatus.RECIEVED.name
+                and order_doc.get("status") == OrderStatus.WAITING_FOR_CUSTOMER_PICKUP.value
+            ):
+                return JSONResponse(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    content=get_unsuccessful_response(
+                        "Delivery persons cannot mark pickup orders as received"
+                    ),
+                )
             assigned_uid = (order_doc.get("delivery_assignment") or {}).get("user_id")
             if assigned_uid != user.get("uid"):
                 return JSONResponse(
@@ -147,6 +171,8 @@ def change_order_status(request: Request, data: dict = Body(...)):
             delivery_pictures_seller=delivery_pictures_seller,
             packaged_notes_seller=packaged_notes_seller,
             packaged_pictures_seller=packaged_pictures_seller,
+            to_be_delivered_time=to_be_delivered_time,
+            requesting_user_uid=user.get("uid"),
         )
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:

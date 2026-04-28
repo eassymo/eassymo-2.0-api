@@ -1,11 +1,84 @@
 from app.repositories import OrderRepository as orderRepository
+from app.repositories import GroupRepository as groupRepository
 from fastapi import HTTPException
 from app.schemas.Order import Order, OrderStatus
+from app.schemas.PartRequest import FulfillmentType
 from app.schemas.Groups import GroupSchema
 from bson import ObjectId
 from datetime import datetime
 
 from typing import Dict, Any, List, Optional
+
+
+def _order_is_pickup_fulfillment(order: Order) -> bool:
+    try:
+        return bool(
+            order.part_request
+            and order.part_request.fulfillment_type == FulfillmentType.pickup
+        )
+    except Exception:
+        return False
+
+
+def _user_uid_in_group(user_uid: str, group_id: str | None) -> bool:
+    if not user_uid or not group_id:
+        return False
+    try:
+        group_doc = groupRepository.find_users_by_group_id(str(group_id))
+    except Exception:
+        return False
+    if not group_doc or "users" not in group_doc:
+        return False
+    return user_uid in group_doc.get("users", [])
+
+
+def _assert_order_status_transition(
+    order: Order,
+    new_status_name: str,
+    requesting_user_uid: Optional[str],
+) -> None:
+    try:
+        new_enum = OrderStatus[new_status_name]
+    except KeyError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid order status: {new_status_name}",
+        )
+
+    current = order.status
+    if not isinstance(current, OrderStatus):
+        current = OrderStatus(current)
+
+    if new_enum == OrderStatus.WAITING_FOR_CUSTOMER_PICKUP:
+        if current != OrderStatus.READY_TO_BE_DISPATCHED:
+            raise HTTPException(
+                status_code=400,
+                detail="Can only transition to WAITING_FOR_CUSTOMER_PICKUP from READY_TO_BE_DISPATCHED",
+            )
+        if not _order_is_pickup_fulfillment(order):
+            raise HTTPException(
+                status_code=400,
+                detail="WAITING_FOR_CUSTOMER_PICKUP is only allowed when the part request fulfillment type is pickup",
+            )
+        seller_group_id = order.offer.group_id if order.offer else None
+        if not requesting_user_uid or not _user_uid_in_group(
+            requesting_user_uid, seller_group_id
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="Only a member of the selling group can mark the order ready for customer pickup",
+            )
+        return
+
+    if new_enum == OrderStatus.RECIEVED and current == OrderStatus.WAITING_FOR_CUSTOMER_PICKUP:
+        if not requesting_user_uid or not _user_uid_in_group(
+            requesting_user_uid, order.group
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="Only a member of the buyer group can confirm pickup as received",
+            )
+        return
 
 
 def find(order_id: str, group_id: str | None, current_role: str, search_argument: str | None):
@@ -95,8 +168,12 @@ def change_order_status(
     delivery_pictures_buyer: List[str] | None = [],
     delivery_pictures_seller: List[str] | None = [],
     packaged_pictures_seller: List[str] | None = [],
+    to_be_delivered_time: str | None = None,
+    requesting_user_uid: Optional[str] = None,
 ):
     try:
+        from dateutil import parser as date_parser
+
         order_id = ObjectId(order_id)
         order: Order
         order_found = list(orderRepository.find_by_id(order_id))
@@ -113,6 +190,12 @@ def change_order_status(
 
         if order_found != None:
             order = Order(**order_found)
+
+        if to_be_delivered_time is not None:
+            parsed_time = date_parser.parse(to_be_delivered_time)
+            order.to_be_delivered_time = parsed_time
+
+        _assert_order_status_transition(order, new_status, requesting_user_uid)
 
         order.change_status(new_status)
 
@@ -154,6 +237,12 @@ def assign_delivery(
 
         order_doc = order_docs[0]
         order = Order(**order_doc)
+
+        if order.part_request and order.part_request.fulfillment_type == FulfillmentType.pickup:
+            raise HTTPException(
+                status_code=400,
+                detail="Delivery assignment is not available for pickup orders",
+            )
 
         _assignable_statuses = {OrderStatus.READY_TO_BE_DISPATCHED, OrderStatus.WAITING_FOR_COLLECTION}
         if order.status not in _assignable_statuses:

@@ -38,8 +38,26 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, Request
 from app.middleware.auth_middleware import verify_token
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.encoders import jsonable_encoder
 
 app = FastAPI()
+
+
+@app.exception_handler(RequestValidationError)
+async def part_request_body_validation_handler(
+    request: Request, exc: RequestValidationError
+):
+    path = request.url.path.rstrip("/")
+    if path == "/partRequest" and request.method in ("POST", "PUT"):
+        return JSONResponse(
+            status_code=400,
+            content={"detail": jsonable_encoder(exc.errors())},
+        )
+    return JSONResponse(
+        status_code=422,
+        content={"detail": jsonable_encoder(exc.errors())},
+    )
 
 # Add a middleware to verify all protected routes
 
