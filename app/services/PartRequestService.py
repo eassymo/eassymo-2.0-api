@@ -27,9 +27,16 @@ from app.factories.NotificationsCreator import (
 )
 from app.utils.notifications import send_notification
 from app.services import ListsService as listService
-from app.repositories import ListsRepository as listRepository
 
 import pymongo
+
+
+def _empty_commissioner_connections() -> Dict[str, Any]:
+    """Shape expected by insert() after __find_commissioner_group_connections; never return a bare []."""
+    return {
+        "commissioner_groups_from_lists": [],
+        "users_from_groups": [],
+    }
 
 
 def _default_fulfillment_type_on_dict(doc: Dict[str, Any]) -> Dict[str, Any]:
@@ -58,6 +65,9 @@ def insert(part_request: PartRequest, user_token: str = None):
         else:
             parent_request_uid = str(uuid4())
         part_req = part_request.dict()
+        # Do not persist empty client id; Mongo assigns _id (empty id breaks commissioner/offer matching).
+        part_req.pop("id", None)
+        part_req.pop("_id", None)
         part_req["fulfillment_type"] = part_request.fulfillment_type.value
         vehicle_information = groupCarRepository.find_by_id(
             part_req["vehicleId"])
@@ -128,7 +138,7 @@ def __find_commissioner_group_connections(creator_group_id: str, commissioner_gr
             creator_group = GroupSchema(**creator_group_data)
 
             if creator_group.location is None:
-                return []
+                return _empty_commissioner_connections()
 
             commissioner_group_lists = list(
                 listRepository.find_all_groups_in_user_lists(None, commissioner_group_id))
@@ -141,7 +151,7 @@ def __find_commissioner_group_connections(creator_group_id: str, commissioner_gr
             unique_group_ids = list(set(all_group_ids))
 
             if not unique_group_ids:
-                return []
+                return _empty_commissioner_connections()
 
             users_from_groups = groupService.find_users_by_groups_ids_v2(
                 unique_group_ids)
@@ -162,10 +172,10 @@ def __find_commissioner_group_connections(creator_group_id: str, commissioner_gr
                 "users_from_groups": users_from_groups
             }
         else:
-            return []
+            return _empty_commissioner_connections()
 
     except HTTPException as e:
-        raise HTTPException(e)
+        raise e
 
 
 def build_and_send_notification(

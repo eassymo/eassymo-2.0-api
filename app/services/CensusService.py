@@ -1,3 +1,4 @@
+import re
 from datetime import datetime, timedelta
 from app.repositories import CensusRepository as censusRepository
 from pymongo.errors import PyMongoError
@@ -89,9 +90,41 @@ def build_filters(parameters):
     # Create a list of conditions that will be combined with $and
     conditions = []
 
+    is_geospatial_search = (
+        parameters.get("lat") is not None
+        and parameters.get("lng") is not None
+        and parameters.get("range_km") is not None
+    )
+
     if parameters["search_argument"] is not None and len(parameters["search_argument"]) > 0:
-        search_term = parameters["search_argument"]
-        conditions.append({"Entity_Name": {"$regex": search_term, "$options": "i"}})
+        raw_search = parameters["search_argument"]
+        search_term = raw_search.strip()
+        if len(search_term) > 0:
+            pattern = re.escape(search_term)
+            if is_geospatial_search:
+                conditions.append(
+                    {"Entity_Name": {"$regex": pattern, "$options": "i"}}
+                )
+            else:
+                conditions.append(
+                    {
+                        "$or": [
+                            {"Entity_Name": {"$regex": pattern, "$options": "i"}},
+                            {
+                                "Entity_Address_City": {
+                                    "$regex": pattern,
+                                    "$options": "i",
+                                }
+                            },
+                            {
+                                "Entity_Address_Short": {
+                                    "$regex": pattern,
+                                    "$options": "i",
+                                }
+                            },
+                        ]
+                    }
+                )
 
     if parameters["Entity_Type"] is not None and len(parameters["Entity_Type"]) > 0:
         if parameters["Entity_Type"] == "Refa":
