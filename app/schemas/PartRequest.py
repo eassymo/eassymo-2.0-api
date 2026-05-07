@@ -121,6 +121,10 @@ class PartRequest(BaseModel):
         if '_id' in values and isinstance(values['_id'], ObjectId):
             values["_id"] = str(values["_id"])
 
+        # Rows with id="" break joins (offer.request_id == part_request.id) in CommissionerService / PartRequestService.
+        if isinstance(values, dict) and values.get("id") in ("", None):
+            values.pop("id", None)
+
         if 'createdAt' not in values or values['createdAt'] is None:
             values['createdAt'] = datetime.now(ZoneInfo('UTC'))
         if 'updatedAt' not in values or values['updatedAt'] is None:

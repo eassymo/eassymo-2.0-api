@@ -22,7 +22,10 @@ def find(
     userUid: Optional[str] = Query(
         None, title="userUid", description="User uid"),
     search_argument: Optional[str] = Query(
-        None, title="search_argument", description="search argument used for the $text index"),
+        None,
+        title="search_argument",
+        description="Case-insensitive substring search (regex). Non-geospatial queries match Entity_Name, Entity_Address_City, or Entity_Address_Short. With lat, lng, and range_km, only Entity_Name is matched.",
+    ),
     show_only_census: Optional[bool] = Query(
         None, title="show_only_census", description="Show only census"),
     Entity_Type: Optional[str] = Query(None, title="Entity_Type"),

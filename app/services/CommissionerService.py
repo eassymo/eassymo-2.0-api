@@ -41,9 +41,15 @@ def get_commissioner_offers(
                                 detail=f'Group {group.name} is not a commissioner')
 
         groups_list = __get_groups_connected_to_commissioner(commissioner_id)
+        # Include commissioner so requests that list this group in subscribedSellers match even if lists are empty.
+        # Also match rows assigned via commissioner_group (call-center flow).
+        groups_for_match = list(dict.fromkeys(groups_list + [commissioner_id]))
 
         part_requests_data = list(partRequestRepository.find(
-            {"subscribedSellers": {"$in": groups_list}}, None))
+            {"$or": [
+                {"subscribedSellers": {"$in": groups_for_match}},
+                {"commissioner_group": commissioner_id},
+            ]}, None))
 
         part_request_ids = [str(part_request_item.get("_id"))
                             for part_request_item in part_requests_data]

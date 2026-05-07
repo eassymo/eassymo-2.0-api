@@ -143,3 +143,5 @@ cython_debug/
 
 # FastAPI specific
 # none specific, but consider excluding any configuration files containing sensitive information
+scripts
+docs
