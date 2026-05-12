@@ -26,6 +26,21 @@ def find_by_id_list(ids: List[ObjectId]):
     return database.db["groups"].find({"_id": {"$in": ids}})
 
 
+def find_many_by_string_ids(
+    group_ids: List[str], projection: Optional[Dict[str, Any]] = None
+):
+    """Bulk fetch by 24-hex string ids; skips invalid ObjectId strings."""
+    oids: List[ObjectId] = []
+    for gid in group_ids:
+        try:
+            oids.append(ObjectId(str(gid).strip()))
+        except Exception:
+            continue
+    if not oids:
+        return database.db["groups"].find({"_id": {"$in": []}})
+    return database.db["groups"].find({"_id": {"$in": oids}}, projection or {})
+
+
 def find_within_radius(group_ids: List[str], center_location: Dict[str, Any], radius_meters: int = 500):
     """Find groups within a specific radius of a center location"""
     object_ids = [ObjectId(group_id) for group_id in group_ids]

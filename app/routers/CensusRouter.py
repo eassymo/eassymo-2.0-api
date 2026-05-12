@@ -28,6 +28,11 @@ def find(
     ),
     show_only_census: Optional[bool] = Query(
         None, title="show_only_census", description="Show only census"),
+    has_group_reference_id: Optional[bool] = Query(
+        None,
+        title="has_group_reference_id",
+        description="When true, only census rows linked to an Eassymo group (group_reference_id set)",
+    ),
     Entity_Type: Optional[str] = Query(None, title="Entity_Type"),
     Entity_Location_State: Optional[str] = Query(
         None, title="Entity_Location_State"),
@@ -52,6 +57,7 @@ def find(
         "exclude_group": exclude_group,
         "search_argument": search_argument,
         "show_only_census": show_only_census,
+        "has_group_reference_id": has_group_reference_id,
         "Entity_Location_State": Entity_Location_State,
         "Entity_Address_City": Entity_Address_City,
         "lat": lat,

@@ -161,6 +161,12 @@ def build_filters(parameters):
             ]
         })
 
+    if parameters.get("has_group_reference_id") is True:
+        conditions.append({"$and": [
+            {"group_reference_id": {"$exists": True}},
+            {"group_reference_id": {"$nin": [None, ""]}},
+        ]})
+
     # Handle geospatial search
     if (parameters.get("lat") is not None and
         parameters.get("lng") is not None and

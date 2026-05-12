@@ -12,6 +12,7 @@ from app.repositories import GroupCarRepository as groupCarRepository
 from app.repositories import GroupRepository as groupRepository
 from app.repositories import OfferRepository as offerRepository
 from app.repositories import ListsRepository as listRepository
+from app.repositories import CommissionerInviteRepository as commissionerInviteRepository
 from app.schemas.Groups import GroupType, GroupSchema
 from app.schemas.Offer import Offer
 from fastapi import HTTPException, Request, status
@@ -43,6 +44,66 @@ def _default_fulfillment_type_on_dict(doc: Dict[str, Any]) -> Dict[str, Any]:
     if not doc.get("fulfillment_type"):
         return {**doc, "fulfillment_type": FulfillmentType.delivery.value}
     return doc
+
+
+def _normalize_subscribed_seller_ids(raw: Optional[List[Any]]) -> List[str]:
+    out: List[str] = []
+    seen: set[str] = set()
+    for item in raw or []:
+        if item is None:
+            continue
+        if isinstance(item, str):
+            sid = item.strip()
+        elif isinstance(item, ObjectId):
+            sid = str(item).strip()
+        elif isinstance(item, dict):
+            oid = item.get("$oid") or item.get("_id")
+            if isinstance(oid, dict) and "$oid" in oid:
+                sid = str(oid["$oid"]).strip()
+            else:
+                sid = str(oid or item.get("groupId") or item.get("id") or "").strip()
+        else:
+            sid = str(getattr(item, "_id", None) or getattr(item, "id", None) or item).strip()
+        if sid and sid not in seen:
+            seen.add(sid)
+            out.append(sid)
+    return out
+
+
+def expand_subscribed_sellers_with_accepted_comisionados(
+    subscribed_sellers: Optional[List[Any]],
+    creator_group_id: Optional[str] = None,
+) -> List[str]:
+    """One hop: add invited_group_id for ACCEPTED invites of every commissioner in subscribed_sellers."""
+    normalized = _normalize_subscribed_seller_ids(subscribed_sellers)
+    if not normalized:
+        return []
+    docs = list(
+        groupRepository.find_many_by_string_ids(
+            normalized, {"is_commissioner": 1}
+        )
+    )
+    commissioner_ids: List[str] = []
+    for doc in docs:
+        if doc.get("is_commissioner") is True:
+            commissioner_ids.append(str(doc["_id"]))
+    invited = commissionerInviteRepository.find_accepted_invited_group_ids_for_commissioners(
+        commissioner_ids
+    )
+    creator = str(creator_group_id).strip() if creator_group_id else ""
+    merged: List[str] = []
+    merged_set: set[str] = set()
+    for gid in normalized:
+        if gid not in merged_set:
+            merged_set.add(gid)
+            merged.append(gid)
+    for gid in invited:
+        if creator and gid == creator:
+            continue
+        if gid not in merged_set:
+            merged_set.add(gid)
+            merged.append(gid)
+    return merged
 
 
 def insert(part_request: PartRequest, user_token: str = None):
@@ -91,6 +152,11 @@ def insert(part_request: PartRequest, user_token: str = None):
             for commissioner_group in nearby_commissioner_groups["commissioner_groups_from_lists"]:
                 if commissioner_group.id not in subscribed_sellers:
                     subscribed_sellers.append(commissioner_group.id)
+
+        subscribed_sellers = expand_subscribed_sellers_with_accepted_comisionados(
+            subscribed_sellers,
+            part_request.creatorGroup,
+        )
 
         for car_part in part_request.partList:
             part_request_payload = {
@@ -921,6 +987,11 @@ def edit_part_request(part_request_data: List[PartRequestEdit]):
                 subs = list(current_part_request.subscribedSellers or [])
                 if part_request_edit.subscribedSellers is not None:
                     subs = list(set(subs + part_request_edit.subscribedSellers))
+
+                subs = expand_subscribed_sellers_with_accepted_comisionados(
+                    subs,
+                    merged.creatorGroup,
+                )
 
                 part_request_json = {
                     "part": {
