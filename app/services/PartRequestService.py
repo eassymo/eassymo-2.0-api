@@ -524,6 +524,13 @@ def __find_offers_for_requests(requests: List[PartRequest], group_id: str) -> Li
 
 def __format_offers_with_found_requests(requests: List[PartRequest], offers: List[Offer], group_id: str):
     for request in requests:
+        matching_for_request = [
+            offer for offer in offers
+            if offer.request_id == request.id
+        ]
+        request.offers_amount = __count_offers_for_grouped_dashboard(
+            matching_for_request, request)
+
         offers_found = __filter_part_offer_by_request_id(
             offers, request, group_id)
         if len(offers_found) > 0:
@@ -542,12 +549,79 @@ def __filter_part_offer_by_request_id(offers: List[Offer], request: PartRequest,
     ]
 
     if len(matching_offers) > 0:
-        if group_id == creator_group:
+        gv = _normalize_group_id_for_offer_filter(group_id)
+        cv = _normalize_group_id_for_offer_filter(creator_group)
+        if gv == cv:
+            has_commissioner = _part_request_has_commissioner(request)
             matching_offers = [
-                offer for offer in matching_offers if offer.status != OfferStatus.pending_approval.value
+                offer
+                for offer in matching_offers
+                if (
+                    _offer_status_value(offer) != OfferStatus.pending_approval.value
+                    or has_commissioner
+                    or _offer_posted_via_call_center(offer)
+                )
             ]
 
     return matching_offers
+
+
+def _part_request_has_commissioner(request: PartRequest) -> bool:
+    raw = getattr(request, "commissioner_group", None)
+    if raw is None:
+        return False
+    return len(str(raw).strip()) > 0
+
+
+def _offer_status_value(offer: Offer) -> str:
+    status = offer.status
+    return status.value if isinstance(status, OfferStatus) else str(status)
+
+
+def _normalize_group_id_for_offer_filter(raw) -> str:
+    if raw is None:
+        return ""
+    return str(raw).strip()
+
+
+def _group_nested_has_id(group_nested) -> bool:
+    """True if nested group/call_center object carries an id (from DB _id)."""
+    if group_nested is None:
+        return False
+    if isinstance(group_nested, dict):
+        oid = group_nested.get("_id") or group_nested.get("id")
+        return bool(oid is not None and str(oid).strip())
+    oid = getattr(group_nested, "id", None)
+    if oid is not None:
+        return bool(str(oid).strip())
+    alt = getattr(group_nested, "_id", None)
+    return bool(str(alt or "").strip())
+
+
+def _offer_posted_via_call_center(offer: Offer) -> bool:
+    return _group_nested_has_id(getattr(offer, "call_center_that_posted_offer", None))
+
+
+def __count_offers_for_grouped_dashboard(offers_for_request: List[Offer], request: PartRequest) -> int:
+    """
+    Dashboard list badge for GET /partRequest/grouped counts:
+    - Created,
+    - Pending_Approval when the request has a commissioner or the offer was
+      posted via a call center,
+    - Workshop_Approval_Pending (awaiting workshop technical validation).
+    """
+    has_commissioner = _part_request_has_commissioner(request)
+    n = 0
+    for offer in offers_for_request:
+        sv = _offer_status_value(offer)
+        if sv == OfferStatus.created.value:
+            n += 1
+        elif sv == OfferStatus.workshop_approval_pending.value:
+            n += 1
+        elif sv == OfferStatus.pending_approval.value:
+            if has_commissioner or _offer_posted_via_call_center(offer):
+                n += 1
+    return n
 
 
 def __format_grouped_filters(
