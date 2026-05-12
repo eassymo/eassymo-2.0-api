@@ -73,6 +73,11 @@ def create_list(data: ListsSchema):
 
 def insert_list(list: ListsSchema):
     try:
+        if list.name and list.name.strip() == "Comisionistas":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="El nombre «Comisionistas» está reservado para la relación con comisionados",
+            )
         if (check_if_name_is_repeated(list.name, list.user_uid, list.group_id)):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                                 detail="A list with that name already exists for this user")
@@ -84,6 +89,85 @@ def insert_list(list: ListsSchema):
         inserted_id = listsRepository.insert(payload).inserted_id
 
         return str(inserted_id)
+    except PyMongoError as error:
+        raise InternalServerError(str(error))
+
+
+
+
+def add_comisionado_group_to_commissionables_list(inviting_user_uid: str, commissioner_group_id: str, invited_group_id: str) -> str:
+    """Find or create the Comisionables list for invited_user scope and attach invited_group_id."""
+    try:
+        user_lists = list(
+            listsRepository.find({"user_uid": inviting_user_uid, "group_id": commissioner_group_id})
+        )
+        commissionable_list = [u for u in user_lists if u.get("name") == "Comisionables"]
+
+        if len(commissionable_list) > 0:
+            cid = str(commissionable_list[0].get("_id"))
+            listsRepository.insert_group_to_list(cid, invited_group_id)
+            return cid
+
+        commissionable_payload = {
+            "user_uid": inviting_user_uid,
+            "group_id": commissioner_group_id,
+            "groups": [invited_group_id],
+            "name": "Comisionables",
+            "is_priority": False,
+        }
+        inserted = listsRepository.insert(commissionable_payload)
+        return str(inserted.inserted_id)
+    except PyMongoError as error:
+        raise InternalServerError(str(error))
+
+
+def add_commissioner_group_to_comisionistas_lists_for_invited_group(
+    invited_group_id: str,
+    commissioner_group_id: str,
+    *,
+    responding_user_uid: str | None = None,
+) -> None:
+    """Each user on the invited group gets a persisted «Comisionistas» list (commissioner group ids).
+
+    responding_user_uid: user who accepted the invite — included even when Group.users is stale.
+    """
+    try:
+        owner_uids_set: set[str] = set()
+        if responding_user_uid and str(responding_user_uid).strip():
+            owner_uids_set.add(str(responding_user_uid).strip())
+        recipients = groupRepository.find_users_by_group_id(invited_group_id)
+        for uid in (recipients or {}).get("users") or []:
+            owner_id = uid
+            if isinstance(uid, dict):
+                owner_id = uid.get("_id") or uid.get("uid")
+            if owner_id:
+                owner_uids_set.add(str(owner_id).strip())
+
+        if not owner_uids_set:
+            return
+
+        for owner_uid in owner_uids_set:
+            if not owner_uid:
+                continue
+            user_lists = list(
+                listsRepository.find({"user_uid": owner_uid, "group_id": invited_group_id}),
+            )
+            comisionistas_lists = [
+                u for u in user_lists if u.get("name") == "Comisionistas"
+            ]
+            if len(comisionistas_lists) > 0:
+                cid = str(comisionistas_lists[0].get("_id"))
+                listsRepository.insert_group_to_list(cid, commissioner_group_id)
+            else:
+                payload = {
+                    "user_uid": owner_uid,
+                    "group_id": invited_group_id,
+                    "groups": [commissioner_group_id],
+                    "name": "Comisionistas",
+                    "is_priority": False,
+                    "is_favorite": False,
+                }
+                listsRepository.insert(payload)
     except PyMongoError as error:
         raise InternalServerError(str(error))
 
@@ -114,12 +198,46 @@ def get_lists_by_user_and_group(user_uid: str | None, group_id: str):
 
 def update(user_info: Dict[str, Any], list_id: str, payload: ListsSchema):
     try:
+        old_docs = list(listsRepository.find({"_id": ObjectId(list_id)}))
+        if len(old_docs) == 0:
+            raise InternalServerError("Lista no encontrada")
+        prev = old_docs[0]
+
+        prev_name_raw = prev.get("name") or ""
+        prev_name_norm = prev_name_raw.strip()
+        incoming_name_norm = (payload.name or "").strip()
+
+        if prev_name_norm == "Comisionistas":
+            if incoming_name_norm != "Comisionistas":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="No puedes renombrar la lista «Comisionistas».",
+                )
+            old_g = {str(x) for x in (prev.get("groups") or [])}
+            new_g = {str(x) for x in (payload.groups or [])}
+            removed = old_g - new_g
+            if removed:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        "Para quitar un comisionista usa «Quitar» en Mis listas; "
+                        "así se corta la relación y también se actualiza el comisionado."
+                    ),
+                )
+        elif incoming_name_norm == "Comisionistas":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="El nombre «Comisionistas» está reservado para la relación con comisionados.",
+            )
+
         json_payload = payload.toJson()
 
         if payload.groups_info != None and len(payload.groups_info) > 0:
             json_payload.pop('groups_info')
 
         json_payload.pop('_id')
+        if prev_name_norm == "Comisionistas":
+            json_payload["is_favorite"] = False
         listsRepository.update(list_id, json_payload)
 
         filters = {"_id": ObjectId(list_id)}

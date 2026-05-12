@@ -22,6 +22,7 @@ from app.routers import CallCenterConnectionRouter as callCenterConnectionRouter
 from app.routers import CallCenterRouter as callCenterRouter
 from app.routers import CallCenterManagementListRouter as callCenterManagementListRouter
 from app.routers import CommissionerRoutes as commissionerRoutes
+from app.routers import CommissionerInviteRoutes as commissionerInviteRoutes
 from app.routers import CommissionerFilterRoutes as commissionerFilterRoutes
 from app.routers import AcesVehiclesRoutes as acesVehiclesRoutes
 from app.routers import PreloadedFiltersRoutes as preloadedFiltersRoutes
@@ -136,6 +137,7 @@ app.include_router(callCenterConnectionRouter.callCenterConnectionRouter)
 app.include_router(callCenterRouter.callCenterRouter)
 app.include_router(callCenterManagementListRouter.callCenterManagementListRouter)
 app.include_router(commissionerRoutes.commissionerRouter)
+app.include_router(commissionerInviteRoutes.commissionerInviteRouter)
 app.include_router(commissionerFilterRoutes.commisionerFilterRouter)
 app.include_router(acesVehiclesRoutes.AcesVehiclesRouter)
 app.include_router(preloadedFiltersRoutes.preloadedFiltersRouter)
