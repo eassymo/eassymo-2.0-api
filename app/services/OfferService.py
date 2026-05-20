@@ -27,6 +27,13 @@ from app.repositories import ListsRepository as listsRepository
 from app.repositories import RequestStatusByGroupRepository as requestStatusByGroupRepository
 
 
+def _group_acts_as_callcenter(group: GroupSchema) -> bool:
+    """Call-center offer queries match on call_center_that_posted_offer, not group_id."""
+    if group.is_callcenter:
+        return True
+    return len(callCenterConnectionRepository.find({"callcenter_id": group.id})) > 0
+
+
 def insert(payload: Offer, user_token: str):
     try:
         if payload.offer_group_uid == None:
@@ -167,8 +174,10 @@ def find_by_request_id_and_group(request: Request, part_request_id: str, group_i
         if group_id == part_request.creatorGroup:
             group_ids = []
 
+        acts_as_callcenter = _group_acts_as_callcenter(group)
+
         found_offers_dicts = list(offerRepository.find_by_request_id_and_group(
-            part_request_id, group_ids, group.is_callcenter))
+            part_request_id, group_ids, acts_as_callcenter))
 
         if len(found_offers_dicts) == 0:
             return []

@@ -9,6 +9,35 @@ from datetime import datetime
 
 from typing import Dict, Any, List, Optional
 
+DELIVERY_PROOF_MAX_RECIPIENT_NAME_LEN = 200
+
+
+def _assert_dispatched_to_received_has_proof(order: Order) -> None:
+    """Courier/guest completing delivery must submit photo(s), signature image URL, and recipient name."""
+    pics = order.delivery_pictures_seller
+    if not pics or not isinstance(pics, list) or len(pics) < 1:
+        raise HTTPException(
+            status_code=400,
+            detail="Se requiere al menos una foto de la entrega para marcar como recibida.",
+        )
+    sig = (order.delivery_customer_signature_url or "").strip()
+    if not sig:
+        raise HTTPException(
+            status_code=400,
+            detail="Se requiere la firma de quien recibe para marcar como recibida.",
+        )
+    name = (order.delivery_received_by_name or "").strip()
+    if not name:
+        raise HTTPException(
+            status_code=400,
+            detail="Se requiere el nombre de quien recibe para marcar como recibida.",
+        )
+    if len(name) > DELIVERY_PROOF_MAX_RECIPIENT_NAME_LEN:
+        raise HTTPException(
+            status_code=400,
+            detail=f"El nombre de quien recibe no puede superar {DELIVERY_PROOF_MAX_RECIPIENT_NAME_LEN} caracteres.",
+        )
+
 
 def _order_is_pickup_fulfillment(order: Order) -> bool:
     try:
@@ -168,8 +197,11 @@ def change_order_status(
     delivery_pictures_buyer: List[str] | None = [],
     delivery_pictures_seller: List[str] | None = [],
     packaged_pictures_seller: List[str] | None = [],
+    delivery_customer_signature_url: str | None = None,
+    delivery_received_by_name: str | None = None,
     to_be_delivered_time: str | None = None,
     requesting_user_uid: Optional[str] = None,
+    enforce_delivery_completion_proof: bool = False,
 ):
     try:
         from dateutil import parser as date_parser
@@ -181,11 +213,13 @@ def change_order_status(
         order_found = {
             **order_found[0],
             "delivery_notes_buyer": delivery_notes_buyer,
-            "delivery_pictures_buyer": delivery_pictures_buyer,
+            "delivery_pictures_buyer": delivery_pictures_buyer or [],
             "delivery_notes_seller": delivery_notes_seller,
-            "delivery_pictures_seller": delivery_pictures_seller,
+            "delivery_pictures_seller": delivery_pictures_seller or [],
+            "delivery_customer_signature_url": delivery_customer_signature_url,
+            "delivery_received_by_name": delivery_received_by_name,
             "packaged_notes_seller": packaged_notes_seller,
-            "packaged_pictures_seller": packaged_pictures_seller
+            "packaged_pictures_seller": packaged_pictures_seller,
         }
 
         if order_found != None:
@@ -197,6 +231,16 @@ def change_order_status(
 
         _assert_order_status_transition(order, new_status, requesting_user_uid)
 
+        current = order.status
+        if not isinstance(current, OrderStatus):
+            current = OrderStatus(current)
+        if (
+            enforce_delivery_completion_proof
+            and OrderStatus[new_status] == OrderStatus.RECIEVED
+            and current == OrderStatus.DISPATCHED
+        ):
+            _assert_dispatched_to_received_has_proof(order)
+
         order.change_status(new_status)
 
         order_data = order.toJson()
@@ -207,6 +251,8 @@ def change_order_status(
 
         return Order(**edited_order).toJson()
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f'Error while changing order status {e}')

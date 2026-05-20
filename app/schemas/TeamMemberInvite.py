@@ -33,6 +33,10 @@ class TeamMemberInvite(BaseModel):
     role: Union[str, RolesSchema] = Field(
         None, description="the id of the role that they are configured to have")
     timestamp: datetime = Field(datetime.now(ZoneInfo('UTC')))
+    last_sent: Optional[datetime] = Field(
+        None,
+        description="When the invite notification was last sent (updated on each resend)",
+    )
     contact_method: Optional[str] = Field(
         None, description="The method used to contact them")
     status_changes: Optional[List[TeamMemberInviteStatusChange]] = Field(
@@ -51,6 +55,10 @@ class TeamMemberInvite(BaseModel):
     def toJson(self):
         data = self.model_dump()
         data["timestamp"] = str(self.timestamp)
+        if self.last_sent is not None:
+            data["last_sent"] = str(self.last_sent)
+        elif "last_sent" in data:
+            data.pop("last_sent", None)
         status_changes = []
 
         if isinstance(self.group, GroupSchema):

@@ -80,6 +80,9 @@ def change_order_status(request: Request, data: dict = Body(...)):
         packaged_notes_seller = data.get("packaged_notes_seller")
         packaged_pictures_seller = data.get("packaged_pictures_seller")
 
+        delivery_customer_signature_url = data.get("delivery_customer_signature_url")
+        delivery_received_by_name = data.get("delivery_received_by_name")
+
         to_be_delivered_time = data.get("to_be_delivered_time")
 
         if not new_status:
@@ -126,8 +129,11 @@ def change_order_status(request: Request, data: dict = Body(...)):
                 delivery_pictures_seller=delivery_pictures_seller,
                 packaged_notes_seller=packaged_notes_seller,
                 packaged_pictures_seller=packaged_pictures_seller,
+                delivery_customer_signature_url=delivery_customer_signature_url,
+                delivery_received_by_name=delivery_received_by_name,
                 to_be_delivered_time=to_be_delivered_time,
                 requesting_user_uid=None,
+                enforce_delivery_completion_proof=True,
             )
             return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
 
@@ -163,6 +169,22 @@ def change_order_status(request: Request, data: dict = Body(...)):
                     content=get_unsuccessful_response("This order is not assigned to you"),
                 )
 
+            response = OrderService.change_order_status(
+                order_id, new_status,
+                delivery_notes_buyer=delivery_notes_buyer,
+                delivery_notes_seller=delivery_notes_seller,
+                delivery_pictures_buyer=delivery_pictures_buyer,
+                delivery_pictures_seller=delivery_pictures_seller,
+                packaged_notes_seller=packaged_notes_seller,
+                packaged_pictures_seller=packaged_pictures_seller,
+                delivery_customer_signature_url=delivery_customer_signature_url,
+                delivery_received_by_name=delivery_received_by_name,
+                to_be_delivered_time=to_be_delivered_time,
+                requesting_user_uid=user.get("uid"),
+                enforce_delivery_completion_proof=True,
+            )
+            return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+
         response = OrderService.change_order_status(
             order_id, new_status,
             delivery_notes_buyer=delivery_notes_buyer,
@@ -171,8 +193,11 @@ def change_order_status(request: Request, data: dict = Body(...)):
             delivery_pictures_seller=delivery_pictures_seller,
             packaged_notes_seller=packaged_notes_seller,
             packaged_pictures_seller=packaged_pictures_seller,
+            delivery_customer_signature_url=delivery_customer_signature_url,
+            delivery_received_by_name=delivery_received_by_name,
             to_be_delivered_time=to_be_delivered_time,
             requesting_user_uid=user.get("uid"),
+            enforce_delivery_completion_proof=False,
         )
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:

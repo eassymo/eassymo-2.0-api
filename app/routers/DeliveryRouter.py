@@ -34,10 +34,15 @@ def get_delivery_persons(
 def get_my_orders(
     request: Request,
     status_filter: Optional[str] = Query(None, alias="status"),
+    completion_range: Optional[str] = Query(
+        None,
+        alias="completion_range",
+        description="For status=RECIEVED only: today, yesterday, last_3_days, last_7_days, last_30_days",
+    ),
 ):
     try:
         requesting_uid = request.state.user.get("uid")
-        result = DeliveryService.get_my_orders(requesting_uid, status_filter)
+        result = DeliveryService.get_my_orders(requesting_uid, status_filter, completion_range)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(result))
     except Exception as e:
         status_code = e.status_code if hasattr(e, "status_code") else status.HTTP_500_INTERNAL_SERVER_ERROR
