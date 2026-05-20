@@ -1,5 +1,54 @@
+from datetime import datetime
+from typing import Any, Dict, Optional, Tuple
+
 from app.config import database
 from bson import ObjectId
+
+
+def _updated_at_completion_match_expr(start_utc: datetime, end_utc: datetime) -> Dict[str, Any]:
+    """
+    Orders usually store updated_at as a string (Order.toJson uses str(datetime)).
+    Comparing that field to BSON dates in a plain $match never matches; parse in $expr instead.
+    Handles updated_at stored as date or as Python's default str (space between date and time).
+    """
+    return {
+        "$expr": {
+            "$let": {
+                "vars": {
+                    "parsed": {
+                        "$switch": {
+                            "branches": [
+                                {
+                                    "case": {"$eq": [{"$type": "$updated_at"}, "date"]},
+                                    "then": "$updated_at",
+                                },
+                            ],
+                            "default": {
+                                "$dateFromString": {
+                                    "dateString": {
+                                        "$replaceOne": {
+                                            "input": {"$toString": "$updated_at"},
+                                            "find": " ",
+                                            "replacement": "T",
+                                        }
+                                    },
+                                    "onError": None,
+                                    "onNull": None,
+                                }
+                            },
+                        }
+                    }
+                },
+                "in": {
+                    "$and": [
+                        {"$ne": ["$$parsed", None]},
+                        {"$gte": ["$$parsed", start_utc]},
+                        {"$lte": ["$$parsed", end_utc]},
+                    ]
+                },
+            }
+        }
+    }
 
 
 def insert(order: dict):
@@ -58,10 +107,20 @@ def find_by_id(id: ObjectId):
     ])
 
 
-def find(filters):
+def find(
+    filters: Dict[str, Any],
+    updated_at_completion_bounds: Optional[Tuple[datetime, datetime]] = None,
+):
+    match_stage = dict(filters)
+    if updated_at_completion_bounds:
+        start_utc, end_utc = updated_at_completion_bounds
+        if "$expr" in match_stage:
+            raise ValueError("filters cannot contain $expr when using updated_at_completion_bounds")
+        match_stage.update(_updated_at_completion_match_expr(start_utc, end_utc))
+
     return database.db["Orders"].aggregate([
         {
-            "$match": filters
+            "$match": match_stage
         },
         {
             "$lookup": {

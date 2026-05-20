@@ -1,9 +1,9 @@
 from fastapi import HTTPException
 from bson import ObjectId
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from uuid import uuid4
-from typing import Optional, List
+from typing import Optional, List, Tuple
 
 from app.repositories import (
     OrderRepository as orderRepository,
@@ -17,6 +17,17 @@ from app.schemas.Groups import GroupSchema
 
 # Role value for delivery persons (DEALER_SHOP in the UserRoles enum)
 DELIVERY_PERSON_ROLE_VALUE = "215"
+
+# Calendar bounds for "completed" filters match es-MX expectations (same as typical driver timezone).
+DELIVERY_COMPLETION_STATS_TZ = ZoneInfo("America/Mexico_City")
+
+_COMPLETION_RANGE_VALUES = frozenset({
+    "today",
+    "yesterday",
+    "last_3_days",
+    "last_7_days",
+    "last_30_days",
+})
 
 
 # ---------------------------------------------------------------------------
@@ -132,10 +143,52 @@ def get_guest_token_for_invite(guest_phone: str) -> str:
 # GET /delivery/my-orders
 # ---------------------------------------------------------------------------
 
-def get_my_orders(user_uid: str, status_filter: Optional[str]) -> List[dict]:
+
+def _resolve_completion_range_bounds(completion_range: str) -> tuple[datetime, datetime]:
+    """
+    Inclusive local calendar windows in DELIVERY_COMPLETION_STATS_TZ,
+    returned as timezone-aware UTC datetimes for Mongo updated_at queries.
+    """
+    tz = DELIVERY_COMPLETION_STATS_TZ
+    now_local = datetime.now(tz)
+    today_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_of_today = today_start + timedelta(days=1) - timedelta(microseconds=1)
+
+    if completion_range == "today":
+        start_local = today_start
+        end_local = end_of_today
+    elif completion_range == "yesterday":
+        start_local = today_start - timedelta(days=1)
+        end_local = today_start - timedelta(microseconds=1)
+    elif completion_range == "last_3_days":
+        start_local = today_start - timedelta(days=2)
+        end_local = end_of_today
+    elif completion_range == "last_7_days":
+        start_local = today_start - timedelta(days=6)
+        end_local = end_of_today
+    elif completion_range == "last_30_days":
+        start_local = today_start - timedelta(days=29)
+        end_local = end_of_today
+    else:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid completion_range. Allowed: {sorted(_COMPLETION_RANGE_VALUES)}",
+        )
+
+    utc = ZoneInfo("UTC")
+    return start_local.astimezone(utc), end_local.astimezone(utc)
+
+
+def get_my_orders(
+    user_uid: str,
+    status_filter: Optional[str],
+    completion_range: Optional[str] = None,
+) -> List[dict]:
     """
     Returns orders where delivery_assignment.user_id == user_uid.
     The user must have the DELIVERY_PERSON role.
+    When status_filter is RECIEVED and completion_range is set, filters by updated_at
+    (set when the order was marked received — MVP; see plan re: received_at).
     """
     _assert_has_delivery_role(user_uid)
 
@@ -143,7 +196,20 @@ def get_my_orders(user_uid: str, status_filter: Optional[str]) -> List[dict]:
     if status_filter:
         filters["status"] = status_filter
 
-    return _fetch_orders_for_delivery(filters)
+    if completion_range:
+        if status_filter != OrderStatus.RECIEVED.value:
+            completion_range = None
+        elif completion_range not in _COMPLETION_RANGE_VALUES:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid completion_range. Allowed: {sorted(_COMPLETION_RANGE_VALUES)}",
+            )
+
+    completion_bounds: Optional[Tuple[datetime, datetime]] = None
+    if completion_range and status_filter == OrderStatus.RECIEVED.value:
+        completion_bounds = _resolve_completion_range_bounds(completion_range)
+
+    return _fetch_orders_for_delivery(filters, updated_at_completion_bounds=completion_bounds)
 
 
 # ---------------------------------------------------------------------------
@@ -332,8 +398,13 @@ def _assert_guest_token_active(token: str):
         raise HTTPException(status_code=404, detail="Guest token not found or inactive")
 
 
-def _fetch_orders_for_delivery(filters: dict) -> List[dict]:
-    orders_raw = list(orderRepository.find(filters))
+def _fetch_orders_for_delivery(
+    filters: dict,
+    updated_at_completion_bounds: Optional[Tuple[datetime, datetime]] = None,
+) -> List[dict]:
+    orders_raw = list(
+        orderRepository.find(filters, updated_at_completion_bounds=updated_at_completion_bounds)
+    )
     result = []
     for order_data in orders_raw:
         order_json = Order(**order_data).toJson()

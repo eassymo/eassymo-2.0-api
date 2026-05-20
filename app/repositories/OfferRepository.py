@@ -23,11 +23,11 @@ def find_by_request_id_and_group(request_id: str, group_ids: List[str], is_callc
     if group_ids != None and len(group_ids) > 0:
         filters["group_id"] = {"$in": group_ids}
 
-    if is_callcenter == True:
-        filters.pop("group_id")
+    if is_callcenter is True and group_ids:
+        filters.pop("group_id", None)
         filters["$or"] = [
-            {"call_center_that_posted_offer._id":  group_ids[0]},
-            {"group_id": {"$in": group_ids}}
+            {"call_center_that_posted_offer._id": group_ids[0]},
+            {"group_id": {"$in": group_ids}},
         ]
 
     return database.db["Offers"].aggregate([

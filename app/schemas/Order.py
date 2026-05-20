@@ -95,6 +95,9 @@ class Order(BaseModel):
     delivery_pictures_buyer: Optional[List[str]] = Field([])
     delivery_notes_seller: Optional[str] = Field(None)
     delivery_pictures_seller: Optional[List[str]] = Field([])
+    # Proof at handoff (DISPATCHED→RECIEVED): recipient-drawn signature image URL + printed name
+    delivery_customer_signature_url: Optional[str] = Field(None)
+    delivery_received_by_name: Optional[str] = Field(None)
     packaged_notes_seller: Optional[str] = Field(None)
     packaged_pictures_seller: Optional[List[str]] = Field([])
     delivery_assignment: Optional[DeliveryAssignment] = Field(None)

@@ -93,4 +93,7 @@ class Offer(BaseModel):
         if data.get("group_info") != None:
             data["group_info"] = self.group_info.toJson()
 
+        if data.get("call_center_that_posted_offer") is not None and self.call_center_that_posted_offer is not None:
+            data["call_center_that_posted_offer"] = self.call_center_that_posted_offer.toJson()
+
         return data

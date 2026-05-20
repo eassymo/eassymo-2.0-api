@@ -10,10 +10,65 @@ from app.schemas.Users import UserSchema
 from app.schemas.RequestInvites import RequestInviteStatus
 from pymongo.errors import PyMongoError
 from fastapi import HTTPException, Request, status
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from app.dto.group_dto import EditGroupDto
 from bson import ObjectId
 from app.schemas.GeoJsonLocation import GeoJson
+import re
+
+GROUP_SEARCH_FIELDS = ("name", "address", "city", "state", "email")
+GROUP_SEARCH_RESULT_LIMIT = 50
+
+
+def _build_group_search_filter(search_argument: Optional[str]) -> Optional[Dict[str, Any]]:
+    """
+    Case-insensitive substring search across common group fields.
+    Multi-word queries require every token to match at least one field.
+    """
+    if search_argument is None:
+        return None
+
+    search_term = search_argument.strip()
+    if not search_term:
+        return None
+
+    tokens = [token for token in re.split(r"\s+", search_term) if token]
+    if not tokens:
+        return None
+
+    token_conditions: List[Dict[str, Any]] = []
+    for token in tokens:
+        pattern = re.escape(token)
+        token_conditions.append({
+            "$or": [
+                {field: {"$regex": pattern, "$options": "i"}}
+                for field in GROUP_SEARCH_FIELDS
+            ]
+        })
+
+    if len(token_conditions) == 1:
+        return token_conditions[0]
+
+    return {"$and": token_conditions}
+
+
+def _compose_group_find_filters(filters: Dict[str, Any]) -> Dict[str, Any]:
+    conditions: List[Dict[str, Any]] = []
+
+    if "is_callcenter" in filters:
+        conditions.append({"is_callcenter": filters["is_callcenter"]})
+
+    text_search = _build_group_search_filter(filters.get("search_argument"))
+    if text_search is not None:
+        conditions.append(text_search)
+
+    if not conditions:
+        return {}
+
+    if len(conditions) == 1:
+        return conditions[0]
+
+    return {"$and": conditions}
 
 
 def create_group(group: GroupSchema, censusReference: str | None, user_id: str):
@@ -79,16 +134,13 @@ def find(request: Request, filters: Dict[str, Any]) -> List[GroupSchema]:
         user = request.state._state.get('user')
         groupSelected = request.state._state.get('groupSelected')
 
-        search_filters = {}
-        if ("is_callcenter" in filters):
-            search_filters["is_callcenter"] = filters["is_callcenter"]
+        search_filters = _compose_group_find_filters(filters)
 
-        if (filters["search_argument"] != None):
-            search_filters["$text"] = {
-                "$search": filters["search_argument"]
-            }
+        groups_cursor = groupRepository.find(search_filters)
+        if filters.get("search_argument"):
+            groups_cursor = groups_cursor.sort("name", 1).limit(GROUP_SEARCH_RESULT_LIMIT)
 
-        groups_data = list(groupRepository.find(search_filters))
+        groups_data = list(groups_cursor)
 
         groups: List[GroupSchema] = []
 

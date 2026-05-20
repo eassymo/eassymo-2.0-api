@@ -12,6 +12,14 @@ def insert(team_member_invite: TeamMemberInvite):
 def find(filters: Dict[str, Any]):
     return database.db["TeamMemberInvite"].find(filters).sort({"_id": -1})
 
+
+def find_latest_for_inviter_and_role(group: str, inviter_user: str, role: str):
+    return database.db["TeamMemberInvite"].find_one(
+        {"group": group, "inviter_user": inviter_user, "role": role},
+        sort=[("_id", -1)],
+    )
+
+
 def find_by_id(id: str):
     id = ObjectId(id)
     return database.db["TeamMemberInvite"].find_one({"_id": id})

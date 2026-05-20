@@ -23,6 +23,18 @@ from app.schemas.UserRoles import UserRoles
 whatsapp_service = WhatsappService()
 
 
+def _ensure_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=ZoneInfo('UTC'))
+    return dt.astimezone(ZoneInfo('UTC'))
+
+
+def _latest_invite_status(invite: TeamMemberInvite):
+    if not invite.status_changes:
+        return None
+    return invite.status_changes[-1].status
+
+
 def insert(team_member_invite: TeamMemberInvite):
     try:
         sender_group_info = groupRepository.find_by_id(
@@ -30,13 +42,76 @@ def insert(team_member_invite: TeamMemberInvite):
 
         sender_group: GroupSchema = GroupSchema(**sender_group_info)
 
-        can_send_invite = _verify_can_send_invite(
-            team_member_invite) if team_member_invite.is_public == False else True
+        now = datetime.now(ZoneInfo('UTC'))
 
-        if can_send_invite and team_member_invite.is_public == False:
+        if team_member_invite.is_public == False:
+            existing_doc = teamMemberInviteRepository.find_latest_for_inviter_and_role(
+                team_member_invite.group,
+                team_member_invite.inviter_user,
+                team_member_invite.role,
+            )
+
+            eligible_existing = None
+            if existing_doc:
+                candidate = TeamMemberInvite(**existing_doc)
+                latest = _latest_invite_status(candidate)
+                if (
+                    not candidate.is_public
+                    and latest == TeamMemberInviteStatus.SENT
+                ):
+                    eligible_existing = existing_doc
+
+            if eligible_existing:
+                existing_invite = TeamMemberInvite(**eligible_existing)
+                last_sent_at = existing_invite.last_sent or existing_invite.timestamp
+                last_sent_at = _ensure_utc(last_sent_at)
+                if now - last_sent_at < timedelta(hours=24):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail='Cant send team invite: please wait 24 hours since the last invite was sent',
+                    )
+
+                if team_member_invite.contact_method:
+                    existing_invite.contact_method = team_member_invite.contact_method
+
+                existing_invite.last_sent = now
+                existing_invite.status_changes.append(
+                    TeamMemberInviteStatusChange(
+                        status=TeamMemberInviteStatus.SENT, timestamp=now)
+                )
+
+                invite_payload = existing_invite.toJson()
+                invite_payload.pop('id', None)
+
+                invite_oid = eligible_existing['_id']
+                teamMemberInviteRepository.find_one_and_update(
+                    str(invite_oid), invite_payload)
+
+                whatsapp_message = WhatsappMessage(
+                    to=existing_invite.contact_method,
+                    template=WhatsappTemplate(
+                        name="HX9c1c720b428fdf6e29ecd203b0762e42",
+                        variables=[sender_group.name, str(invite_oid)]
+                    )
+                )
+
+                whatsapp_message_sent_data: Dict[str, Any]
+                try:
+                    whatsapp_message_sent_data = whatsapp_service.send_template_message(
+                        whatsapp_message)
+                except Exception:
+                    raise Exception(
+                        'Error while sending team invite whatsapp message')
+
+                return {
+                    "invite_id": str(invite_oid),
+                    "whatsapp_message_sent_data": whatsapp_message_sent_data
+                }
+
+            team_member_invite.last_sent = now
             team_member_invite.status_changes.append(
                 TeamMemberInviteStatusChange(
-                    status=TeamMemberInviteStatus.SENT, timestamp=datetime.now(ZoneInfo('UTC')))
+                    status=TeamMemberInviteStatus.SENT, timestamp=now)
             )
             inserted_invite = teamMemberInviteRepository.insert(
                 team_member_invite).inserted_id
@@ -53,7 +128,7 @@ def insert(team_member_invite: TeamMemberInvite):
             try:
                 whatsapp_message_sent_data = whatsapp_service.send_template_message(
                     whatsapp_message)
-            except Exception as e:
+            except Exception:
                 raise Exception(
                     'Error while sending team invite whatsapp message')
 
@@ -61,42 +136,21 @@ def insert(team_member_invite: TeamMemberInvite):
                 "invite_id": str(inserted_invite),
                 "whatsapp_message_sent_data": whatsapp_message_sent_data
             }
-        elif can_send_invite and team_member_invite.is_public == True:
-            team_member_invite.status_changes.append(
-                TeamMemberInviteStatusChange(
-                    status=TeamMemberInviteStatus.SENT, timestamp=datetime.now(ZoneInfo('UTC')))
-            )
-            inserted_invite = teamMemberInviteRepository.insert(
-                team_member_invite).inserted_id
 
-            return {
-                "invite_id": str(inserted_invite),
-            }
+        team_member_invite.last_sent = now
+        team_member_invite.status_changes.append(
+            TeamMemberInviteStatusChange(
+                status=TeamMemberInviteStatus.SENT, timestamp=now)
+        )
+        inserted_invite = teamMemberInviteRepository.insert(
+            team_member_invite).inserted_id
 
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
-                            detail='Cant send team invite another already exists')
+        return {
+            "invite_id": str(inserted_invite),
+        }
 
     except PyMongoError as err:
         raise Exception(f'Failed to insert team member invite{str(err)}')
-
-
-def _verify_can_send_invite(team_member_invite: TeamMemberInvite) -> bool:
-    try:
-        seven_days_ago = datetime.now() - timedelta(days=7)
-
-        seven_days_ago_str = seven_days_ago.isoformat()
-
-        invites_found = list(teamMemberInviteRepository.find(
-            {
-                "group": team_member_invite.group,
-                "inviter_user": team_member_invite.inviter_user,
-                "role": team_member_invite.role,
-                "timestamp": {"$gte": seven_days_ago_str}
-            }))
-
-        return len(invites_found) == 0
-    except PyMongoError as err:
-        raise Exception(f'Failed to verify if invite can be sent {str(err)}')
 
 
 def change_invite_status(invite_id: str, new_status: TeamMemberInviteStatus, user_uid: str):
