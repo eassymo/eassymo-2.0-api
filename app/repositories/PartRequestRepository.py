@@ -227,7 +227,12 @@ def distinct(property_name: str, filters: Dict[str, Any]):
     return database.db["PartRequests"].distinct(property_name, filters)
 
 
-def find_grouped_by_parent_request_uid(creator_group_id: Optional[str], seller_group_id: Optional[str], status: Optional[PartRequestStatus]):
+def find_grouped_by_parent_request_uid(
+    creator_group_id: Optional[str],
+    seller_group_id: Optional[str],
+    status: Optional[PartRequestStatus],
+    specific_order_uid: Optional[str] = None,
+):
     try:
         filters = {}
 
@@ -236,6 +241,9 @@ def find_grouped_by_parent_request_uid(creator_group_id: Optional[str], seller_g
         
         if seller_group_id != None and len(seller_group_id.strip()) > 0:
             filters["subscribedSellers"] = seller_group_id
+
+        if specific_order_uid != None and len(specific_order_uid.strip()) > 0:
+            filters["specific_order_uid"] = specific_order_uid
         
         if status != None:
             filters["status"] = status.value

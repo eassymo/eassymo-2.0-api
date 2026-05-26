@@ -103,16 +103,58 @@ def vehicles_available_in_requests(
 def find_grouped_by_parent_request_uid(
     creator_group_id: Optional[str] = Query(None, title="creator_group_id"),
     seller_group_id: Optional[str] = Query(None, title="seller_group_id"),
-    part_request_status: Optional[str] = Query(None, title="part_request_status")
+    part_request_status: Optional[str] = Query(None, title="part_request_status"),
+    specific_order_uid: Optional[str] = Query(None, title="specific_order_uid"),
 ):
     try:
         results = partRequestService.find_grouped_by_parent_request_uid(
             creator_group_id,
             seller_group_id,
-            part_request_status
+            part_request_status,
+            specific_order_uid,
         )
 
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(results)))
+    except Exception as e:
+        return JSONResponse(content=get_unsuccessful_response(e))
+
+
+
+@partRequestRouter.get(
+    "/vehicle-requests-with-offers/{vehicle_id}",
+    response_description="part requests with offers for a vehicle",
+    tags=["PartRequest"],
+)
+def find_vehicle_requests_with_offers(
+    request: Request,
+    vehicle_id: str,
+    creator_group_id: str = Query(..., title="creator_group_id"),
+    offer_owner_group: Optional[str] = Query(None, title="offer_owner_group"),
+    part_request_status: Optional[str] = Query(None, title="status"),
+    filters: Optional[str] = Query(None, title="filters", description="Filters as a JSON string"),
+):
+    try:
+        import json
+
+        filters_dict: List[Dict[str, Any]] = []
+        if filters is not None:
+            try:
+                filters_dict = json.loads(filters)
+            except Exception:
+                filters_dict = []
+
+        part_requests_with_offers = partRequestService.find_vehicle_requests_with_offers(
+            request,
+            vehicle_id,
+            creator_group_id,
+            offer_owner_group,
+            part_request_status,
+            filters_dict,
+        )
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content=get_successful_response(part_requests_with_offers),
+        )
     except Exception as e:
         return JSONResponse(content=get_unsuccessful_response(e))
 

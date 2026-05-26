@@ -303,43 +303,66 @@ def _get_groups_info(accumulated_groups: List[ObjectId]) -> List[GroupSchema]:
         raise InternalServerError(str(error))
 
 
+def get_groups_in_user_lists(
+    user_uid: str,
+    group_id: str,
+    favorites_only: bool = False,
+) -> List[str]:
+    """Group ids appearing in the current user's lists for `group_id`."""
+    try:
+        filters: Dict[str, Any] = {
+            "user_uid": user_uid,
+            "group_id": group_id,
+        }
+        if favorites_only:
+            filters["is_favorite"] = True
+
+        lists_found = list(listsRepository.find(filters))
+        group_ids: List[str] = []
+        for user_list in lists_found:
+            for group in user_list.get("groups", []):
+                normalized = str(group) if group is not None else ""
+                if normalized:
+                    group_ids.append(normalized)
+        return list(set(group_ids))
+    except PyMongoError as error:
+        raise InternalServerError(str(error))
+
+
+def get_followers_not_in_my_lists(user_uid: str, group_id: str) -> List[str]:
+    """
+    Groups that have `group_id` in one of their lists, but the user has not
+    added those groups to any of their own lists.
+    """
+    try:
+        lists_containing_me = list(listsRepository.find({"groups": group_id}))
+        owner_group_ids: List[str] = []
+        for user_list in lists_containing_me:
+            owner_id = user_list.get("group_id")
+            if owner_id is not None:
+                owner_group_ids.append(str(owner_id))
+
+        owner_group_ids = list(set(owner_group_ids))
+        my_list_group_ids = set(get_groups_in_user_lists(user_uid, group_id, favorites_only=False))
+        return [gid for gid in owner_group_ids if gid not in my_list_group_ids]
+    except PyMongoError as error:
+        raise InternalServerError(str(error))
+
+
 def get_followers_list(user_uid: str, group_id: str) -> List[Dict[str, Any]]:
     try:
-        follower_list_json: List[Dict[str, Any]] = []
+        follower_group_ids = get_followers_not_in_my_lists(user_uid, group_id)
 
-        lists_user_appears = list(listsRepository.find({"groups": group_id}))
+        if len(follower_group_ids) == 0:
+            return []
 
-        user_priority_list = list(listsRepository.find(
-            {"user_uid": user_uid, "group_id": group_id, "is_priority": True}))
+        follower_group_ids = [ObjectId(group_id) for group_id in follower_group_ids]
 
-        groups_in_priority_list = {}
+        groups_found = list(groupRepository.find(
+            {"_id": {"$in": follower_group_ids}}))
 
-        if len(groups_in_priority_list) > 0:
-            groups_in_priority_list = user_priority_list[0].get('groups')
+        follower_list = [GroupSchema(**group) for group in groups_found]
 
-        groups_that_added_current_group = [list_data.get(
-            'group_id') for list_data in lists_user_appears]
-
-        follower_group_ids: List[str] = []
-
-        for group_that_added_current_group_id in groups_that_added_current_group:
-            if group_that_added_current_group_id not in groups_in_priority_list:
-                follower_group_ids.append(group_that_added_current_group_id)
-
-        if len(follower_group_ids) > 0:
-            follower_group_ids = list(set(follower_group_ids))
-
-            follower_group_ids = [ObjectId(group_id)
-                                  for group_id in follower_group_ids]
-
-            groups_found = list(groupRepository.find(
-                {"_id": {"$in": follower_group_ids}}))
-
-            follower_list = [GroupSchema(**group) for group in groups_found]
-
-            follower_list_json = [follower.toJson()
-                                  for follower in follower_list]
-
-        return follower_list_json
+        return [follower.toJson() for follower in follower_list]
     except PyMongoError as error:
         raise InternalServerError(str(error))

@@ -911,35 +911,80 @@ def find_sibling_requests_with_offers(
 
     sibling_part_requests = list[Any](database.db["PartRequests"].aggregate(pipeline_time_window))
 
-    part_requests_with_offers = []
+    return __attach_offers_to_part_requests(
+        sibling_part_requests,
+        newest_part_request.creatorGroup,
+        logged_in_user,
+        filters_dict,
+        status,
+    )
 
-    for part_request_data in sibling_part_requests:
+
+def find_vehicle_requests_with_offers(
+    request: Request,
+    vehicle_id: str,
+    creator_group_id: str,
+    offer_owner_group: Optional[str],
+    status: Optional[str],
+    filters_dict: List[Dict[str, Any]],
+    limit: int = 50,
+):
+    user_info = request.state._state.get('user')
+    logged_in_user = user_info.get("uid")
+
+    from app.config import database
+
+    match_stage = {"vehicleId": vehicle_id, "creatorGroup": creator_group_id}
+    if status is not None:
+        match_stage["status"] = status
+
+    vehicle_part_requests = list(
+        database.db["PartRequests"]
+        .find(match_stage)
+        .sort("createdAt", pymongo.DESCENDING)
+        .limit(limit)
+    )
+
+    return __attach_offers_to_part_requests(
+        vehicle_part_requests,
+        creator_group_id,
+        logged_in_user,
+        filters_dict,
+        status,
+    )
+
+
+def __attach_offers_to_part_requests(
+    part_request_data_list: List[Any],
+    creator_group_id: str,
+    logged_in_user: str,
+    filters_dict: List[Dict[str, Any]],
+    status: Optional[str] = None,
+) -> List[dict]:
+    part_requests_with_offers = []
+    follower_group_ids = set(
+        listService.get_followers_not_in_my_lists(logged_in_user, creator_group_id)
+    )
+
+    for part_request_data in part_request_data_list:
         part_request_dict = PartRequest(**part_request_data).toJson()
 
         offer_filters = {
             "request_id": part_request_dict.get("_id"),
         }
 
-        if status != None:
+        if status is not None:
             offer_filters["status"] = status
 
         if filters_dict and len(filters_dict) > 0:
             custom_filters = __build_filters_for_sibling_requests(
-                filters_dict, 
-                newest_part_request.creatorGroup, 
-                logged_in_user
+                filters_dict,
+                creator_group_id,
+                logged_in_user,
             )
             offer_filters.update(custom_filters)
-        
-        """    # If a specific offer_owner_group is provided, it takes precedence
-        if offer_owner_group != None and len(offer_owner_group) > 0:
-            offer_filters["group_id"] = offer_owner_group """
 
         part_request_offers = list[Any](offerRepository.find(offer_filters))
-
-        followers = []
-        followers = listService.get_followers_list(
-            logged_in_user, newest_part_request.creatorGroup)
 
         offers = []
         for offer_data in part_request_offers:
@@ -948,18 +993,13 @@ def find_sibling_requests_with_offers(
             group = GroupSchema(**group_info)
             offer_json["group_info"] = group.toJson()
 
-            for follower in followers:
-                if follower.get('_id') == offer_json.get('group_id'):
-                    offer_json['createdByFollower'] = True
-                else:
-                    offer_json['createdByFollower'] = False
+            offer_json["createdByFollower"] = str(offer_json.get("group_id")) in follower_group_ids
 
             offer_json["creatorIsFavoriteAtSomeList"] = __check_if_group_is_favorite(
-                group)
+                group, creator_group_id, logged_in_user)
             offers.append(offer_json)
 
         part_request_dict["offers"] = offers
-
         part_requests_with_offers.append(part_request_dict)
 
     return part_requests_with_offers
@@ -979,44 +1019,80 @@ def __build_filters_for_sibling_requests(
         filter_values = filter_item.get("values", [])
         
         if filter_type == "followers_custom":
-            # Show offers only from follower groups (groups that follow creator but creator doesn't follow back)
             all_group_ids.extend(filter_values)
-            
+
         elif filter_type == "connected_custom":
-            # Show offers only from connected groups (groups in creator's lists)
             all_group_ids.extend(filter_values)
-            
+
         elif filter_type == "favorites":
-            # Check if we should apply favorite filtering
-            if filter_values and filter_values[0] == 'true':
-                favorite_lists = list(listRepository.find({
-                    "group_id": creator_group_id,
-                    "user_uid": logged_in_user,
-                    "is_favorite": True
-                }))
-                
-                # Collect all group IDs from these favorite lists
-                for favorite_list in favorite_lists:
-                    groups_in_list = favorite_list.get("groups", [])
-                    all_group_ids.extend(groups_in_list)
-            # If filter_values[0] is False, don't apply any favorite filtering
+            if filter_values and filter_values[0] == "true":
+                all_group_ids.extend(
+                    listService.get_groups_in_user_lists(
+                        logged_in_user,
+                        creator_group_id,
+                        favorites_only=True,
+                    )
+                )
+
+        elif filter_type == "connected":
+            if filter_values and filter_values[0] == "true":
+                all_group_ids.extend(
+                    listService.get_groups_in_user_lists(
+                        logged_in_user,
+                        creator_group_id,
+                        favorites_only=False,
+                    )
+                )
+
+        elif filter_type == "followers":
+            if filter_values and filter_values[0] == "true":
+                all_group_ids.extend(
+                    listService.get_followers_not_in_my_lists(
+                        logged_in_user,
+                        creator_group_id,
+                    )
+                )
     
     # Remove duplicates in case same group appears in multiple filter types
-    unique_group_ids = list(set(all_group_ids))
-    
+    unique_group_ids = list(set(str(group_id) for group_id in all_group_ids if group_id))
+
+    scoped_filter_types = {
+        "favorites",
+        "connected",
+        "followers",
+        "followers_custom",
+        "connected_custom",
+    }
+    has_scoped_filter = any(
+        filter_item.get("type") in scoped_filter_types for filter_item in filters_dict
+    )
+
     # If we have group IDs to filter by, return the MongoDB $in filter
     if len(unique_group_ids) > 0:
         return {
             "group_id": {"$in": unique_group_ids}
         }
-    
+
+    if has_scoped_filter:
+        return {
+            "group_id": {"$in": []}
+        }
+
     # No applicable filters, return empty dict (no additional filtering)
     return {}
 
 
-def __check_if_group_is_favorite(group: GroupSchema) -> bool:
-    favorite_lists = list[Any](listRepository.find(
-        {"is_favorite": True, "groups": group.id}))
+def __check_if_group_is_favorite(
+    group: GroupSchema,
+    creator_group_id: str,
+    logged_in_user: str,
+) -> bool:
+    favorite_lists = list(listRepository.find({
+        "is_favorite": True,
+        "groups": group.id,
+        "group_id": creator_group_id,
+        "user_uid": logged_in_user,
+    }))
 
     return len(favorite_lists) > 0
 
@@ -1181,14 +1257,20 @@ def __build_and_send_commissioner_notifications(
             f"✅ All commissioner notifications sent successfully ({len(users_from_groups)} users)")
 
 
-def find_grouped_by_parent_request_uid(creator_group_id: Optional[str], seller_group_id: Optional[str], status: Optional[str]):
+def find_grouped_by_parent_request_uid(
+    creator_group_id: Optional[str],
+    seller_group_id: Optional[str],
+    status: Optional[str],
+    specific_order_uid: Optional[str] = None,
+):
     try:
         status_enum = PartRequestStatus(status) if status else None
         
         results = list(partRequestRepository.find_grouped_by_parent_request_uid(
             creator_group_id,
             seller_group_id,
-            status_enum
+            status_enum,
+            specific_order_uid,
         ))
 
         for group_result in results:
