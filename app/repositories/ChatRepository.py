@@ -70,14 +70,6 @@ def find_by_order_id(order_id: str):
     return database.db["Chats"].aggregate(aggregation)
 
 
-def find_to_be_read(filters):
-    chat = database.db["Chats"].find_one(filters)
-    if chat and "messages" in chat:
-        unread_messages = [msg for msg in chat["messages"] if msg.get("isRead") == False]
-        return len(unread_messages)
-    return 0
-
-
 def find_by_request_ids(ids: list):
     return database.db["Chats"].find(
         {"requestId": {"$in": ids}},

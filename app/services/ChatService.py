@@ -1,10 +1,47 @@
 from app.repositories import ChatRepository as chatRepository
 from app.schemas.Chat import Chat
 from app.schemas.Message import Message
-from typing import List
+from typing import List, Dict, Any, Optional
 from pymongo.errors import PyMongoError
-from fastapi import HTTPException
+from fastapi import HTTPException, status
 from bson import ObjectId
+
+
+def _user_group_read_key(user_uid: str, group_id: Optional[str]) -> str:
+    """Stable key for usersThatRead; group_id must be present (from header or chat)."""
+    if not user_uid or not str(user_uid).strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="user_uid is required to mark or count read messages",
+        )
+    if not group_id or not str(group_id).strip() or str(group_id).strip().lower() == "none":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="groupselected header is required for chat read state",
+        )
+    return f"{str(user_uid).strip()}-{str(group_id).strip()}"
+
+
+def _legacy_none_group_read_key(group_id: str) -> str:
+    return f"None-{str(group_id).strip()}"
+
+
+def _message_is_unread_for_user(msg: Dict[str, Any], user_group_key: str, group_id: str) -> bool:
+    users_that_read = msg.get("usersThatRead") or {}
+    if users_that_read.get(user_group_key) is True:
+        return False
+    # Legacy rows written when GroupSelected header was missing on read-messages
+    if users_that_read.get(_legacy_none_group_read_key(group_id)) is True:
+        return False
+    return True
+
+
+def _mark_message_read_for_user(message: Message, user_group_key: str, group_id: str) -> None:
+    users_that_read = dict(message.usersThatRead or {})
+    users_that_read.pop(_legacy_none_group_read_key(group_id), None)
+    users_that_read[user_group_key] = True
+    message.usersThatRead = users_that_read
+    message.isRead = True
 
 
 def insert(chat: Chat):
@@ -54,35 +91,8 @@ def find_by_request_or_order_id(request_order_id: str, type: str):
             status_code=500, detail=f'Error while finding chat {err}')
 
 
-def to_be_read(id: str, userUid: str, type: str):
-    try:
-        filters = {}
-        chat_data: any
-        number_of_messages_to_be_read = 0
-        if type == "request":
-            filters = {"requestId": id}
-        else:
-            filters = {"orderId": id}
-
-        try:
-            chat_data = list(chatRepository.find(filters))[0]
-            chat = Chat(**chat_data)
-
-            for message in chat.messages:
-                has_been_read = message.usersThatRead.get(
-                    userUid) if message.usersThatRead is not None else True
-                if has_been_read == False:
-                    number_of_messages_to_be_read += 1
-        except Exception as e:
-            raise Exception(f'Error while counting not read messages {e}')
-
-        return number_of_messages_to_be_read
-    except PyMongoError as err:
-        raise HTTPException(
-            status_code=500, detail=f'Error while finding chat {err}')
-
-
 def to_be_read_v2(ids: List[str], group_id: str, user_uid: str, type = 'request') -> dict:
+    """Unread counts per request/order id; source of truth is usersThatRead, not isRead."""
     try:
         result = {id: 0 for id in ids}
 
@@ -97,7 +107,7 @@ def to_be_read_v2(ids: List[str], group_id: str, user_uid: str, type = 'request'
             chats = list(chatRepository.find_by_order_ids(ids))
 
         id_field = "orderId" if type == "order" else "requestId"
-        user_group_concat = f'{user_uid}-{group_id}'
+        user_group_key = _user_group_read_key(user_uid, group_id)
 
         for chat in chats:
             request_id = chat.get(id_field)
@@ -107,7 +117,7 @@ def to_be_read_v2(ids: List[str], group_id: str, user_uid: str, type = 'request'
 
             result[request_id] = sum(
                 1 for msg in messages
-                if (msg.get("usersThatRead") or {}).get(user_group_concat) != True
+                if _message_is_unread_for_user(msg, user_group_key, group_id)
             )
         return result
     except PyMongoError as err:
@@ -124,16 +134,17 @@ def read_messages(id: str, user_uid: str, type: str, group_selected: str):
         else:
             filters = {"orderId": id}
 
-        chat_data = list(chatRepository.find(filters))[0]
-        chat = Chat(**chat_data)
+        chats_found = list(chatRepository.find(filters))
+        if not chats_found:
+            return True
 
-        user_group_concat = f'{user_uid}-{group_selected}'
+        chat = Chat(**chats_found[0])
+
+        resolved_group_id = group_selected or chat.groupId
+        user_group_key = _user_group_read_key(user_uid, resolved_group_id)
 
         for message in chat.messages:
-            if message.usersThatRead is not None:
-                message.usersThatRead[user_group_concat] = True
-            else:
-                message.usersThatRead = {user_group_concat: True}
+            _mark_message_read_for_user(message, user_group_key, resolved_group_id)
 
         chat_json = chat.toJson()
         chat_id = ObjectId(chat_json["_id"])
@@ -153,9 +164,9 @@ def add_message(message: Message, user_uid: str, group_id: str):
         chat_data = chatRepository.find_by_id(chat_id)
         chat = Chat(**chat_data)
 
-        user_group_concat = f'{user_uid}-{group_id}'
-
-        message.usersThatRead = { user_group_concat : True }
+        user_group_key = _user_group_read_key(user_uid, group_id)
+        message.usersThatRead = {user_group_key: True}
+        message.isRead = True
 
         chat.insert_message(message)
 
