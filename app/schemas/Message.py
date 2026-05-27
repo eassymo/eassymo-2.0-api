@@ -37,7 +37,8 @@ class Message(BaseModel):
         ZoneInfo('UTC')), description="timestamp")
     attachments: List[str] = Field(
         [], description="attachments in the form of strings Eg: urls")
-    isRead: bool = Field(False, description="is this message read")
+    # Legacy flag; unread counts and read-messages use usersThatRead["{uid}-{groupId}"].
+    isRead: bool = Field(False, description="denormalized read flag; kept in sync on write")
     metaData: MessageMetaData = Field(
         None, description="meta data of messages")
     link: Optional[Link] = Field(None, description="Link embedded in message")

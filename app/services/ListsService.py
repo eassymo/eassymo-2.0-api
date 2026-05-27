@@ -22,6 +22,31 @@ def deprecated(func):
     return wrapper
 
 
+def _resolve_priority_list_id(user_lists: List[Dict[str, Any]], data: ListsSchema) -> str:
+    """Return the list id used for «Mi Red» / priority connections for this user+group scope."""
+    priority_lists = [
+        user_list for user_list in user_lists if user_list.get("is_priority") is True
+    ]
+    if priority_lists:
+        return str(priority_lists[0].get("_id"))
+
+    mi_red_lists = [
+        user_list for user_list in user_lists if (user_list.get("name") or "").strip() == "Mi Red"
+    ]
+    if mi_red_lists:
+        return str(mi_red_lists[0].get("_id"))
+
+    created_list = listsRepository.insert({
+        "user_uid": data.user_uid,
+        "group_id": data.group_id,
+        "groups": [],
+        "name": "Mi Red",
+        "is_priority": True,
+        "is_favorite": False,
+    })
+    return str(created_list.inserted_id)
+
+
 @deprecated
 def create_list(data: ListsSchema):
     list_info = {
@@ -35,12 +60,9 @@ def create_list(data: ListsSchema):
             group = GroupSchema(**group_info)
             user_lists = list(listsRepository.find(
                 {"user_uid": data.user_uid, "group_id": data.group_id}))
-            print(user_lists)
             if user_lists is not None and len(user_lists) > 0:
                 if group.is_commissioner == False:
-                    priority_lists = [
-                        user_list for user_list in user_lists if user_list.get("is_priority") == True]
-                    priority_list_id = str(priority_lists[0].get("_id"))
+                    priority_list_id = _resolve_priority_list_id(user_lists, data)
                     listsRepository.insert_group_to_list(
                         priority_list_id, data.groups[0])
                     return {"body": priority_list_id}
@@ -329,13 +351,21 @@ def get_groups_in_user_lists(
         raise InternalServerError(str(error))
 
 
+def _lists_containing_group(group_id: str) -> List[Dict[str, Any]]:
+    """Lists whose `groups` array includes the given group (string or ObjectId)."""
+    filters: List[Dict[str, Any]] = [{"groups": group_id}]
+    if ObjectId.is_valid(group_id):
+        filters.append({"groups": ObjectId(group_id)})
+    return list(listsRepository.find({"$or": filters}))
+
+
 def get_followers_not_in_my_lists(user_uid: str, group_id: str) -> List[str]:
     """
     Groups that have `group_id` in one of their lists, but the user has not
     added those groups to any of their own lists.
     """
     try:
-        lists_containing_me = list(listsRepository.find({"groups": group_id}))
+        lists_containing_me = _lists_containing_group(group_id)
         owner_group_ids: List[str] = []
         for user_list in lists_containing_me:
             owner_id = user_list.get("group_id")

@@ -92,6 +92,10 @@ class PartRequest(BaseModel):
     updatedAt: Optional[datetime] = Field(None)
     subscribedSellers: Optional[List[str]] = Field(
         description="List of groups that where selected for this request")
+    subscribedFollowers: Optional[List[str]] = Field(
+        None,
+        description="Groups auto-merged from the creator's followers list. Read-only in chat.",
+    )
     isActive: bool = Field(
         default=True, description="This determines if the request is Active")
     part: Optional[object] = Field(default={}, description="Part description")

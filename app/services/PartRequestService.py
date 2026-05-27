@@ -296,7 +296,8 @@ def find(user_uid: str | None, group_id: str | None, specific_order_uid: str | N
             filters = {
                 "$or": [
                     {"creatorUser": user_uid},
-                    {"subscribedSellers": group_id}
+                    {"subscribedSellers": group_id},
+                    {"subscribedFollowers": group_id},
                 ]
             }
 
@@ -646,7 +647,12 @@ def __format_grouped_filters(
     }
     if group_id is not None:
         if current_group_role == GroupType.CAR_SHOP.value:
-            filters["$and"].append({"subscribedSellers": group_id})
+            filters["$and"].append({
+                "$or": [
+                    {"subscribedSellers": group_id},
+                    {"subscribedFollowers": group_id},
+                ]
+            })
         if current_group_role == GroupType.PARTS_STORE.value:
             filters["$and"].append({"creatorGroup": group_id})
 
