@@ -5,6 +5,7 @@ from pymongo.errors import PyMongoError
 from fastapi import HTTPException, Request, status
 from app.repositories import InvitationRepository as invitationRepository
 from app.repositories import ListsRepository as listRepository
+from app.repositories import GroupRepository as groupRepository
 from bson import ObjectId
 from app.schemas.Census import CensusSchema
 from app.schemas.RequestInvites import RequestInviteStatus
@@ -66,16 +67,35 @@ def find(filters):
         return {"message": f'Error getting items from census {err}'}
 
 
+def _append_own_group_exclusions(parameters, conditions: list):
+    """Exclude the viewer's own store from census results (by group link and censusReference)."""
+    exclude_group_id = parameters.get("exclude_group") or parameters.get("group_id")
+    if not exclude_group_id:
+        return
+
+    conditions.append({
+        "group_reference_id": {"$ne": exclude_group_id}
+    })
+
+    try:
+        group = groupRepository.find_by_id(
+            exclude_group_id, {"censusReference": 1})
+        census_ref = group.get("censusReference") if group else None
+        if census_ref:
+            conditions.append({"_id": {"$ne": ObjectId(census_ref)}})
+    except Exception:
+        pass
+
+
 def build_filters(parameters):
     filters = {}
 
     if parameters["id"] is not None:
         filters["_id"] = ObjectId(parameters["id"])
 
-    if parameters["exclude_group"] is not None and len(parameters["exclude_group"]) > 0:
-        filters["group_reference_id"] = {
-            "$ne": parameters["exclude_group"]
-        }
+    exclude_conditions: list = []
+    if (parameters.get("exclude_group") is not None and len(parameters["exclude_group"]) > 0) or parameters.get("group_id"):
+        _append_own_group_exclusions(parameters, exclude_conditions)
 
     if parameters["limit"] is not None:
         filters["limit"] = parameters["limit"]
@@ -187,13 +207,14 @@ def build_filters(parameters):
             }
         }
 
+    all_conditions = exclude_conditions + conditions
+
     # If we have conditions, combine them with $and
-    if conditions:
-        if len(conditions) == 1:
-            # If only one condition, no need for $and
-            filters.update(conditions[0])
+    if all_conditions:
+        if len(all_conditions) == 1:
+            filters.update(all_conditions[0])
         else:
-            filters["$and"] = conditions
+            filters["$and"] = all_conditions
 
     return filters
 
@@ -233,22 +254,58 @@ def check_census_status(user_uid: str, census_items, group_id: str):
     all_groups_in_lists = []
     if len(user_groups_in_lists) > 0:
         all_groups_in_lists = user_groups_in_lists[0]["all_groups"]
+
+    connected_census_ids: set[str] = set()
+    connected_entity_names: set[str] = set()
+    if all_groups_in_lists:
+        connected_groups = list(groupRepository.find_many_by_string_ids(
+            all_groups_in_lists, {"censusReference": 1}))
+        for connected_group in connected_groups:
+            census_ref = connected_group.get("censusReference")
+            if not census_ref:
+                continue
+            census_ref_str = str(census_ref)
+            connected_census_ids.add(census_ref_str)
+            linked_census = censusRepository.find_by_id(census_ref_str)
+            if linked_census:
+                entity_name = (linked_census.get("Entity_Name") or "").strip().upper()
+                if entity_name:
+                    connected_entity_names.add(entity_name)
+
     for index, census_item in enumerate(census_items):
         census_items[index]["can_send_invite"] = True
+        census_id = str(census_item["_id"])
+        group_ref = census_item.get("group_reference_id")
+        entity_name = (census_item.get("Entity_Name") or "").strip().upper()
+
+        is_connected = (
+            (group_ref is not None and group_ref in all_groups_in_lists)
+            or census_id in connected_census_ids
+            or (entity_name and entity_name in connected_entity_names)
+        )
+
+        if is_connected:
+            census_items[index]["census_status"] = "CONNECTED"
+            census_items[index]["can_send_invite"] = False
+            continue
+
+        invited = False
         for invite in found_invites:
-            if invite["censusId"] == str(census_item["_id"]):
+            if invite["censusId"] == census_id:
                 can_send_invite = validate_if_invite_canbe_resent(
                     invite["lastSent"])
                 census_items[index]["can_send_invite"] = can_send_invite
                 census_items[index]["census_status"] = "INVITED"
                 census_items[index]["invite_id"] = str(invite["_id"])
-        if "group_reference_id" in census_item and census_item["group_reference_id"] is not None:
+                invited = True
+                break
+
+        if invited:
+            continue
+
+        if group_ref is not None:
             census_items[index]["census_status"] = "CAN_CONNECT"
             census_items[index]["can_send_invite"] = False
-            if "BOSH CAR SERVICE ORIZABA" in census_item["Entity_Name"]:
-                print(census_item)
-            if census_item["group_reference_id"] in all_groups_in_lists:
-                census_items[index]["census_status"] = "CONNECTED"
 
     return census_items
 
