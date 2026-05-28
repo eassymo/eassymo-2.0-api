@@ -21,6 +21,10 @@ from zoneinfo import ZoneInfo
 from typing import List, Optional, Dict
 from app.factories.NotificationsCreator import (
     create_offer_workshop_approval, create_offer_notification)
+from app.utils.notification_routes import (
+    buyer_offer_notification_meta,
+    buyer_offer_review_path,
+)
 from app.utils.notifications import send_notification
 
 from app.repositories import ListsRepository as listsRepository
@@ -122,7 +126,8 @@ def __send_workshop_notification_for_approval(request_creator_id: str,
             part_request_id=part_request_data.id,
             store_name=offer_data.group_info.name,
             user_token=user_token,
-            status=OfferStatus.workshop_approval_pending
+            status=OfferStatus.workshop_approval_pending,
+            parent_request_uid=part_request_data.parent_request_uid,
         )
 
 
@@ -294,6 +299,7 @@ def find_request_offers_by_groups(request_id: str):
         "seller_id": seller_id,
         "has_offered": False,
         "no_stock": False,
+        "rejected": False,
     }, subscribed_sellers))
 
     for seller in seller_dict:
@@ -306,12 +312,16 @@ def find_request_offers_by_groups(request_id: str):
         request_status = requestStatusByGroupRepository.find_by_group_and_request_id(
             seller["seller_id"], request_id)
 
-        if request_status is not None and request_status.status == OfferStatus.no_inventory:
-            seller["no_stock"] = True
+        if request_status is not None:
+            if request_status.status == OfferStatus.no_inventory:
+                seller["no_stock"] = True
+            elif request_status.status == OfferStatus.rejected:
+                seller["rejected"] = True
 
     have_offered = []
     have_not_offered = []
     no_stock = []
+    rejected = []
 
     for seller in seller_dict:
         group_data = groupRepository.find_by_id(seller["seller_id"])
@@ -322,16 +332,19 @@ def find_request_offers_by_groups(request_id: str):
 
         if seller["has_offered"]:
             have_offered.append(group_json)
-        else:
+        elif not seller["no_stock"] and not seller["rejected"]:
             have_not_offered.append(group_json)
 
         if seller["no_stock"]:
             no_stock.append(group_json)
+        if seller["rejected"]:
+            rejected.append(group_json)
 
     return {
         "have_offered": have_offered,
         "have_not_offered": have_not_offered,
         "no_stock": no_stock,
+        "rejected": rejected,
     }
 
 
@@ -449,7 +462,8 @@ def __create_workshop_approved_for_commissioner_notification(
             part_request_id=part_request_data.id,
             store_name=offer_data.group_info.name,
             user_token=user_token,
-            status=OfferStatus.pending_approval
+            status=OfferStatus.pending_approval,
+            parent_request_uid=part_request_data.parent_request_uid,
         )
 
 
@@ -524,7 +538,8 @@ def build_and_send_notification(
     user_token: str,
     part_request_id: str,
     offer_id: str,
-    status: OfferStatus
+    status: OfferStatus,
+    parent_request_uid: str | None = None,
 ) -> None:
     try:
         if isinstance(user_id, dict):
@@ -537,7 +552,12 @@ def build_and_send_notification(
             print(f"⚠️ Warning: Invalid user_id format: {user_id}")
             return
 
-        meta_data = {"offer": offer_id}
+        meta_data = buyer_offer_notification_meta(
+            request_id=part_request_id,
+            parent_request_uid=parent_request_uid,
+            offer_id=offer_id,
+        )
+        buyer_url = buyer_offer_review_path(part_request_id, parent_request_uid)
 
         notification: Notification
 
@@ -547,19 +567,21 @@ def build_and_send_notification(
                 owner_group=group_id,
                 store_name=store_name,
                 part_name=part_name,
-                navigate_to_url=f"/dashboard/part-request/{part_request_id}",
+                navigate_to_url=buyer_url,
                 meta_data=meta_data,
             )
 
-        if status == OfferStatus.pending_approval:
+        elif status == OfferStatus.pending_approval:
             notification = create_offer_notification(
                 owner=owner_id,
                 owner_group=group_id,
                 store_name=store_name,
                 part_name=part_name,
-                navigate_to_url=f"/dashboard/part-request/{part_request_id}",
+                navigate_to_url=buyer_url,
                 meta_data=meta_data,
             )
+        else:
+            return
 
         send_notification(notification, user_token)
 

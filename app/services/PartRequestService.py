@@ -23,6 +23,7 @@ from datetime import datetime, timedelta
 from dateutil import parser as date_parser
 from zoneinfo import ZoneInfo
 from app.services import GroupService as groupService
+from app.utils.notification_routes import seller_offer_creator_path
 from app.factories.NotificationsCreator import (
     create_part_request_notification,
 )
@@ -269,7 +270,7 @@ def build_and_send_notification(
             part_name=part_name,
             owner=owner_id,
             owner_group=group_id,
-            navigate_to_url=f"/dashboard/part-request/{created_part_request_id}",
+            navigate_to_url=seller_offer_creator_path(created_part_request_id),
             meta_data={"requestId": created_part_request_id}
         )
 
