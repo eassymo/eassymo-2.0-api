@@ -15,6 +15,7 @@ from app.services import OfferService as offerService
 from app.factories.NotificationsCreator import (
     create_offer_selected_notification, create_offer_selected_by_commissioner_to_origin_group_notification)
 from app.schemas.Notification import Notification
+from app.utils.notification_routes import order_management_v2_path
 from app.utils.notifications import send_notification
 
 
@@ -383,8 +384,8 @@ def build_and_send_notification(
             store_name=store_name,
             owner_group=group_id,
             part_name=part_name,
-            navigate_to_url='/order-management',
-            meta_data={}
+            navigate_to_url=order_management_v2_path(order_id),
+            meta_data={"orderId": order_id}
         )
 
         send_notification(notification, user_token)
@@ -445,8 +446,8 @@ def build_and_accepted_offer_notification_for_req_creator(
             store_name=store_name,
             owner_group=group_id,
             part_name=part_name,
-            navigate_to_url='/order-management',
-            meta_data={}
+            navigate_to_url=order_management_v2_path(order_id),
+            meta_data={"orderId": order_id}
         )
 
         send_notification(notification, user_token)
