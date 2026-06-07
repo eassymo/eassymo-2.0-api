@@ -1,0 +1,40 @@
+from pydantic import BaseModel, Field, root_validator
+from datetime import datetime
+from zoneinfo import ZoneInfo
+from typing import Optional
+from bson import ObjectId
+
+
+class GroupVehicle(BaseModel):
+    id: Optional[str] = Field(None, alias="_id")
+    year: str = Field(
+        description="This indicates the production year of the car")
+    maker: str = Field(description="This indicates the maker of the car")
+    model: str = Field(description="This indicates the model")
+    engine: Optional[str] = Field(None)
+    group: str = Field(description="Group owner of this vehicle")
+    user: str = Field(description="User owner of this vehicle")
+    subModel: Optional[str] = Field(description="SubModel if available")
+    active: Optional[bool] = Field(
+        default=True, description="Field to determine if its active")
+    createdAt: Optional[datetime] = Field(
+        default=datetime.now(ZoneInfo('UTC')))
+    vin: Optional[str] = Field(None, description="Vin number of the car")
+    serviceOrder: Optional[str] = Field(
+        None, description="Service order of the car")
+    licensePlate: Optional[str] = Field(None,
+        description="current license plate of the car")
+    numberOfRequests: Optional[int] = Field(None, description="Number of requests")
+    parent_request_id: Optional[str] = Field(None, description="Parent request id, this links the vehicle with all previous requests")
+
+    @root_validator(pre=True)
+    def convert_objectId(cls, values):
+        if "_id" in values and isinstance(values["_id"], ObjectId):
+            values["_id"] = str(values["_id"])
+        return values
+
+    def toJson(self):
+        data = self.dict(by_alias=True)
+
+        data["createdAt"] = str(data["createdAt"])
+        return data
