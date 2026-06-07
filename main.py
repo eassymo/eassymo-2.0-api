@@ -5,6 +5,8 @@ from app.routers import CensusRouter as censusRouter
 from app.routers import NetworkRouter as networkRouter
 from app.routers import GroupRouter as groupRouter
 from app.routers import ListsRouter as listRouter
+from app.routers import EstandarizadorRouter as estandarizadorRouter
+from app.routers import GroupConfigRouter as groupConfigRouter
 from fastapi.middleware.cors import CORSMiddleware
 
 app = fastapi.FastAPI()
@@ -23,3 +25,5 @@ app.include_router(censusRouter.censusRouter)
 app.include_router(networkRouter.networkRouter)
 app.include_router(groupRouter.groupRouter)
 app.include_router(listRouter.listRouter)
+app.include_router(estandarizadorRouter.estandarizadorRouter)
+app.include_router(groupConfigRouter.groupConfigRouter)
