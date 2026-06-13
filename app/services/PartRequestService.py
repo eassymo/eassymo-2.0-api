@@ -30,6 +30,7 @@ from app.factories.NotificationsCreator import (
 from app.utils.notifications import send_notification
 from app.services import ListsService as listService
 from app.services import ArmadoraCompatibilityService
+from app.services import SistemasCompatibilityService
 
 import pymongo
 
@@ -154,7 +155,7 @@ def insert(part_request: PartRequest, user_token: str = None):
         if creator_group_data != None:
             part_request.group_info = GroupSchema(**creator_group_data)
 
-        subscribed_sellers = part_request.subscribedSellers
+        subscribed_sellers = list(part_request.subscribedSellers or [])
 
         if part_request.commissioner_group != None:
             nearby_commissioner_groups = __find_commissioner_group_connections(
@@ -174,12 +175,15 @@ def insert(part_request: PartRequest, user_token: str = None):
         )
 
         vehicle_maker = _vehicle_maker_from_information(vehicle_information)
-        subscribed_sellers = ArmadoraCompatibilityService.filter_compatible_group_ids(
-            subscribed_sellers,
-            vehicle_maker,
-        )
 
         for car_part in part_request.partList:
+            part_subscribed_sellers, non_compatible_sellers = (
+                __resolve_subscribed_and_non_compatible(
+                    subscribed_sellers,
+                    vehicle_maker,
+                    car_part,
+                )
+            )
             part_request_payload = {
                 **part_req,
                 "part": car_part,
@@ -187,7 +191,8 @@ def insert(part_request: PartRequest, user_token: str = None):
                 "parent_request_uid": parent_request_uid,
                 "status": part_request.status.value,
                 "specific_order_uid": part_request.specific_order_uid,
-                "subscribedSellers": subscribed_sellers,
+                "subscribedSellers": part_subscribed_sellers,
+                "nonCompatibleSellers": non_compatible_sellers,
                 "createdAt": datetime.now(ZoneInfo('UTC'))
             }
             del part_request_payload["partList"]
@@ -301,6 +306,57 @@ def build_and_send_notification(
         print(
             f"📧 Failed notification - User: {user_id}, Part: {part_name}, Store: {store_name}")
         # Log the error but don't re-raise to avoid breaking part request creation
+
+
+def __dedupe_group_ids(group_ids: List[str]) -> List[str]:
+    unique: List[str] = []
+    seen: set[str] = set()
+    for group_id in group_ids or []:
+        normalized = str(group_id).strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        unique.append(normalized)
+    return unique
+
+
+def __resolve_subscribed_and_non_compatible(
+    candidate_seller_ids: List[str],
+    vehicle_maker: Optional[str],
+    car_part: Any,
+) -> tuple[List[str], List[Dict[str, str]]]:
+    candidates = __dedupe_group_ids(candidate_seller_ids)
+
+    armadora_eval = ArmadoraCompatibilityService.evaluate_bulk(
+        candidates, vehicle_maker
+    )
+    armadora_excluded = {
+        item["group_id"]: item["reason"]
+        for item in armadora_eval.get("excluded", [])
+        if item.get("group_id")
+    }
+
+    sistemas_eval = SistemasCompatibilityService.evaluate_bulk_for_car_part(
+        armadora_eval.get("compatible", []), car_part
+    )
+    sistemas_excluded = {
+        item["group_id"]: item["reason"]
+        for item in sistemas_eval.get("excluded", [])
+        if item.get("group_id")
+    }
+
+    non_compatible: List[Dict[str, str]] = []
+    for group_id in candidates:
+        if group_id in armadora_excluded:
+            non_compatible.append(
+                {"group_id": group_id, "reason": armadora_excluded[group_id]}
+            )
+        elif group_id in sistemas_excluded:
+            non_compatible.append(
+                {"group_id": group_id, "reason": sistemas_excluded[group_id]}
+            )
+
+    return sistemas_eval.get("compatible", []), non_compatible
 
 
 def __format_part_request(part_request):
@@ -1208,9 +1264,12 @@ def edit_part_request(part_request_data: List[PartRequestEdit]):
                 vehicle_maker = _vehicle_maker_from_information(
                     current_part_request.vehicleInformation
                 )
-                subs = ArmadoraCompatibilityService.filter_compatible_group_ids(
-                    subs,
-                    vehicle_maker,
+                subs, non_compatible_sellers = (
+                    __resolve_subscribed_and_non_compatible(
+                        subs,
+                        vehicle_maker,
+                        current_part_request.part,
+                    )
                 )
 
                 part_request_json = {
@@ -1220,6 +1279,7 @@ def edit_part_request(part_request_data: List[PartRequestEdit]):
                         "amount": part_request_edit.amount
                     },
                     "subscribedSellers": subs,
+                    "nonCompatibleSellers": non_compatible_sellers,
                     "fulfillment_type": merged.fulfillment_type.value,
                     "delivery_address": merged.delivery_address.model_dump()
                     if merged.delivery_address is not None else None,
