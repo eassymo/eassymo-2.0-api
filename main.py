@@ -30,6 +30,7 @@ from app.routers import RequestStatusByGroupRoutes as RequestStatusByGroupRoutes
 from app.routers import VehiculoRouter as vehiculoRouter
 from app.routers import EstandarizadorRouter as estandarizadorRouter
 from app.routers import GroupConfigRouter as groupConfigRouter
+from app.routers import CategoriasRouter as categoriasRouter
 from app.routers import PendingCartRouter as pendingCartRouter
 from app.routers import DeliveryRouter as deliveryRouter
 
@@ -146,5 +147,6 @@ app.include_router(RequestStatusByGroupRoutes.requestStatusByGroupRouter)
 app.include_router(vehiculoRouter.vehiculoRouter)
 app.include_router(estandarizadorRouter.estandarizadorRouter)
 app.include_router(groupConfigRouter.groupConfigRouter)
+app.include_router(categoriasRouter.categoriasRouter)
 app.include_router(pendingCartRouter.pendingCartRouter)
 app.include_router(deliveryRouter.deliveryRouter)

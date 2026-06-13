@@ -10,7 +10,10 @@ from app.schemas.Users import UserSchema
 from app.schemas.RequestInvites import RequestInviteStatus
 from pymongo.errors import PyMongoError
 from fastapi import HTTPException, Request, status
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 from app.dto.group_dto import EditGroupDto
 from bson import ObjectId
 from app.schemas.GeoJsonLocation import GeoJson
@@ -71,7 +74,12 @@ def _compose_group_find_filters(filters: Dict[str, Any]) -> Dict[str, Any]:
     return {"$and": conditions}
 
 
-def create_group(group: GroupSchema, censusReference: str | None, user_id: str):
+def create_group(
+    group: GroupSchema,
+    censusReference: str | None,
+    user_id: str,
+    mysql_db: Optional["Session"] = None,
+):
 
     group_data = {
         **group.dict(),
@@ -85,6 +93,17 @@ def create_group(group: GroupSchema, censusReference: str | None, user_id: str):
 
     created_group = groupRepository.insert(group_data)
     created_group_id = str(created_group.inserted_id)
+
+    if mysql_db is not None:
+        try:
+            from app.services import GroupConfigService as groupConfigService
+
+            groupConfigService.initialize_sistemas_for_new_group(
+                created_group_id, mysql_db
+            )
+        except Exception:
+            pass
+
     userRepository.add_user_group(user_id, created_group_id)
 
     user_lists = list(listRepository.find(

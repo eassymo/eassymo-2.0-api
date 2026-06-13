@@ -1,4 +1,7 @@
-from fastapi import APIRouter, Body, status, Query, Request, HTTPException
+from fastapi import APIRouter, Body, status, Query, Request, HTTPException, Depends
+from sqlalchemy.orm import Session
+
+from app.config.database import get_mysql_db
 from app.schemas.Groups import GroupSchema
 from typing import Optional
 from app.services import GroupService as groupService
@@ -19,10 +22,11 @@ def create(
             None, title="user_id", description="user that will be added to the group references"),
         census_reference: Optional[str] = Query(
             None, title="census_reference", description="Census reference"),
-        payload: GroupSchema = Body(...)):
+        payload: GroupSchema = Body(...),
+        mysql_db: Session = Depends(get_mysql_db)):
     try:
         response = groupService.create_group(
-            payload, census_reference, user_id)
+            payload, census_reference, user_id, mysql_db)
         return JSONResponse(status_code=status.HTTP_201_CREATED, content=response)
     except Exception as e:
         return JSONResponse(

@@ -36,7 +36,12 @@ class DeliveryContact(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     phone: str = Field(..., min_length=1, max_length=30)
 
-    @field_validator("name", "phone", mode="before")
+
+class NonCompatibleSeller(BaseModel):
+    group_id: str = Field(..., description="Seller group excluded from this part request")
+    reason: str = Field(..., description="Why the seller does not match armadora/sistemas rules")
+
+    @field_validator("group_id", "reason", mode="before")
     @classmethod
     def _strip_whitespace(cls, v: object) -> object:
         if isinstance(v, str):
@@ -92,6 +97,10 @@ class PartRequest(BaseModel):
     updatedAt: Optional[datetime] = Field(None)
     subscribedSellers: Optional[List[str]] = Field(
         description="List of groups that where selected for this request")
+    nonCompatibleSellers: Optional[List[NonCompatibleSeller]] = Field(
+        default=None,
+        description="Buyer-selected sellers excluded by armadora/sistemas compatibility for this part",
+    )
     subscribedFollowers: Optional[List[str]] = Field(
         None,
         description="Groups auto-merged from the creator's followers list. Read-only in chat.",

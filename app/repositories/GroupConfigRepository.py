@@ -49,6 +49,35 @@ def find_by_group_id(group_id: str) -> Optional[Dict[str, Any]]:
         raise PyMongoError(f"Error finding group config for group_id={group_id}: {str(e)}")
 
 
+def upsert_sistemas(
+    group_id: str, sistemas: Dict[str, Any]
+) -> Dict[str, Any]:
+    try:
+        now = datetime.now(ZoneInfo("UTC"))
+        updated_doc = db.find_one_and_update(
+            {"group_id": group_id},
+            {
+                "$set": {
+                    "sistemas": sistemas,
+                    "updated_at": now,
+                },
+                "$setOnInsert": {
+                    "group_id": group_id,
+                    "created_at": now,
+                },
+            },
+            upsert=True,
+            return_document=ReturnDocument.AFTER,
+        )
+        if isinstance(updated_doc.get("_id"), ObjectId):
+            updated_doc["_id"] = str(updated_doc["_id"])
+        return updated_doc
+    except PyMongoError as e:
+        raise PyMongoError(
+            f"Error upserting sistemas config for group_id={group_id}: {str(e)}"
+        )
+
+
 def upsert_armadoras(
     group_id: str, armadoras: Dict[str, Any]
 ) -> Dict[str, Any]:

@@ -21,10 +21,26 @@ class ArmadorasConfigUpdate(BaseModel):
     selected: List[ArmadoraSelection] = Field(default_factory=list)
 
 
+class SistemasSelection(BaseModel):
+    categoriaId: int
+    subCategoriaIds: List[int] = Field(default_factory=list)
+
+
+class SistemasConfig(BaseModel):
+    is_exclusive: bool = False
+    selected: List[SistemasSelection] = Field(default_factory=list)
+
+
+class SistemasConfigUpdate(BaseModel):
+    is_exclusive: bool = False
+    selected: List[SistemasSelection] = Field(default_factory=list)
+
+
 class GroupConfig(BaseModel):
     id: Optional[str] = Field(None, alias="_id")
     group_id: str
     armadoras: ArmadorasConfig = Field(default_factory=ArmadorasConfig)
+    sistemas: SistemasConfig = Field(default_factory=SistemasConfig)
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -62,11 +78,33 @@ class ArmadoraCompatibilityResponse(BaseModel):
     excluded: List[ExcludedArmadoraGroup] = Field(default_factory=list)
 
 
+class PartCategoryRequirement(BaseModel):
+    categoria_id: int
+    sub_categoria_id: int
+
+
+class SistemasCompatibilityRequest(BaseModel):
+    group_ids: List[str] = Field(default_factory=list)
+    part_categories: List[PartCategoryRequirement] = Field(default_factory=list)
+
+
+class ExcludedSistemasGroup(BaseModel):
+    group_id: str
+    reason: str
+    selected_sistemas: List[SistemasSelection] = Field(default_factory=list)
+
+
+class SistemasCompatibilityResponse(BaseModel):
+    compatible: List[str] = Field(default_factory=list)
+    excluded: List[ExcludedSistemasGroup] = Field(default_factory=list)
+
+
 def default_group_config(group_id: str) -> GroupConfig:
     now = datetime.now(ZoneInfo("UTC"))
     return GroupConfig(
         group_id=group_id,
         armadoras=ArmadorasConfig(),
+        sistemas=SistemasConfig(),
         created_at=now,
         updated_at=now,
     )
