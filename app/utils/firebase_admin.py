@@ -3,8 +3,20 @@ from firebase_admin import credentials, auth, db
 from dotenv import load_dotenv
 import os
 import json
+from pathlib import Path
 
 load_dotenv()
+
+_API_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _find_default_service_account_file():
+    """Use downloaded Firebase service account JSON in the API project root."""
+    matches = sorted(_API_ROOT.glob("*firebase-adminsdk*.json"))
+    if matches:
+        return str(matches[0])
+    return None
+
 
 def initialize_firebase():
     """
@@ -16,15 +28,27 @@ def initialize_firebase():
     try:
         # Try multiple credential sources in order of preference
         
-        # Option 1: Service account file path
+        # Option 1: Service account file path from env
         service_account_path = os.getenv("FIREBASE_SERVICE_ACCOUNT_PATH")
         if service_account_path and os.path.exists(service_account_path):
             cred = credentials.Certificate(service_account_path)
             firebase_admin.initialize_app(cred, {
                 'databaseURL': os.getenv("FIREBASE_RTDB_URL")
             })
-            print("✅ Firebase initialized with service account file")
+            print("Firebase initialized with service account file")
             return
+
+        # Option 2: Service account JSON file in project root (local dev only; file must be gitignored)
+        if os.getenv("ALLOW_LOCAL_FIREBASE_SERVICE_ACCOUNT_FILE", "true").lower() == "true":
+            default_service_account = _find_default_service_account_file()
+            if default_service_account:
+                cred = credentials.Certificate(default_service_account)
+                firebase_admin.initialize_app(cred, {
+                    'databaseURL': os.getenv("FIREBASE_RTDB_URL")
+                })
+                print("Firebase initialized with local service account file (dev only):")
+                print("  {}".format(default_service_account))
+                return
         
         # Option 2: Environment variables (fix the private key formatting)
         if all([
@@ -63,7 +87,7 @@ def initialize_firebase():
             firebase_admin.initialize_app(cred, {
                 'databaseURL': os.getenv("FIREBASE_RTDB_URL")
             })
-            print("✅ Firebase initialized with environment variables")
+            print("Firebase initialized with environment variables")
             return
         
         # Option 3: Try to create service account from JSON string
@@ -75,26 +99,27 @@ def initialize_firebase():
                 firebase_admin.initialize_app(cred, {
                     'databaseURL': os.getenv("FIREBASE_RTDB_URL")
                 })
-                print("✅ Firebase initialized with JSON credentials")
+                print("Firebase initialized with JSON credentials")
                 return
             except json.JSONDecodeError as e:
-                print(f"❌ Invalid JSON in FIREBASE_SERVICE_ACCOUNT_JSON: {e}")
+                print("Invalid JSON in FIREBASE_SERVICE_ACCOUNT_JSON: {}".format(e))
         
         # If we get here, we need proper credentials
         raise ValueError(
-            "❌ Firebase service account credentials not found or invalid. "
+            "Firebase service account credentials not found or invalid. "
             "Please set either:\n"
             "1. FIREBASE_SERVICE_ACCOUNT_PATH (path to service account file)\n"
-            "2. FIREBASE_SERVICE_ACCOUNT_JSON (JSON string of service account)\n"
-            "3. Individual environment variables (FIREBASE_PROJECT_ID, FIREBASE_PRIVATE_KEY, etc.)"
+            "2. Place *firebase-adminsdk*.json in the API project root\n"
+            "3. FIREBASE_SERVICE_ACCOUNT_JSON (JSON string of service account)\n"
+            "4. Individual environment variables (FIREBASE_PROJECT_ID, FIREBASE_PRIVATE_KEY, etc.)"
         )
         
     except Exception as e:
-        print(f"❌ Error initializing Firebase: {e}")
-        print("🔧 Troubleshooting tips:")
-        print("   - Check your private key formatting (ensure \\n is properly escaped)")
-        print("   - Verify your service account has Realtime Database permissions")
-        print("   - Ensure all required environment variables are set")
+        print("Error initializing Firebase: {}".format(e))
+        print("Troubleshooting tips:")
+        print("   - Download a fresh service account JSON from Firebase Console")
+        print("   - Set FIREBASE_SERVICE_ACCOUNT_PATH or place the JSON in the API root")
+        print("   - Verify your service account has Auth admin permissions")
         raise
 
 
