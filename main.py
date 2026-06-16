@@ -33,6 +33,7 @@ from app.routers import GroupConfigRouter as groupConfigRouter
 from app.routers import CategoriasRouter as categoriasRouter
 from app.routers import PendingCartRouter as pendingCartRouter
 from app.routers import DeliveryRouter as deliveryRouter
+from app.routers import AdminRouter as adminRouter
 
 
 import app.utils.firebase_admin
@@ -150,3 +151,4 @@ app.include_router(groupConfigRouter.groupConfigRouter)
 app.include_router(categoriasRouter.categoriasRouter)
 app.include_router(pendingCartRouter.pendingCartRouter)
 app.include_router(deliveryRouter.deliveryRouter)
+app.include_router(adminRouter.adminRouter)
