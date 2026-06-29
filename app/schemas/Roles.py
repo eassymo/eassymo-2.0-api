@@ -5,3 +5,8 @@ class RolesSchema(BaseModel):
     value: str = Field(None, description="Value we get from the table")
     display: bool = Field(True, description="Determines if will be displayed")
     entityType: str = Field(None, description="Determines the type of bussiness")
+
+    def toJson(self):
+        data = self.model_dump()
+        
+        return data

@@ -1,0 +1,262 @@
+from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Body, status, Query
+from app.services import PartRequestService as partRequestService
+from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response
+from app.schemas.PartRequest import PartRequest, PartRequestEdit
+from typing import List, Dict, Any
+from fastapi.encoders import jsonable_encoder
+from typing import Optional
+from fastapi import Request, HTTPException
+from datetime import datetime
+
+partRequestRouter = APIRouter(prefix="/partRequest")
+
+
+@partRequestRouter.post("", response_description="Created id of the part request", tags=["PartRequest"])
+def create(request: Request, payload: PartRequest):
+    try:
+        # Extract user token from Authorization header
+        user_token = None
+        authorization = request.headers.get("Authorization")
+        if authorization and authorization.startswith("Bearer "):
+            user_token = authorization.replace("Bearer ", "")
+        
+        response = partRequestService.insert(payload, user_token)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
+    except Exception as e:
+        return JSONResponse(content=get_unsuccessful_response(e))
+
+
+@partRequestRouter.get("", response_description="Will return the list of part requests using the user uid and group uid")
+def find(
+    user_uid: Optional[str] = Query(
+        None, title="user_uid", description="User uid"),
+    group_id: Optional[str] = Query(
+        None, title="group_id", description="Group id"),
+    specific_order_uid: Optional[str] = Query(None, title="specific_order_uid"),
+    stat: Optional[str] = Query(None)
+):
+    try:
+        response = partRequestService.find(
+            user_uid, group_id, specific_order_uid, stat)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
+    except Exception as e:
+        return JSONResponse(content=get_unsuccessful_response(e))
+
+
+@partRequestRouter.get("/grouped", response_description="part requests grouped by group")
+def find_grouped(
+    request: Request,
+    group_id: Optional[str] = Query(None, title="group_id", description=""),
+    group_role: Optional[str] = Query(
+        None, title="group_role", description="current logged in role"),
+    search_argument: Optional[str] = Query(None, title="search_argument"),
+    creator_group: Optional[str] = Query(
+        None, title="creator_group"),
+    vehicle_model: Optional[str] = Query(
+        None, title="vehicle_model"),
+    vehicle_id: Optional[str] = Query(None, title="vehicle_id"),
+    created_at: Optional[str] = Query(
+        None, title="created_at"),
+    page: Optional[int] = Query(1, title="page", description="Page number"),
+    limit: Optional[int] = Query(
+        10, title="limit", description="Items per page")
+):
+    try:
+        part_requests = partRequestService.find_grouped(
+            group_id,
+            group_role,
+            creator_group,
+            vehicle_model,
+            vehicle_id,
+            created_at,
+            search_argument,
+            page,
+            limit
+        )
+
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(part_requests))
+    except Exception as e:
+        return JSONResponse(content=get_unsuccessful_response(e))
+
+
+@partRequestRouter.get("/vehicles-available-in-requests", tags=["PartRequest"])
+def vehicles_available_in_requests(
+    group_id: Optional[str] = Query(None, title="group_id", description=""),
+    group_role: Optional[str] = Query(
+        None, title="group_role", description="current logged in role")
+):
+    try:
+        vehicle_ids = partRequestService.find_distinct_vehicle_ids_in_requests(
+            group_id,
+            group_role,
+        )
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content=get_successful_response({"vehicleIds": vehicle_ids}),
+        )
+    except Exception as e:
+        return JSONResponse(content=get_unsuccessful_response(e))
+
+
+@partRequestRouter.get("/group/group-by-parent", response_description="part requests grouped by parent_request_uid", tags=["PartRequest"])
+def find_grouped_by_parent_request_uid(
+    creator_group_id: Optional[str] = Query(None, title="creator_group_id"),
+    seller_group_id: Optional[str] = Query(None, title="seller_group_id"),
+    part_request_status: Optional[str] = Query(None, title="part_request_status"),
+    specific_order_uid: Optional[str] = Query(None, title="specific_order_uid"),
+):
+    try:
+        results = partRequestService.find_grouped_by_parent_request_uid(
+            creator_group_id,
+            seller_group_id,
+            part_request_status,
+            specific_order_uid,
+        )
+
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(results)))
+    except Exception as e:
+        return JSONResponse(content=get_unsuccessful_response(e))
+
+
+
+@partRequestRouter.get(
+    "/vehicle-requests-with-offers/{vehicle_id}",
+    response_description="part requests with offers for a vehicle",
+    tags=["PartRequest"],
+)
+def find_vehicle_requests_with_offers(
+    request: Request,
+    vehicle_id: str,
+    creator_group_id: str = Query(..., title="creator_group_id"),
+    offer_owner_group: Optional[str] = Query(None, title="offer_owner_group"),
+    part_request_status: Optional[str] = Query(None, title="status"),
+    filters: Optional[str] = Query(None, title="filters", description="Filters as a JSON string"),
+):
+    try:
+        import json
+
+        filters_dict: List[Dict[str, Any]] = []
+        if filters is not None:
+            try:
+                filters_dict = json.loads(filters)
+            except Exception:
+                filters_dict = []
+
+        part_requests_with_offers = partRequestService.find_vehicle_requests_with_offers(
+            request,
+            vehicle_id,
+            creator_group_id,
+            offer_owner_group,
+            part_request_status,
+            filters_dict,
+        )
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content=get_successful_response(part_requests_with_offers),
+        )
+    except Exception as e:
+        return JSONResponse(content=get_unsuccessful_response(e))
+
+
+@partRequestRouter.get("/{id}", response_description="Will return the specific part response")
+def find_by_id(request: Request, id: str):
+    try:
+        response = partRequestService.find_by_id(id, request)
+        response = {
+            **response,
+            "createdAt": str(response["createdAt"]),
+            "updatedAt": str(response["updatedAt"])
+        }
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+    except Exception as e:
+        return JSONResponse(content=get_unsuccessful_response(e))
+
+
+@partRequestRouter.get("/search/reduced", response_description="Will return the reduced description")
+def search(
+    search_argument: Optional[str] = Query(None, title="search_argument"),
+    category: Optional[str] = Query(None, title="category"),
+    sub_category: Optional[str] = Query(None, title="sub_category"),
+    part_type: Optional[str] = Query(None, title="part_type")
+):
+    try:
+        reduced_part_requests = partRequestService.search(
+            search_argument, category, sub_category, part_type)
+
+        reduced_part_requests = __format_reduced_parts(reduced_part_requests)
+
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(reduced_part_requests))
+    except Exception as e:
+        return JSONResponse(content=get_unsuccessful_response(e))
+
+
+def __format_reduced_parts(part_requests):
+    formatted_part_requests = []
+    for part in part_requests:
+        part = {
+            **part,
+            "group_info": {
+                **part["group_info"],
+                "_id": str(part["group_info"]["_id"])
+            }
+        }
+        formatted_part_requests.append(part)
+    return formatted_part_requests
+
+
+@partRequestRouter.get("/filter/build-filter", response_description="available values for the provided propName")
+def build_filter(prop_name: Optional[str] = Query(None, title="prop_name")):
+    try:
+        filter_options = partRequestService.build_filter(prop_name)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(filter_options))
+    except Exception as e:
+        return JSONResponse(content=get_unsuccessful_response(e))
+
+
+@partRequestRouter.get("/sibling-requests-with-offers/{parent_request_uid}", response_description="part request with offers")
+def find_sibling_requests_with_offers(
+    request: Request,
+    parent_request_uid: str,
+    offer_owner_group: Optional[str] = Query(None, title="offer_owner_group"),
+    part_request_status: Optional[str] = Query(None, title="status"),
+    filters: Optional[str] = Query(None, title="filters", description="Filters as a JSON string")
+):
+    try:
+        filters_dict: List[Dict[str, Any]] = []
+        if filters is not None:
+            import json
+            try:
+                filters_dict = json.loads(filters)
+            except Exception:
+                filters_dict = []
+
+        print(filters_dict)
+        part_requests_with_offers = partRequestService.find_sibling_requests_with_offers(request,
+            parent_request_uid, offer_owner_group, part_request_status, filters_dict)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(part_requests_with_offers))
+    except Exception as e:
+        return JSONResponse(content=get_unsuccessful_response(e))
+
+
+@partRequestRouter.put("", tags=["PartRequest"])
+def edit_part_request(
+    payload: List[PartRequestEdit]
+):
+    try:
+        edited_part_request = partRequestService.edit_part_request(payload)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(edited_part_request))
+    except Exception as e:
+        return JSONResponse(content=get_unsuccessful_response(e))
+
+
+@partRequestRouter.put("/join_seller_to_part_request", tags=["PartRequest"])
+def join_seller_to_part_request(
+    payload=Body(...)
+):
+    try:
+        edited_part_request = partRequestService.join_seller_to_part_request(
+            payload["specific_order_uid"], payload["new_seller_group_id"])
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(edited_part_request))
+    except HTTPException as e:
+        return JSONResponse(content=get_unsuccessful_response(e))

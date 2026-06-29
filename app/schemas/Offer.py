@@ -1,0 +1,105 @@
+from pydantic import BaseModel, Field, root_validator
+from typing import Optional, List, Dict, Any
+from enum import Enum
+from datetime import datetime
+from zoneinfo import ZoneInfo
+from bson import ObjectId
+from app.schemas.Groups import GroupSchema
+
+
+class OfferType(Enum):
+    PartOffer = "PartOffer"
+
+
+class OfferStatus(Enum):
+    created = "Created"
+    workshop_approval_pending = "Workshop_Approval_Pending"
+    pending_approval = "Pending_Approval"
+    selected = "Selected"
+    rejected = "Rejected"
+    pending_changes = "Pending_Changes"
+    no_inventory = "No_Inventory"
+
+
+class Offer(BaseModel):
+    id: Optional[str] = Field(None, alias="_id")
+    request_id: str = Field(
+        description="This is the request that is the owner of this offer")
+    user_uid: str = Field(description="Creator user of the offer")
+    group_id: str = Field(description="group that created the offer")
+    offer_group_uid: Optional[str] = Field(default=None,
+                                           description="This is the uid that will be used in case this offer has sub offers")
+    brand: Optional[str] = Field(None,
+        description="This is the brand of the offered part or item")
+    guarantee: Optional[str] = Field(None, description="Guarantee of the offered part")
+    price: Optional[float] = Field(None, description="price")
+    unit_of_measure: str = Field(description="Unit of measure of item offered")
+    to_be_delivered_time: Optional[datetime] = Field(
+        default=datetime.now(ZoneInfo('UTC')))
+    code: Optional[str] = Field(None, description="code of item")
+    location: Optional[object] = Field(
+        default=None,
+        description="this will be the location of the part")
+    photos: Optional[List[str]] = Field(
+        default=[],
+        description="List of urls of the pictures")
+    internalComments: Optional[str] = Field(
+        description="Comments to be only displayed to the offer creator group")
+    publicComments: Optional[str] = Field(
+        description="Comments to be diaplayed to the user that created the request"
+    )
+    status: OfferStatus = Field(
+        default=OfferStatus.created.value, description="Status of the offer")
+    type: OfferType = Field(default=OfferType.PartOffer.value)
+    group_info: Optional[GroupSchema] = Field(default=None)
+    createdAt: Optional[datetime] = Field(datetime.now(ZoneInfo('UTC')))
+    updatedAt: Optional[datetime] = Field(
+        default=datetime.now(ZoneInfo('UTC')))
+    call_center_user_that_posted_offer: Optional[str] = Field(None)
+    call_center_that_posted_offer: Optional[GroupSchema] = Field(None, description="call center that created the offer")
+    request_info: Optional[Dict[str, Any]] = Field(None)
+    commissioner_price: Optional[float] = Field(None)
+    createdByFollower: Optional[bool] = Field(False, exclude=True)
+    creatorIsFavoriteAtSomeList: Optional[bool] = Field(False, exclude=True)
+    creatorIsInSomeList: Optional[bool] = Field(False, exclude=True)
+    origin: Optional[str] = Field(
+        "marketplace", description="marketplace | mostrador")
+    mostrador_folio_id: Optional[str] = Field(None)
+    mostrador_piece_id: Optional[str] = Field(None)
+
+    @root_validator(pre=True)
+    def convert_objectId(cls, values):
+        if "_id" in values and isinstance(values["_id"], ObjectId):
+            values["_id"] = str(values["_id"])
+        return values
+
+    def update_status(self, status: OfferStatus):
+        self.status = status
+        self.updatedAt = datetime.now(ZoneInfo('UTC'))
+
+    def toJson(self):
+        data = self.model_dump(by_alias=True)
+
+        if (data.get("to_be_delivered_time") != None):
+            data["to_be_delivered_time"] = str(data["to_be_delivered_time"])
+
+        if data.get("status") is not None:
+            status = self.status
+            data["status"] = status.value if isinstance(status, OfferStatus) else status
+
+        if "type" in data and data["type"] is not None and not isinstance(data["type"], str):
+            data["type"] = self.type.value
+
+        if data.get("updatedAt") != None:
+            data["updatedAt"] = str(self.updatedAt)
+
+        if data.get("createdAt") != None:
+            data["createdAt"] = str(self.createdAt)
+
+        if data.get("group_info") != None:
+            data["group_info"] = self.group_info.toJson()
+
+        if data.get("call_center_that_posted_offer") is not None and self.call_center_that_posted_offer is not None:
+            data["call_center_that_posted_offer"] = self.call_center_that_posted_offer.toJson()
+
+        return data

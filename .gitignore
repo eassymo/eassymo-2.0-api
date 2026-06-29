@@ -109,6 +109,11 @@ celerybeat.pid
 .env.test.local
 .env.production.local
 .env.schema.json
+
+# Firebase / Google service account keys (never commit)
+*firebase-adminsdk*.json
+serviceAccount*.json
+firebase-service-account*.json
 .venv
 venv/
 ENV/
