@@ -5,7 +5,7 @@ from pymongo.errors import PyMongoError
 def find_roles():
     try:
         response = list()
-        rolesFound = rolesRepository.find()
+        rolesFound = rolesRepository.find({"display": True})
         for rol in rolesFound:
             response.append({
                 **rol,
