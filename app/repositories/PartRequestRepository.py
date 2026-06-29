@@ -11,6 +11,17 @@ def insert(part_request):
     return database.db["PartRequests"].insert_one(part_request)
 
 
+def find_by_id(id) -> Optional[dict]:
+    try:
+        return database.db["PartRequests"].find_one({"_id": ObjectId(id)})
+    except Exception:
+        return None
+
+
+def find_by_specific_order_uid(specific_order_uid: str):
+    return database.db["PartRequests"].find({"specific_order_uid": specific_order_uid})
+
+
 def find(filters, projection):
     return database.db["PartRequests"].find(filters, projection or None).sort({"_id": -1})
 

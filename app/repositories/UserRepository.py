@@ -9,6 +9,10 @@ def find_one(filters: Dict[str, Any]):
 def find(filters: Dict[str, Any], limit: Optional[int] = 30):
     return database.db["Users"].find(filters).limit(limit)
 
+def find_by_phone(phone: str):
+    return database.db["Users"].find_one({"phone": phone})
+
+
 def find_by_uid(uid: str):
     return database.db["Users"].aggregate([
         {

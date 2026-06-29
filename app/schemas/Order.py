@@ -41,6 +41,11 @@ class OrderStatus(Enum):
     DISPATCHED = "DISPATCHED"
     RECIEVED = "RECIEVED"
     CANCELED = "CANCELED"
+    # In-person (Mostrador) counter flow — separate lifecycle from the marketplace flow
+    IN_PERSON_PENDING = "IN_PERSON_PENDING"
+    IN_PERSON_READY_FOR_PICKUP = "IN_PERSON_READY_FOR_PICKUP"
+    IN_PERSON_COMPLETED = "IN_PERSON_COMPLETED"
+    IN_PERSON_CANCELED = "IN_PERSON_CANCELED"
 
 
 class StatusChange(BaseModel):
@@ -57,7 +62,8 @@ class StatusChange(BaseModel):
     def toJson(self):
         data = self.dict(by_alias=True)
 
-        data["status"] = self.status.value
+        status = self.status
+        data["status"] = status.value if isinstance(status, OrderStatus) else status
         data["timestamp"] = str(self.timestamp)
 
         return data
@@ -101,6 +107,10 @@ class Order(BaseModel):
     packaged_notes_seller: Optional[str] = Field(None)
     packaged_pictures_seller: Optional[List[str]] = Field([])
     delivery_assignment: Optional[DeliveryAssignment] = Field(None)
+    # Origin of the order: marketplace (default flow) or mostrador (in-person counter flow)
+    origin: Optional[str] = Field("marketplace", description="marketplace | mostrador")
+    mostrador_folio_id: Optional[str] = Field(
+        None, description="source MostradorFolios _id when origin=mostrador")
 
     @root_validator(pre=True)
     def convert_objectId(cls, values):
@@ -126,7 +136,8 @@ class Order(BaseModel):
             data["request_group"] = self.request_group.toJson()
 
         data["status_history"] = historical_status
-        data["status"] = self.status.value
+        status = self.status
+        data["status"] = status.value if isinstance(status, OrderStatus) else status
         data["updated_at"] = str(self.updated_at)
         data["created_at"] = str(self.created_at)
 

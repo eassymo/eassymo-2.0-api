@@ -23,6 +23,14 @@ def find_by_user_and_group(user_uid: str, group_id: str) -> dict | None:
     return database.db["pending_carts"].find_one(_filter(user_uid, group_id))
 
 
+def find_by_id(cart_id) -> dict | None:
+    from bson import ObjectId
+    try:
+        return database.db["pending_carts"].find_one({"_id": ObjectId(cart_id)})
+    except Exception:
+        return None
+
+
 def delete_by_user_and_group(user_uid: str, group_id: str) -> int:
     result = database.db["pending_carts"].delete_one(_filter(user_uid, group_id))
     return result.deleted_count
