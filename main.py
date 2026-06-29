@@ -34,6 +34,7 @@ from app.routers import CategoriasRouter as categoriasRouter
 from app.routers import PendingCartRouter as pendingCartRouter
 from app.routers import DeliveryRouter as deliveryRouter
 from app.routers import AdminRouter as adminRouter
+from app.routers import MostradorFolioRouter as mostradorFolioRouter
 
 
 import app.utils.firebase_admin
@@ -76,9 +77,11 @@ async def auth_middleware(request: Request, call_next):
         "/delivery/guest-orders",
     ]
 
-    # Prefix-based public paths (delivery invite pages)
+    # Prefix-based public paths (delivery invite pages + public/guest mostrador views)
     public_prefixes = [
         "/delivery-invite/",
+        "/mostrador/public/",
+        "/mostrador/tube/",
     ]
 
     path = request.url.path
@@ -152,3 +155,4 @@ app.include_router(categoriasRouter.categoriasRouter)
 app.include_router(pendingCartRouter.pendingCartRouter)
 app.include_router(deliveryRouter.deliveryRouter)
 app.include_router(adminRouter.adminRouter)
+app.include_router(mostradorFolioRouter.mostradorRouter)

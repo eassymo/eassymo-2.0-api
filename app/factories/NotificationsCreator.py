@@ -348,6 +348,79 @@ def create_callcenter_offer_approval_approved_notification(
     )
 
 
+def create_mostrador_folio_shared_notification(
+    store_name: str,
+    owner: str,
+    owner_group: str,
+    navigate_to_url: str,
+    meta_data: Dict[str, Any],
+    visible_roles: Optional[List[str]] = None
+) -> Notification:
+    if visible_roles is None:
+        visible_roles = DEFAULT_ROLES
+
+    return Notification(
+        type=NotificationType.MOSTRADOR_FOLIO_SHARED,
+        message=f"{store_name} te compartió una cotización de mostrador. Revísala y ordena tus piezas.",
+        owner=owner,
+        ownerGroup=owner_group,
+        visibleRoles=visible_roles,
+        navigateToUrl=navigate_to_url,
+        read=False,
+        metaData=meta_data
+    )
+
+
+def create_mostrador_folio_assigned_notification(
+    store_name: str,
+    piece_count: int,
+    owner: str,
+    owner_group: str,
+    navigate_to_url: str,
+    meta_data: Dict[str, Any],
+    visible_roles: Optional[List[str]] = None,
+) -> Notification:
+    if visible_roles is None:
+        visible_roles = [UserRoles.ADMIN_BUYER_SHOP.value]
+
+    pieces_label = f"{piece_count} pieza" if piece_count == 1 else f"{piece_count} piezas"
+    return Notification(
+        type=NotificationType.MOSTRADOR_FOLIO_ASSIGNED,
+        message=f"{store_name} te asignó una solicitud de mostrador ({pieces_label}). Revísala en Comprando.",
+        owner=owner,
+        ownerGroup=owner_group,
+        visibleRoles=visible_roles,
+        navigateToUrl=navigate_to_url,
+        read=False,
+        metaData=meta_data,
+    )
+
+
+def create_mostrador_order_created_notification(
+    store_name: str,
+    part_name: str,
+    order_id: str,
+    owner: str,
+    owner_group: str,
+    navigate_to_url: str,
+    meta_data: Dict[str, Any],
+    visible_roles: Optional[List[str]] = None
+) -> Notification:
+    if visible_roles is None:
+        visible_roles = DEFAULT_ROLES
+
+    return Notification(
+        type=NotificationType.MOSTRADOR_ORDER_CREATED,
+        message=f"Tu pedido de mostrador con {store_name} fue creado para {part_name}. Pedido núm {order_id}.",
+        owner=owner,
+        ownerGroup=owner_group,
+        visibleRoles=visible_roles,
+        navigateToUrl=navigate_to_url,
+        read=False,
+        metaData=meta_data
+    )
+
+
 # Dictionary mapping notification types to their creator functions
 NOTIFICATION_CREATORS = {
     NotificationType.PART_REQUEST_CREATED: create_part_request_notification,
@@ -363,5 +436,8 @@ NOTIFICATION_CREATORS = {
     NotificationType.OFFER_APPROVAL_REQUEST: create_offer_approval_request_notification,
     NotificationType.CALLCENTER_OFFER_APPROVAL_APPROVED: create_callcenter_offer_approval_approved_notification,
     NotificationType.WORKSHOP_PENDING_APPROVAL: create_offer_workshop_approval,
-    NotificationType.OFFER_SELECTED_BY_COMMISSIONER_TO_ORIGIN_GROUP: create_offer_selected_by_commissioner_to_origin_group_notification
+    NotificationType.OFFER_SELECTED_BY_COMMISSIONER_TO_ORIGIN_GROUP: create_offer_selected_by_commissioner_to_origin_group_notification,
+    NotificationType.MOSTRADOR_FOLIO_SHARED: create_mostrador_folio_shared_notification,
+    NotificationType.MOSTRADOR_FOLIO_ASSIGNED: create_mostrador_folio_assigned_notification,
+    NotificationType.MOSTRADOR_ORDER_CREATED: create_mostrador_order_created_notification
 }

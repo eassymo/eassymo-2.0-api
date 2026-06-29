@@ -169,5 +169,9 @@ def count(filters):
     return database.db["Offers"].count_documents(filters)
 
 
+def delete_many(filters: Dict[str, Any]):
+    return database.db["Offers"].delete_many(filters)
+
+
 def distinct(prop_name: str, filters):
     return database.db["Offers"].distinct(prop_name, filters)

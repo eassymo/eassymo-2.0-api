@@ -109,6 +109,59 @@ def _assert_order_status_transition(
             )
         return
 
+    if new_enum == OrderStatus.IN_PERSON_READY_FOR_PICKUP:
+        if current != OrderStatus.IN_PERSON_PENDING:
+            raise HTTPException(
+                status_code=400,
+                detail="Can only transition to IN_PERSON_READY_FOR_PICKUP from IN_PERSON_PENDING",
+            )
+        seller_group_id = order.offer.group_id if order.offer else None
+        if not requesting_user_uid or not _user_uid_in_group(
+            requesting_user_uid, seller_group_id
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="Only a member of the selling group can mark the order ready for pickup",
+            )
+        return
+
+    if new_enum == OrderStatus.IN_PERSON_COMPLETED:
+        if current != OrderStatus.IN_PERSON_READY_FOR_PICKUP:
+            raise HTTPException(
+                status_code=400,
+                detail="Can only transition to IN_PERSON_COMPLETED from IN_PERSON_READY_FOR_PICKUP",
+            )
+        buyer_group_id = order.group
+        seller_group_id = order.offer.group_id if order.offer else None
+        if not requesting_user_uid or not (
+            _user_uid_in_group(requesting_user_uid, buyer_group_id)
+            or _user_uid_in_group(requesting_user_uid, seller_group_id)
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="Only a buyer or seller group member can confirm in-person pickup",
+            )
+        return
+
+    if new_enum == OrderStatus.IN_PERSON_CANCELED:
+        if current not in (
+            OrderStatus.IN_PERSON_PENDING,
+            OrderStatus.IN_PERSON_READY_FOR_PICKUP,
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Can only cancel in-person orders that are pending or ready for pickup",
+            )
+        seller_group_id = order.offer.group_id if order.offer else None
+        if not requesting_user_uid or not _user_uid_in_group(
+            requesting_user_uid, seller_group_id
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="Only a member of the selling group can cancel an in-person order",
+            )
+        return
+
 
 def find(order_id: str, group_id: str | None, current_role: str, search_argument: str | None):
     if group_id == None:
@@ -238,6 +291,12 @@ def change_order_status(
             enforce_delivery_completion_proof
             and OrderStatus[new_status] == OrderStatus.RECIEVED
             and current == OrderStatus.DISPATCHED
+        ):
+            _assert_dispatched_to_received_has_proof(order)
+
+        if (
+            OrderStatus[new_status] == OrderStatus.IN_PERSON_COMPLETED
+            and current == OrderStatus.IN_PERSON_READY_FOR_PICKUP
         ):
             _assert_dispatched_to_received_has_proof(order)
 

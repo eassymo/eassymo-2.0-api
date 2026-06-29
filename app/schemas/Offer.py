@@ -62,6 +62,10 @@ class Offer(BaseModel):
     createdByFollower: Optional[bool] = Field(False, exclude=True)
     creatorIsFavoriteAtSomeList: Optional[bool] = Field(False, exclude=True)
     creatorIsInSomeList: Optional[bool] = Field(False, exclude=True)
+    origin: Optional[str] = Field(
+        "marketplace", description="marketplace | mostrador")
+    mostrador_folio_id: Optional[str] = Field(None)
+    mostrador_piece_id: Optional[str] = Field(None)
 
     @root_validator(pre=True)
     def convert_objectId(cls, values):
@@ -79,8 +83,9 @@ class Offer(BaseModel):
         if (data.get("to_be_delivered_time") != None):
             data["to_be_delivered_time"] = str(data["to_be_delivered_time"])
 
-        if data.get("status") != None:
-            data["status"] = self.status.value
+        if data.get("status") is not None:
+            status = self.status
+            data["status"] = status.value if isinstance(status, OfferStatus) else status
 
         if "type" in data and data["type"] is not None and not isinstance(data["type"], str):
             data["type"] = self.type.value

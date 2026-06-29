@@ -128,6 +128,10 @@ class PartRequest(BaseModel):
     delivery_address: Optional[DeliveryAddress] = Field(None)
     delivery_contact: Optional[DeliveryContact] = Field(None)
     offers: Optional[Offer] = Field(default=None, exclude=True)
+    origin: Optional[str] = Field(
+        "marketplace", description="marketplace | mostrador")
+    mostrador_folio_id: Optional[str] = Field(None)
+    mostrador_piece_id: Optional[str] = Field(None)
 
     @root_validator(pre=True)
     def convert_objectId(cls, values):
@@ -167,10 +171,14 @@ class PartRequest(BaseModel):
         data["createdAt"] = self.createdAt.isoformat() if self.createdAt else None
         data["updatedAt"] = self.updatedAt.isoformat() if self.updatedAt else None
 
-        if data.get("status") != None:
-            data["status"] = self.status.value
+        if data.get("status") is not None:
+            status = self.status
+            data["status"] = status.value if isinstance(status, PartRequestStatus) else status
 
-        data["fulfillment_type"] = self.fulfillment_type.value
+        fulfillment = self.fulfillment_type
+        data["fulfillment_type"] = (
+            fulfillment.value if isinstance(fulfillment, FulfillmentType) else fulfillment
+        )
 
         return data
 
