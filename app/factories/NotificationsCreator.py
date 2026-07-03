@@ -421,6 +421,29 @@ def create_mostrador_order_created_notification(
     )
 
 
+def create_mostrador_option_added_notification(
+    message: str,
+    owner: str,
+    owner_group: str,
+    navigate_to_url: str,
+    meta_data: Dict[str, Any],
+    visible_roles: Optional[List[str]] = None,
+) -> Notification:
+    if visible_roles is None:
+        visible_roles = DEFAULT_ROLES
+
+    return Notification(
+        type=NotificationType.MOSTRADOR_OPTION_ADDED,
+        message=message,
+        owner=owner,
+        ownerGroup=owner_group,
+        visibleRoles=visible_roles,
+        navigateToUrl=navigate_to_url,
+        read=False,
+        metaData=meta_data,
+    )
+
+
 # Dictionary mapping notification types to their creator functions
 NOTIFICATION_CREATORS = {
     NotificationType.PART_REQUEST_CREATED: create_part_request_notification,
@@ -439,5 +462,6 @@ NOTIFICATION_CREATORS = {
     NotificationType.OFFER_SELECTED_BY_COMMISSIONER_TO_ORIGIN_GROUP: create_offer_selected_by_commissioner_to_origin_group_notification,
     NotificationType.MOSTRADOR_FOLIO_SHARED: create_mostrador_folio_shared_notification,
     NotificationType.MOSTRADOR_FOLIO_ASSIGNED: create_mostrador_folio_assigned_notification,
-    NotificationType.MOSTRADOR_ORDER_CREATED: create_mostrador_order_created_notification
+    NotificationType.MOSTRADOR_ORDER_CREATED: create_mostrador_order_created_notification,
+    NotificationType.MOSTRADOR_OPTION_ADDED: create_mostrador_option_added_notification,
 }

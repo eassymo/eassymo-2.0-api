@@ -143,7 +143,7 @@ def create_group(
         census_json = census_data.dict()
         censusRepository.insert(census_json)
 
-    group_data["_id"] = str(group_data["_id"])
+    group_data["_id"] = created_group_id
 
     return {"message": "ok", "body": group_data}
 

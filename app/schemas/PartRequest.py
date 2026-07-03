@@ -132,6 +132,10 @@ class PartRequest(BaseModel):
         "marketplace", description="marketplace | mostrador")
     mostrador_folio_id: Optional[str] = Field(None)
     mostrador_piece_id: Optional[str] = Field(None)
+    mostrador_delivery_mode: Optional[str] = Field(
+        None,
+        description="tienda|domicilio|pickup, mirrors MostradorPieceOrder.delivery_mode",
+    )
 
     @root_validator(pre=True)
     def convert_objectId(cls, values):

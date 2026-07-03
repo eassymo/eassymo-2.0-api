@@ -12,6 +12,15 @@ from typing import Dict, Any, List, Optional
 DELIVERY_PROOF_MAX_RECIPIENT_NAME_LEN = 200
 
 
+def _is_mostrador_checkout_handoff(order: Order) -> bool:
+    """Mostrador in-person handoff (tienda/pickup) doesn't need signed proof; domicilio does."""
+    is_mostrador = order.origin == "mostrador" or bool(order.mostrador_folio_id)
+    if not is_mostrador:
+        return False
+    mode = (order.part_request.mostrador_delivery_mode if order.part_request else None) or "tienda"
+    return mode != "domicilio"
+
+
 def _assert_dispatched_to_received_has_proof(order: Order) -> None:
     """Courier/guest completing delivery must submit photo(s), signature image URL, and recipient name."""
     pics = order.delivery_pictures_seller
@@ -126,22 +135,32 @@ def _assert_order_status_transition(
         return
 
     if new_enum == OrderStatus.IN_PERSON_COMPLETED:
-        if current != OrderStatus.IN_PERSON_READY_FOR_PICKUP:
-            raise HTTPException(
-                status_code=400,
-                detail="Can only transition to IN_PERSON_COMPLETED from IN_PERSON_READY_FOR_PICKUP",
-            )
-        buyer_group_id = order.group
-        seller_group_id = order.offer.group_id if order.offer else None
-        if not requesting_user_uid or not (
-            _user_uid_in_group(requesting_user_uid, buyer_group_id)
-            or _user_uid_in_group(requesting_user_uid, seller_group_id)
-        ):
-            raise HTTPException(
-                status_code=403,
-                detail="Only a buyer or seller group member can confirm in-person pickup",
-            )
-        return
+        if current == OrderStatus.IN_PERSON_READY_FOR_PICKUP:
+            buyer_group_id = order.group
+            seller_group_id = order.offer.group_id if order.offer else None
+            if not requesting_user_uid or not (
+                _user_uid_in_group(requesting_user_uid, buyer_group_id)
+                or _user_uid_in_group(requesting_user_uid, seller_group_id)
+            ):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Only a buyer or seller group member can confirm in-person pickup",
+                )
+            return
+        if current == OrderStatus.IN_PERSON_PENDING:
+            seller_group_id = order.offer.group_id if order.offer else None
+            if not requesting_user_uid or not _user_uid_in_group(
+                requesting_user_uid, seller_group_id
+            ):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Only a member of the selling group can complete in-person delivery",
+                )
+            return
+        raise HTTPException(
+            status_code=400,
+            detail="Can only transition to IN_PERSON_COMPLETED from IN_PERSON_READY_FOR_PICKUP or IN_PERSON_PENDING",
+        )
 
     if new_enum == OrderStatus.IN_PERSON_CANCELED:
         if current not in (
@@ -182,8 +201,8 @@ def find(order_id: str, group_id: str | None, current_role: str, search_argument
 
         for order_data in orders:
             order_json = Order(**order_data).toJson()
-            offer_group = GroupSchema(**order_data["offer_group"])
-            request_group = GroupSchema(**order_data["request_group"])
+            offer_group = GroupSchema(**(order_data.get("offer_group") or {}))
+            request_group = GroupSchema(**(order_data.get("request_group") or {}))
             order_json = {**order_json, "offer_group": offer_group.toJson(),
                           "request_group": request_group.toJson()}
 
@@ -232,8 +251,8 @@ def find_by_id(id: str):
 
         order = Order(**order_obj)
 
-        offer_group = GroupSchema(**order_obj["offer_group"])
-        request_group = GroupSchema(**order_obj["request_group"])
+        offer_group = GroupSchema(**(order_obj.get("offer_group") or {}))
+        request_group = GroupSchema(**(order_obj.get("request_group") or {}))
 
         return {**order.toJson(), "offer_group": offer_group.toJson(), "request_group": request_group.toJson()}
     except Exception as e:
@@ -296,7 +315,11 @@ def change_order_status(
 
         if (
             OrderStatus[new_status] == OrderStatus.IN_PERSON_COMPLETED
-            and current == OrderStatus.IN_PERSON_READY_FOR_PICKUP
+            and current in (
+                OrderStatus.IN_PERSON_READY_FOR_PICKUP,
+                OrderStatus.IN_PERSON_PENDING,
+            )
+            and not _is_mostrador_checkout_handoff(order)
         ):
             _assert_dispatched_to_received_has_proof(order)
 
