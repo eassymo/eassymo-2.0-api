@@ -105,7 +105,7 @@ def public_confirm(share_token: str):
 
 
 @mostradorRouter.post("/public/{share_token}/invite-shop", description="Guest: fan out folio to another shop via share token")
-def public_invite_shop(share_token: str, data: dict = Body(...)):
+def public_invite_shop(share_token: str, request: Request, data: dict = Body(...)):
     try:
         folio_id = folioService.folio_id_by_share_token(share_token)
         response = folioService.invite_shop(
@@ -114,6 +114,7 @@ def public_invite_shop(share_token: str, data: dict = Body(...)):
             name=data.get("name"),
             eassymo=bool(data.get("eassymo", True)),
             visible_piece_ids=data.get("visible_piece_ids"),
+            client_origin=folioService._client_origin_from_request(request),
         )
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
@@ -133,6 +134,43 @@ def public_claim_account(share_token: str, request: Request, data: dict = Body(.
             name=data.get("name"),
             phone=data.get("phone"),
             group_name=data.get("group_name"),
+        )
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+    except Exception as e:
+        return JSONResponse(status_code=_err_status(e), content=get_unsuccessful_response(e))
+
+
+@mostradorRouter.post("/public/{share_token}/create-taller-account", description="Guest: create seller shop account without folio reassignment")
+def public_create_taller_account(share_token: str, request: Request, data: dict = Body(...)):
+    try:
+        folio_id = folioService.folio_id_by_share_token(share_token)
+        uid = data.get("uid")
+        if not uid and hasattr(request.state, "user"):
+            uid = (request.state.user or {}).get("uid")
+        response = folioService.create_taller_account(
+            folio_id,
+            uid=uid,
+            name=data.get("name"),
+            phone=data.get("phone"),
+            group_name=data.get("group_name"),
+        )
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+    except Exception as e:
+        return JSONResponse(status_code=_err_status(e), content=get_unsuccessful_response(e))
+
+
+@mostradorRouter.post("/public/{share_token}/finish-claim", description="Guest: finish folio claim after shop-creator-v3 group creation")
+def public_finish_claim(share_token: str, request: Request, data: dict = Body(...)):
+    try:
+        folio_id = folioService.folio_id_by_share_token(share_token)
+        uid = data.get("uid")
+        if not uid and hasattr(request.state, "user"):
+            uid = (request.state.user or {}).get("uid")
+        response = folioService.finish_claim(
+            folio_id,
+            uid=uid,
+            group_id=data.get("group_id"),
+            account_kind=data.get("account_kind", "buyer"),
         )
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
@@ -196,7 +234,7 @@ def submit_options(folio_id: str, data: dict = Body(...), groupselected: str = H
 
 
 @mostradorRouter.post("/{folio_id}/invite-shop", description="Invite another shop (or temp shop) to quote a folio")
-def invite_shop(folio_id: str, data: dict = Body(...)):
+def invite_shop(folio_id: str, request: Request, data: dict = Body(...)):
     try:
         response = folioService.invite_shop(
             folio_id,
@@ -204,6 +242,7 @@ def invite_shop(folio_id: str, data: dict = Body(...)):
             name=data.get("name"),
             eassymo=bool(data.get("eassymo", True)),
             visible_piece_ids=data.get("visible_piece_ids"),
+            client_origin=folioService._client_origin_from_request(request),
         )
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
@@ -211,13 +250,14 @@ def invite_shop(folio_id: str, data: dict = Body(...)):
 
 
 @mostradorRouter.post("/{folio_id}/share", description="Share a folio with the customer (returns share links + notification)")
-def share(folio_id: str, data: dict = Body(default={})):
+def share(folio_id: str, request: Request, data: dict = Body(default={})):
     try:
         response = folioService.share(
             folio_id,
             customer=data.get("customer"),
             channel=data.get("channel", "whatsapp"),
             whatsapp_phone=data.get("whatsapp_phone"),
+            client_origin=folioService._client_origin_from_request(request),
         )
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
@@ -291,6 +331,41 @@ def claim_account(folio_id: str, request: Request, data: dict = Body(...)):
             name=data.get("name"),
             phone=data.get("phone"),
             group_name=data.get("group_name"),
+        )
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+    except Exception as e:
+        return JSONResponse(status_code=_err_status(e), content=get_unsuccessful_response(e))
+
+
+@mostradorRouter.post("/{folio_id}/create-taller-account", description="Create seller shop account without folio reassignment")
+def create_taller_account(folio_id: str, request: Request, data: dict = Body(...)):
+    try:
+        uid = data.get("uid")
+        if not uid and hasattr(request.state, "user"):
+            uid = (request.state.user or {}).get("uid")
+        response = folioService.create_taller_account(
+            folio_id,
+            uid=uid,
+            name=data.get("name"),
+            phone=data.get("phone"),
+            group_name=data.get("group_name"),
+        )
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+    except Exception as e:
+        return JSONResponse(status_code=_err_status(e), content=get_unsuccessful_response(e))
+
+
+@mostradorRouter.post("/{folio_id}/finish-claim", description="Finish folio claim after shop-creator-v3 group creation")
+def finish_claim(folio_id: str, request: Request, data: dict = Body(...)):
+    try:
+        uid = data.get("uid")
+        if not uid and hasattr(request.state, "user"):
+            uid = (request.state.user or {}).get("uid")
+        response = folioService.finish_claim(
+            folio_id,
+            uid=uid,
+            group_id=data.get("group_id"),
+            account_kind=data.get("account_kind", "buyer"),
         )
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:

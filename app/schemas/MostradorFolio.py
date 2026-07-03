@@ -132,6 +132,25 @@ class MostradorCustomer(BaseModel):
     group_id: Optional[str] = Field(None, description="customer taller group when existing")
 
 
+class MostradorOriginGroup(BaseModel):
+    """Public-safe seller group snapshot (hydrated from origin_group_id, not stored on folio)."""
+    name: Optional[str] = Field(None)
+    logo_url: Optional[str] = Field(None)
+    address: Optional[str] = Field(None)
+    phone: Optional[str] = Field(None)
+    whatsapp: Optional[str] = Field(None)
+
+
+class MostradorActivityLogEntry(BaseModel):
+    id: str = Field(...)
+    type: str = Field(...)
+    message: str = Field(...)
+    piece_id: Optional[str] = Field(None)
+    shop_name: Optional[str] = Field(None)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo('UTC')))
+    migrated: bool = Field(False)
+
+
 class MostradorFolio(BaseModel):
     id: Optional[str] = Field(None, alias="_id")
     folio_code: Optional[str] = Field(None, description="short human code (Capturar Folio)")
@@ -153,6 +172,9 @@ class MostradorFolio(BaseModel):
         default_factory=list, description="real PartRequest ids materialized for buyer group")
     assignment_with_options: Optional[bool] = Field(
         None, description="whether initial assignment included seller offers snapshot")
+    activity_log: List[MostradorActivityLogEntry] = Field(default_factory=list)
+    origin_group: Optional[MostradorOriginGroup] = Field(
+        None, description="hydrated seller group info for public views")
     created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo('UTC')))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo('UTC')))
 
@@ -170,3 +192,11 @@ class MostradorFolio(BaseModel):
         if self.status is not None:
             data['status'] = self.status.value if isinstance(self.status, Enum) else self.status
         return data
+
+
+class AccountProvisionResponse(BaseModel):
+    folio: dict
+    group_id: Optional[str] = None
+    needs_group: bool = False
+    user: Optional[dict] = None
+    notifications: List[dict] = Field(default_factory=list)

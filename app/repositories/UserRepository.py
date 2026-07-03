@@ -21,16 +21,40 @@ def find_by_uid(uid: str):
         {
             "$lookup": {
                 "from": "groups",
-                "let": {"group_ids":  "$groups"},
+                "let": {"group_ids": {"$ifNull": ["$groups", []]}},
                 "pipeline": [
                     {
                         "$match": {
                             "$expr": {
-                                "$in": ["$_id", {"$map": {
-                                    "input": "$$group_ids",
-                                    "as": "groupId",
-                                    "in": {"$toObjectId": "$$groupId"}
-                                }}]
+                                "$in": [
+                                    "$_id",
+                                    {
+                                        "$filter": {
+                                            "input": {
+                                                "$map": {
+                                                    "input": "$$group_ids",
+                                                    "as": "groupId",
+                                                    "in": {
+                                                        "$cond": [
+                                                            {"$eq": [{"$type": "$$groupId"}, "objectId"]},
+                                                            "$$groupId",
+                                                            {
+                                                                "$convert": {
+                                                                    "input": "$$groupId",
+                                                                    "to": "objectId",
+                                                                    "onError": None,
+                                                                    "onNull": None,
+                                                                }
+                                                            },
+                                                        ]
+                                                    },
+                                                }
+                                            },
+                                            "as": "gid",
+                                            "cond": {"$ne": ["$$gid", None]},
+                                        }
+                                    },
+                                ]
                             }
                         }
                     }

@@ -18,7 +18,9 @@ def _generate_folio_code() -> str:
 
 
 def _hydrate(doc: dict) -> dict:
-    return MostradorFolio(**doc).toJson()
+    enriched = dict(doc)
+    enriched["origin_group"] = _group_public_info(doc.get("origin_group_id"))
+    return MostradorFolio(**enriched).toJson()
 
 
 def create(payload: dict, creator_uid: Optional[str], group_id: Optional[str]) -> dict:
@@ -109,6 +111,8 @@ def get(folio_id: str) -> dict:
     doc = folioRepository.find_by_id(folio_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Folio not found")
+    _ensure_mostrador_orders_materialized(folio_id, swallow_errors=True)
+    doc = folioRepository.find_by_id(folio_id) or doc
     return _hydrate(doc)
 
 
@@ -116,6 +120,9 @@ def get_by_share_token(share_token: str) -> dict:
     doc = folioRepository.find_by_share_token(share_token)
     if not doc:
         raise HTTPException(status_code=404, detail="Folio not found")
+    folio_id = str(doc["_id"])
+    _ensure_mostrador_orders_materialized(folio_id, swallow_errors=True)
+    doc = folioRepository.find_by_id(folio_id) or doc
     return _hydrate(doc)
 
 
@@ -143,6 +150,8 @@ def update_pieces(folio_id: str, pieces: List[dict]) -> dict:
     if not doc:
         raise HTTPException(status_code=404, detail="Folio not found")
     _require_seller_folio_editable(doc)
+    _require_capture_editable_after_order(doc)
+    _reject_new_pieces_when_ordered(doc, pieces)
     # validate through schema by round-tripping the whole doc
     merged = {**doc, "pieces": pieces, "updated_at": _now()}
     validated = MostradorFolio(**merged)
@@ -160,6 +169,9 @@ def update(folio_id: str, patch: Dict[str, Any]) -> dict:
         raise HTTPException(status_code=404, detail="Folio not found")
     if any(k in patch for k in ("pieces", "vehicle")):
         _require_seller_folio_editable(doc)
+    if "pieces" in patch:
+        _reject_new_pieces_when_ordered(doc, patch["pieces"])
+        _require_capture_editable_after_order(doc)
     allowed = {"vehicle", "customer", "status", "source", "pieces", "participant_shops", "visibility", "part_request_ids", "assignment_with_options"}
     merged = {**doc}
     for key, value in patch.items():
@@ -227,6 +239,7 @@ def submit_shop_options(
     if not doc:
         raise HTTPException(status_code=404, detail="Folio not found")
     _require_seller_folio_editable(doc)
+    _require_capture_editable_after_order(doc)
 
     target = next((p for p in (doc.get("pieces") or []) if p.get("piece_id") == piece_id), None)
     if target is None:
@@ -259,6 +272,15 @@ def submit_shop_options(
         folio_id, piece_id, normalized["options"], new_status, _now())
     if not updated:
         raise HTTPException(status_code=500, detail="Could not update piece options")
+    piece_label = _piece_display_name(target)
+    shop_label = shop_name or "Una tienda"
+    _append_activity_log(
+        folio_id,
+        "shop_option_added",
+        f"{shop_label} agregó una opción para {piece_label}",
+        piece_id=piece_id,
+        shop_name=shop_name,
+    )
     sync_assigned_folio(folio_id)
     refreshed = folioRepository.find_by_id(folio_id)
     return _hydrate(refreshed)
@@ -270,6 +292,8 @@ def invite_shop(
     name: Optional[str],
     eassymo: bool,
     visible_piece_ids: Optional[List[str]],
+    *,
+    client_origin: Optional[str] = None,
 ) -> dict:
     """Add a participant shop. Temp shops (no account) get a tube_token + visibility scope."""
     doc = folioRepository.find_by_id(folio_id)
@@ -295,20 +319,281 @@ def invite_shop(
             visibility[key] = visible_piece_ids
             updated = folioRepository.edit(folio_id, {"visibility": visibility, "updated_at": _now()})
 
-    return _hydrate(updated)
+    share_meta: Dict[str, Any] = {}
+    if tube_token:
+        share_path = f"/pos/tube/{tube_token}"
+        base_url = _resolve_client_base_url(client_origin)
+        absolute = f"{base_url}{share_path}" if base_url else share_path
+        wa_text = f"Te compartieron piezas para cotizar en Eassymo: {absolute}"
+        share_meta = _build_share_urls(share_path, wa_text, client_origin=client_origin)
+        share_meta["tube_token"] = tube_token
+    elif eassymo and group_id:
+        share_meta = {"group_id": group_id, "eassymo": True}
+
+    return {
+        "folio": _hydrate(updated),
+        **share_meta,
+    }
 
 
 def _group_name(group_id: Optional[str]) -> str:
+    info = _group_public_info(group_id)
+    return info.get("name") or "La tienda"
+
+
+def _group_public_info(group_id: Optional[str]) -> Optional[dict]:
     if not group_id:
-        return "La tienda"
+        return None
     try:
         from app.repositories import GroupRepository as groupRepository
-        doc = groupRepository.find_by_id(group_id, {"name": 1})
-        if doc and doc.get("name"):
-            return doc["name"]
+        doc = groupRepository.find_by_id(group_id)
+        if not doc:
+            return None
+        logo = (
+            doc.get("logo_url")
+            or doc.get("logoUrl")
+            or doc.get("profileImage")
+            or doc.get("photo")
+        )
+        phone = doc.get("phone") or doc.get("whatsAppNumber")
+        return {
+            "name": doc.get("name"),
+            "logo_url": str(logo) if logo else None,
+            "address": doc.get("address"),
+            "phone": phone,
+            "whatsapp": doc.get("whatsAppNumber") or phone,
+        }
     except Exception:
-        pass
-    return "La tienda"
+        return None
+
+
+def _resolve_client_base_url(client_origin: Optional[str] = None) -> str:
+    import os
+    from urllib.parse import urlparse
+
+    env_base = (os.getenv("CLIENT_BASE_URL") or "").rstrip("/")
+    if env_base:
+        return env_base
+    origin = (client_origin or "").strip().rstrip("/")
+    if origin and origin.startswith(("http://", "https://")):
+        return origin
+    if origin:
+        parsed = urlparse(origin if "://" in origin else f"https://{origin}")
+        if parsed.scheme and parsed.netloc:
+            return f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+    return ""
+
+
+def _client_origin_from_request(request) -> Optional[str]:
+    if request is None:
+        return None
+    headers = getattr(request, "headers", None)
+    if headers is None:
+        return None
+    origin = headers.get("origin")
+    if origin:
+        return origin.rstrip("/")
+    referer = headers.get("referer")
+    if referer:
+        from urllib.parse import urlparse
+        parsed = urlparse(referer)
+        if parsed.scheme and parsed.netloc:
+            return f"{parsed.scheme}://{parsed.netloc}"
+    return None
+
+
+def _build_share_urls(
+    share_path: str,
+    wa_text: str,
+    whatsapp_phone: Optional[str] = None,
+    *,
+    client_origin: Optional[str] = None,
+) -> dict:
+    from urllib.parse import quote
+
+    base_url = _resolve_client_base_url(client_origin)
+    share_url = f"{base_url}{share_path}" if base_url else share_path
+    whatsapp_url = None
+    if whatsapp_phone:
+        digits = "".join(ch for ch in str(whatsapp_phone) if ch.isdigit())
+        if digits:
+            whatsapp_url = f"https://wa.me/{digits}?text={quote(wa_text)}"
+    return {
+        "share_path": share_path,
+        "share_url": share_url,
+        "whatsapp_url": whatsapp_url,
+    }
+
+
+def _append_activity_log(
+    folio_id: str,
+    entry_type: str,
+    message: str,
+    *,
+    piece_id: Optional[str] = None,
+    shop_name: Optional[str] = None,
+) -> None:
+    entry = {
+        "id": uuid4().hex,
+        "type": entry_type,
+        "message": message,
+        "piece_id": piece_id,
+        "shop_name": shop_name,
+        "created_at": _now(),
+        "migrated": False,
+    }
+    folioRepository.push_activity_log(folio_id, entry, _now())
+
+
+def _migrate_guest_notifications(folio_id: str, uid: str, group_id: str) -> List[dict]:
+    """Build notification descriptors for unmigrated activity_log entries."""
+    from app.factories import NotificationsCreator
+
+    doc = folioRepository.find_by_id(folio_id)
+    if not doc:
+        return []
+    notifications: List[dict] = []
+    migrated_ids: List[str] = []
+    for entry in (doc.get("activity_log") or []):
+        if entry.get("migrated"):
+            continue
+        entry_id = entry.get("id")
+        if not entry_id:
+            continue
+        notif = NotificationsCreator.create_mostrador_option_added_notification(
+            message=entry.get("message") or "Nueva actividad en tu lista de mostrador",
+            owner=uid,
+            owner_group=group_id,
+            navigate_to_url="/folio",
+            meta_data={"folioId": folio_id, "pieceId": entry.get("piece_id")},
+        )
+        nd = notif.model_dump()
+        if hasattr(nd.get("type"), "value"):
+            nd["type"] = nd["type"].value
+        notifications.append(nd)
+        migrated_ids.append(entry_id)
+    if migrated_ids:
+        folioRepository.mark_activity_entries_migrated(folio_id, migrated_ids, _now())
+    return notifications
+
+
+# Group types mirror eassymo-2.0-client TypeOfGroup: BUYER=1, SELLER=2
+_GROUP_TYPE_BUYER = 1
+_GROUP_TYPE_SELLER = 2
+
+
+def _resolve_user_group_by_type(user_doc: dict, group_type: int) -> Optional[dict]:
+    from app.repositories import GroupRepository as groupRepository
+    for gid in (user_doc.get("groups") or []):
+        try:
+            g = groupRepository.find_by_id(str(gid))
+        except Exception:
+            g = None
+        if g and int(g.get("type") or -1) == int(group_type):
+            return g
+    return None
+
+
+def _guest_provision_email(uid: str) -> str:
+    """Synthetic email for phone-only guest signups (must pass EmailStr validation)."""
+    local = "".join(c for c in (uid or "user") if c.isalnum()).lower() or "user"
+    return f"{local}@guest.eassymo.mx"
+
+
+def _ensure_platform_user(
+    uid: str,
+    name: Optional[str],
+    phone: Optional[str],
+) -> dict:
+    """Ensure Mongo user exists (upsert). Group creation is deferred to shop-creator-v3."""
+    from app.services import UserService as userService
+    from app.schemas.Users import UserSchema
+    from app.repositories import UserRepository as userRepository
+
+    userService.create_user(UserSchema(
+        uid=uid,
+        name=name or "",
+        phone=phone or "",
+        email=_guest_provision_email(uid),
+    ))
+    return userRepository.find_one({"uid": uid}) or {}
+
+
+def _resolve_existing_group_id(uid: str, group_type: int) -> Optional[str]:
+    from app.repositories import UserRepository as userRepository
+    fresh_user = userRepository.find_one({"uid": uid}) or {}
+    existing = _resolve_user_group_by_type(fresh_user, group_type)
+    if existing:
+        return str(existing["_id"])
+    return None
+
+
+def _link_folio_to_customer(
+    folio_id: str,
+    doc: dict,
+    uid: str,
+    name: Optional[str],
+    phone: Optional[str],
+    group_id: str,
+) -> dict:
+    """Full buyer folio assignment: customer record, orders, sync, materialize, notifications."""
+    customer = {
+        "type": "eassymo",
+        "name": name,
+        "phone": phone,
+        "user_uid": uid,
+        "group_id": group_id,
+    }
+    updated = folioRepository.edit(folio_id, {"customer": customer, "updated_at": _now()})
+    _propagate_customer_to_orders(doc.get("order_ids") or [], customer)
+    sync_assigned_folio(folio_id)
+    _ensure_mostrador_orders_materialized(folio_id)
+    notifications = _migrate_guest_notifications(folio_id, uid, group_id)
+    refreshed = folioRepository.find_by_id(folio_id)
+    from app.services import UserService as userService
+    return {
+        "folio": _hydrate(refreshed or updated),
+        "group_id": group_id,
+        "needs_group": False,
+        "user": userService.get_user_with_groups(uid),
+        "notifications": notifications,
+    }
+
+
+def finish_claim(
+    folio_id: str,
+    uid: str,
+    group_id: str,
+    account_kind: str,
+) -> dict:
+    """Complete folio claim after shop-creator-v3 creates the group."""
+    if not uid:
+        raise HTTPException(status_code=400, detail="uid is required")
+    if not group_id:
+        raise HTTPException(status_code=400, detail="group_id is required")
+
+    doc = folioRepository.find_by_id(folio_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Folio not found")
+
+    from app.repositories import UserRepository as userRepository
+    from app.services import UserService as userService
+    user_doc = userRepository.find_one({"uid": uid}) or {}
+    name = user_doc.get("name")
+    phone = user_doc.get("phone")
+
+    if account_kind == "buyer":
+        return _link_folio_to_customer(folio_id, doc, uid, name, phone, group_id)
+
+    notifications = _migrate_guest_notifications(folio_id, uid, group_id)
+    refreshed = folioRepository.find_by_id(folio_id)
+    return {
+        "folio": _hydrate(refreshed or doc),
+        "group_id": group_id,
+        "needs_group": False,
+        "user": userService.get_user_with_groups(uid),
+        "notifications": notifications,
+    }
 
 
 def share(
@@ -316,13 +601,14 @@ def share(
     customer: Optional[dict],
     channel: str = "whatsapp",
     whatsapp_phone: Optional[str] = None,
+    *,
+    client_origin: Optional[str] = None,
 ) -> dict:
     """
     Mark a folio as shared with the customer. Persists customer info, ensures a share_token,
     and returns share links + an in-app notification descriptor (dispatched client-side,
     matching the app's existing notification pattern) when the customer is an existing user.
     """
-    import os
     doc = folioRepository.find_by_id(folio_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Folio not found")
@@ -344,7 +630,7 @@ def share(
     updated = folioRepository.edit(folio_id, patch)
 
     share_path = f"/folio/{share_token}"
-    base_url = (os.getenv("CLIENT_BASE_URL") or "").rstrip("/")
+    base_url = _resolve_client_base_url(client_origin)
     share_url = f"{base_url}{share_path}" if base_url else share_path
 
     store_name = _group_name(doc.get("origin_group_id"))
@@ -423,6 +709,8 @@ def order_piece(
     normalized = MostradorPieceOrder(**order).model_dump()
     updated = folioRepository.set_piece_order(folio_id, piece_id, normalized, _now())
     sync_assigned_folio(folio_id)
+    _ensure_mostrador_orders_materialized(folio_id)
+    sync_assigned_folio(folio_id)
     refreshed = folioRepository.find_by_id(folio_id)
     return _hydrate(refreshed)
 
@@ -447,17 +735,8 @@ def unorder_piece(
 
 
 def _resolve_taller_group_for_user(user_doc: dict) -> Optional[dict]:
-    """Return the user's first taller (buyer, type=2) group, if any."""
-    from app.repositories import GroupRepository as groupRepository
-    group_ids = user_doc.get("groups") or []
-    for gid in group_ids:
-        try:
-            g = groupRepository.find_by_id(str(gid))
-        except Exception:
-            g = None
-        if g and g.get("type") == 2:
-            return g
-    return None
+    """Return the user's first buyer taller group (type=1), if any."""
+    return _resolve_user_group_by_type(user_doc, _GROUP_TYPE_BUYER)
 
 
 def link_existing_customer(folio_id: str, phone: str) -> dict:
@@ -483,7 +762,10 @@ def link_existing_customer(folio_id: str, phone: str) -> dict:
     }
     updated = folioRepository.edit(folio_id, {"customer": customer, "updated_at": _now()})
     _propagate_customer_to_orders(doc.get("order_ids") or [], customer)
-    return _hydrate(updated)
+    sync_assigned_folio(folio_id)
+    _ensure_mostrador_orders_materialized(folio_id)
+    refreshed = folioRepository.find_by_id(folio_id)
+    return _hydrate(refreshed or updated)
 
 
 def claim_account(
@@ -494,17 +776,10 @@ def claim_account(
     group_name: Optional[str],
 ) -> dict:
     """
-    Provision a real Eassymo customer (taller buyer) for a folio.
-    The Firebase user is created client-side (OTP). Here we ensure the User doc + a
-    taller (type=2) Group exist, link them, and attach the customer to the folio.
-    Works for self-serve (customer signed in) and seller-initiated (seller passes the
-    customer's freshly-created uid).
+    Provision a real Eassymo buyer (taller) for a folio and reassign folio data.
+    Firebase user is created client-side (OTP).
+    When the user has no buyer group yet, defers group creation to shop-creator-v3.
     """
-    from app.repositories import UserRepository as userRepository
-    from app.repositories import GroupRepository as groupRepository
-    from app.repositories import UserRolesRepository
-    from app.schemas.UserRoles import UserRoles as UserRolesSchema
-
     if not uid:
         raise HTTPException(status_code=400, detail="uid is required to create an account")
 
@@ -512,52 +787,76 @@ def claim_account(
     if not doc:
         raise HTTPException(status_code=404, detail="Folio not found")
 
-    # ensure user doc
-    user = userRepository.find_one({"uid": uid})
-    if not user:
-        userRepository.insert_user({
-            "uid": uid,
-            "name": name,
-            "phone": phone,
-            "email": "",
-            "roles": [],
-            "groups": [],
-        })
+    _ensure_platform_user(uid, name, phone)
+    group_id = _resolve_existing_group_id(uid, _GROUP_TYPE_BUYER)
 
-    # ensure a taller (buyer) group
-    taller = None
-    fresh_user = userRepository.find_one({"uid": uid}) or {}
-    taller = _resolve_taller_group_for_user(fresh_user)
-    if not taller:
-        group_payload = {
-            "name": group_name or (name and f"Taller {name}") or "Mi taller",
-            "type": 2,
-            "country": "Mexico",
-            "isActive": True,
-            "owner": uid,
-            "users": [uid],
-        }
-        result = groupRepository.insert(group_payload)
-        group_id = str(result.inserted_id)
-        userRepository.add_user_group(uid, group_id)
-        try:
-            UserRolesRepository.insert(UserRolesSchema(
-                user_uid=uid, role="212", group=group_id, active=True))
-        except Exception:
-            pass
-        taller = groupRepository.find_by_id(group_id)
+    from app.services import UserService as userService
 
-    group_id = str(taller["_id"]) if taller else None
+    if group_id:
+        return _link_folio_to_customer(
+            folio_id, doc, uid, name or group_name, phone, group_id
+        )
+
     customer = {
         "type": "eassymo",
-        "name": name or (taller or {}).get("name"),
+        "name": name or group_name,
         "phone": phone,
         "user_uid": uid,
-        "group_id": group_id,
+        "group_id": None,
     }
     updated = folioRepository.edit(folio_id, {"customer": customer, "updated_at": _now()})
-    _propagate_customer_to_orders(doc.get("order_ids") or [], customer)
-    return {"folio": _hydrate(updated), "group_id": group_id}
+    refreshed = folioRepository.find_by_id(folio_id)
+    return {
+        "folio": _hydrate(refreshed or updated),
+        "group_id": None,
+        "needs_group": True,
+        "user": userService.get_user_with_groups(uid),
+        "notifications": [],
+    }
+
+
+def create_taller_account(
+    folio_id: str,
+    uid: str,
+    name: Optional[str],
+    phone: Optional[str],
+    group_name: Optional[str],
+) -> dict:
+    """
+    Create a seller shop account without reassigning the guest folio.
+    When the user has no seller group yet, defers group creation to shop-creator-v3.
+    """
+    if not uid:
+        raise HTTPException(status_code=400, detail="uid is required to create an account")
+
+    doc = folioRepository.find_by_id(folio_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Folio not found")
+
+    _ensure_platform_user(uid, name, phone)
+    group_id = _resolve_existing_group_id(uid, _GROUP_TYPE_SELLER)
+
+    from app.services import UserService as userService
+
+    if group_id:
+        notifications = _migrate_guest_notifications(folio_id, uid, group_id)
+        refreshed = folioRepository.find_by_id(folio_id)
+        return {
+            "folio": _hydrate(refreshed or doc),
+            "group_id": group_id,
+            "needs_group": False,
+            "user": userService.get_user_with_groups(uid),
+            "notifications": notifications,
+        }
+
+    refreshed = folioRepository.find_by_id(folio_id)
+    return {
+        "folio": _hydrate(refreshed or doc),
+        "group_id": None,
+        "needs_group": True,
+        "user": userService.get_user_with_groups(uid),
+        "notifications": [],
+    }
 
 
 def _piece_display_name(piece: dict) -> str:
@@ -637,6 +936,30 @@ def _require_seller_folio_editable(doc: dict) -> None:
         )
 
 
+def _has_ordered_pieces(doc: dict) -> bool:
+    return any(p.get("order") for p in (doc.get("pieces") or []))
+
+
+def _reject_new_pieces_when_ordered(doc: dict, pieces: List[dict]) -> None:
+    if not _has_ordered_pieces(doc):
+        return
+    old_ids = {p.get("piece_id") for p in (doc.get("pieces") or []) if p.get("piece_id")}
+    new_ids = {p.get("piece_id") for p in pieces if p.get("piece_id")}
+    if new_ids - old_ids:
+        raise HTTPException(
+            status_code=403,
+            detail="No se pueden agregar piezas después de crear una orden",
+        )
+
+
+def _require_capture_editable_after_order(doc: dict) -> None:
+    if _has_ordered_pieces(doc):
+        raise HTTPException(
+            status_code=403,
+            detail="No se pueden modificar el folio después de crear una orden",
+        )
+
+
 def _offer_match_key(brand: Optional[str], code: Optional[str], group_id: Optional[str]) -> tuple:
     return (
         (brand or "").strip().lower(),
@@ -663,6 +986,19 @@ def _load_vehicle_information(vehicle: dict):
         return groupCarRepository.find_by_id(vehicle_id)
     except Exception:
         return None
+
+
+def _vehicle_information_schema(raw) -> Optional["GroupVehicle"]:
+    """Coerce Mongo dict or GroupVehicle into PartRequest.vehicleInformation."""
+    if not raw:
+        return None
+    from app.schemas.GroupVehicle import GroupVehicle
+
+    if isinstance(raw, GroupVehicle):
+        return raw
+    if isinstance(raw, dict):
+        return GroupVehicle(**raw)
+    return None
 
 
 def _relink_order_for_piece(
@@ -693,7 +1029,12 @@ def _relink_order_for_piece(
     order_doc["part_request"] = pr_embed
     offer_embed = dict(order_doc.get("offer") or {})
     offer_embed["request_id"] = pr_id
+    offer_embed["origin"] = "mostrador"
+    offer_embed["mostrador_folio_id"] = folio_id
+    offer_embed["mostrador_piece_id"] = piece_id
     order_doc["offer"] = offer_embed
+    order_doc["origin"] = order_doc.get("origin") or "mostrador"
+    order_doc["mostrador_folio_id"] = order_doc.get("mostrador_folio_id") or folio_id
     order = Order(**order_doc)
     order_data = order.toJson()
     order_data.pop("_id", None)
@@ -757,6 +1098,7 @@ def _ensure_part_request_for_piece(
         "origin": "mostrador",
         "mostrador_folio_id": folio_id,
         "mostrador_piece_id": piece_id,
+        "mostrador_delivery_mode": (piece.get("order") or {}).get("delivery_mode") or "tienda",
         "createdAt": now,
         "updatedAt": now,
     }
@@ -948,6 +1290,7 @@ def sync_assigned_folio(folio_id: str) -> None:
         "part_request_ids": active_pr_ids,
         "updated_at": _now(),
     })
+    _ensure_mostrador_orders_materialized(folio_id)
 
 
 def _materialize_part_requests_for_folio(
@@ -1045,6 +1388,9 @@ def assign_to_group(folio_id: str, group_id: str, with_options: bool = True) -> 
         "updated_at": _now(),
     })
     refreshed = folioRepository.find_by_id(folio_id)
+    _ensure_mostrador_orders_materialized(folio_id_str)
+    sync_assigned_folio(folio_id_str)
+    refreshed = folioRepository.find_by_id(folio_id)
     notification = None
     if buyer_uid and not was_already_assigned:
         from app.factories import NotificationsCreator
@@ -1094,12 +1440,27 @@ def _build_order_for_piece(folio: dict, piece: dict, specific_order_uid: str, fo
 
     seller_group_id = option.get("source_shop_id") or folio.get("origin_group_id")
     customer = folio.get("customer") or {}
-    customer_group_id = customer.get("group_id") or folio.get("origin_group_id")
+    customer_group_id = customer.get("group_id") or ""
     customer_uid = customer.get("user_uid") or folio.get("creator_user")
     unit = option.get("unit_of_measure") or piece.get("unitOfMeasure") or "Pieza"
 
+    vehicle = folio.get("vehicle") or {}
+    part = _folio_part_payload(piece, unit)
+    vehicle_information = _vehicle_information_schema(_load_vehicle_information(vehicle))
+
+    request_id = f"mostrador:{folio_id}:{piece.get('piece_id')}"
+    from app.repositories import PartRequestRepository as partRequestRepository
+    existing_prs = list(partRequestRepository.find(
+        {"mostrador_folio_id": folio_id, "mostrador_piece_id": piece.get("piece_id")}, {}
+    ))
+    if existing_prs:
+        pr_doc = existing_prs[0]
+        request_id = str(pr_doc["_id"])
+        if not vehicle_information:
+            vehicle_information = _vehicle_information_schema(pr_doc.get("vehicleInformation"))
+
     offer = Offer(
-        request_id=f"mostrador:{folio_id}:{piece.get('piece_id')}",
+        request_id=request_id,
         user_uid=folio.get("creator_user") or "",
         group_id=str(seller_group_id) if seller_group_id else "",
         brand=option.get("brand"),
@@ -1111,10 +1472,10 @@ def _build_order_for_piece(folio: dict, piece: dict, specific_order_uid: str, fo
         internalComments=option.get("note"),
         publicComments=option.get("note"),
         status=OfferStatus.selected.value,
+        origin="mostrador",
+        mostrador_folio_id=folio_id,
+        mostrador_piece_id=piece.get("piece_id"),
     )
-
-    vehicle = folio.get("vehicle") or {}
-    part = _folio_part_payload(piece, unit)
 
     part_request = PartRequest(
         creatorGroup=str(customer_group_id) if customer_group_id else "",
@@ -1125,6 +1486,11 @@ def _build_order_for_piece(folio: dict, piece: dict, specific_order_uid: str, fo
         partList=[],
         specific_order_uid=specific_order_uid,
         fulfillment_type=FulfillmentType.pickup,
+        origin="mostrador",
+        mostrador_folio_id=folio_id,
+        mostrador_piece_id=piece.get("piece_id"),
+        mostrador_delivery_mode=order_info.get("delivery_mode") or "tienda",
+        vehicleInformation=vehicle_information,
     )
 
     order = Order(
@@ -1139,6 +1505,32 @@ def _build_order_for_piece(folio: dict, piece: dict, specific_order_uid: str, fo
         mostrador_folio_id=folio_id,
     )
     return order
+
+
+def _ensure_mostrador_orders_materialized(folio_id: str, *, swallow_errors: bool = False) -> None:
+    """Create in-person Order docs for embedded piece orders (buyer optional until assign)."""
+    doc = folioRepository.find_by_id(folio_id)
+    if not doc:
+        return
+    has_unmaterialized = any(
+        p.get("order") and not (p.get("order") or {}).get("order_doc_id")
+        for p in (doc.get("pieces") or [])
+    )
+    if not has_unmaterialized:
+        return
+    try:
+        confirm(folio_id, allow_when_assigned=True)
+    except HTTPException:
+        if swallow_errors:
+            return
+        raise
+    except Exception:
+        if swallow_errors:
+            import logging
+            logging.exception(
+                "Failed to materialize mostrador orders for folio %s", folio_id)
+            return
+        raise
 
 
 def confirm(folio_id: str, *, allow_when_assigned: bool = False) -> dict:

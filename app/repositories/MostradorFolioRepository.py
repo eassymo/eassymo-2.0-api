@@ -107,6 +107,30 @@ def set_piece_order(id: str, piece_id: str, order: Optional[dict], updated_at) -
     )
 
 
+def push_activity_log(id: str, entry: dict, updated_at) -> Optional[dict]:
+    return _col().find_one_and_update(
+        {"_id": ObjectId(id)},
+        {"$push": {"activity_log": entry}, "$set": {"updated_at": updated_at}},
+        return_document=ReturnDocument.AFTER,
+    )
+
+
+def mark_activity_entries_migrated(id: str, entry_ids: List[str], updated_at) -> Optional[dict]:
+    if not entry_ids:
+        return find_by_id(id)
+    return _col().find_one_and_update(
+        {"_id": ObjectId(id)},
+        {
+            "$set": {
+                "activity_log.$[e].migrated": True,
+                "updated_at": updated_at,
+            }
+        },
+        array_filters=[{"e.id": {"$in": entry_ids}}],
+        return_document=ReturnDocument.AFTER,
+    )
+
+
 def push_participant_shop(id: str, shop: dict, visible_piece_ids: Optional[List[str]], updated_at) -> Optional[dict]:
     update: Dict[str, Any] = {
         "$push": {"participant_shops": shop},

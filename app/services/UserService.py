@@ -6,7 +6,7 @@ from app.schemas.UserRoles import UserRoles
 from fastapi.encoders import jsonable_encoder
 from pymongo.errors import PyMongoError
 from fastapi import HTTPException, status
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from app.schemas.UserRoles import UserRoles
 from app.repositories import UserRolesRepository
 from app.repositories import GroupRepository
@@ -14,27 +14,41 @@ from app.repositories import GroupRepository
 
 def create_user(user: UserSchema):
     try:
-        user_exists = validate_if_users_exists(user.uid)
+        linked_callcenters: List[Dict[str, Any]] = _link_user_to_callcenters(user.uid)
+        existing = validate_if_users_exists(user.uid)
 
-        linked_callcenters: List[Dict[str, Any]
-                                 ] = _link_user_to_callcenters(user.uid)
-
-        if user_exists != None:
-            user_exists = {**user_exists,
-                           "linked_callcenters": linked_callcenters}
-            return user_exists
+        if existing is not None:
+            _sync_profile_from_schema(user.uid, user)
+            refreshed = get_user_with_groups(user.uid)
+            if refreshed is not None:
+                refreshed["linked_callcenters"] = linked_callcenters
+            return refreshed
 
         user_payload = user.toJson()
+        user_payload.pop('_id', None)
 
-        user_payload.pop('_id')
-
-        user = {**user_payload, "groups": []}
-        userRepository.insert_user(user)
-        created_user = list(userRepository.find_by_uid(user["uid"]))
-        return created_user[0] if len(created_user) > 0 else None
+        new_user = {**user_payload, "groups": []}
+        userRepository.insert_user(new_user)
+        created = get_user_with_groups(user.uid)
+        if created is not None:
+            created["linked_callcenters"] = linked_callcenters
+        return created
     except PyMongoError as e:
         raise HTTPException(
             status_code=500, detail="Error while creating user")
+
+
+def get_user_with_groups(uid: str) -> Optional[dict]:
+    """Load user document with populated groups (for login / guest provision)."""
+    rows = list(userRepository.find_by_uid(uid))
+    if len(rows) == 0:
+        return None
+    found_user = rows[0]
+    groups = found_user.get("groups") or []
+    found_user["groups"] = __format_groups(groups) if groups else []
+    if "_id" in found_user and not isinstance(found_user["_id"], str):
+        found_user["_id"] = str(found_user["_id"])
+    return found_user
 
 
 def find_user(uid: str):
@@ -105,23 +119,23 @@ def update_user(uid: str, user: UserSchema):
 
 
 def validate_if_users_exists(uid: str):
-    foundUser = {}
-    try:
-        user = list(userRepository.find_by_uid(uid))
-        print(user)
-        if (len(user) > 0):
-            foundUser = user[0]
-            foundUser = {
-                **foundUser,
-                "groups": __format_groups(foundUser["groups"])
-            }
-            print(foundUser)
-            return foundUser
-        else:
-            return None
-    except PyMongoError as e:
-        raise HTTPException(
-            status_code=500, detail="Error while finding user")
+    return get_user_with_groups(uid)
+
+
+def _sync_profile_from_schema(uid: str, user: UserSchema) -> None:
+    raw = userRepository.find_one({"uid": uid})
+    if not raw:
+        return
+    updates: Dict[str, Any] = {}
+    if user.name:
+        updates["name"] = user.name
+    if user.phone:
+        updates["phone"] = user.phone
+    if user.email is not None and str(user.email) != "":
+        updates["email"] = str(user.email)
+    if not updates:
+        return
+    userRepository.update_user(uid, {**raw, **updates})
 
 
 def _link_user_to_callcenters(user_uid: str) -> List[Dict[str, Any]]:
@@ -153,9 +167,13 @@ def _link_user_to_callcenters(user_uid: str) -> List[Dict[str, Any]]:
 def __format_groups(groups):
     formatted_groups = []
     for group in groups:
+        if isinstance(group, str):
+            continue
+        if not isinstance(group, dict):
+            continue
         formatted_groups.append({
             **group,
-            "_id": str(group["_id"])
+            "_id": str(group.get("_id", "")),
         })
     return formatted_groups
 
