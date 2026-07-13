@@ -4,6 +4,7 @@ from bson import ObjectId
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from enum import Enum
+from app.schemas.PartRequest import DeliveryAddress, DeliveryContact
 
 
 class FolioStatus(str, Enum):
@@ -93,6 +94,8 @@ class MostradorPieceOrder(BaseModel):
     status: str = Field("ordenada")
     ordered_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo('UTC')))
     order_doc_id: Optional[str] = Field(None, description="set after confirm -> real Order id")
+    delivery_address: Optional[DeliveryAddress] = Field(None)
+    delivery_contact: Optional[DeliveryContact] = Field(None)
 
 
 class MostradorPiece(BaseModel):
@@ -115,6 +118,7 @@ class MostradorPiece(BaseModel):
     # piece-level shop attribution
     added_by_shop_id: Optional[str] = Field(None)
     added_by_shop_name: Optional[str] = Field(None)
+    added_by_guest: Optional[bool] = Field(None)
 
 
 class ParticipantShop(BaseModel):
@@ -122,6 +126,9 @@ class ParticipantShop(BaseModel):
     name: Optional[str] = Field(None)
     eassymo: bool = Field(True, description="false = temp shop / invitado")
     tube_token: Optional[str] = Field(None, description="token for a temp shop restricted tube")
+    captured_by_buyer: Optional[bool] = Field(
+        None, description="true when the buyer logs this shop's quotes themselves"
+    )
 
 
 class MostradorCustomer(BaseModel):
@@ -200,3 +207,16 @@ class AccountProvisionResponse(BaseModel):
     needs_group: bool = False
     user: Optional[dict] = None
     notifications: List[dict] = Field(default_factory=list)
+
+
+class FolioRedirectInfoResponse(BaseModel):
+    origin_group_id: Optional[str] = None
+    share_token: str
+    status: Optional[str] = None
+    folio_code: Optional[str] = None
+
+
+class ClaimOwnerResponse(BaseModel):
+    folio: dict
+    claimed: bool = False
+    group_id: Optional[str] = None

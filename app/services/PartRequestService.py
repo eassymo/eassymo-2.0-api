@@ -928,6 +928,19 @@ def __find_groups_and_format(group_ids: List[ObjectId]):
     return list(map(lambda group: {"label": group["name"], "value": str(group["_id"])}, found_groups))
 
 
+def __sibling_group_match_filter(group_key: str) -> Dict[str, Any]:
+    """
+    Marketplace batches group by parent_request_uid; POS/mostrador folio pieces
+  group by specific_order_uid (parent_request_uid is often empty).
+    """
+    return {
+        "$or": [
+            {"parent_request_uid": group_key},
+            {"specific_order_uid": group_key},
+        ]
+    }
+
+
 def find_sibling_requests_with_offers(
     request: Request,
     parent_request_uid: str,
@@ -941,8 +954,8 @@ def find_sibling_requests_with_offers(
     from app.config import database
 
     # Build aggregation pipeline to handle createdAt as both Date and String
-    # Step 1: Match by parent_request_uid and optional status
-    match_stage = {"parent_request_uid": parent_request_uid}
+    # Step 1: Match sibling batch (marketplace parent_request_uid or POS specific_order_uid)
+    match_stage: Dict[str, Any] = __sibling_group_match_filter(parent_request_uid)
     if status != None:
         match_stage["status"] = status
 

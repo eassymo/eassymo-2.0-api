@@ -74,6 +74,93 @@ def list_orphans(group_id: Optional[str], limit: int = 20) -> List[dict]:
         raise HTTPException(status_code=500, detail=f"Error while listing orphan folios {e}")
 
 
+def _normalize_phone_e164(phone: str) -> str:
+    """Normalize a phone string to E.164 (+52 for 10-digit MX numbers)."""
+    raw = (phone or "").strip()
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    if raw.startswith("+") and digits:
+        return f"+{digits}"
+    if len(digits) == 10:
+        return f"+52{digits}"
+    if digits:
+        return f"+{digits}"
+    return raw
+
+
+def _phone_lookup_variants(phone: str) -> List[str]:
+    """Build phone variants stored on folio.customer.phone for lookup."""
+    e164 = _normalize_phone_e164(phone)
+    digits = "".join(ch for ch in e164 if ch.isdigit())
+    variants = []
+    for candidate in (e164, phone.strip(), f"+{digits}" if digits else None):
+        if candidate and candidate not in variants:
+            variants.append(candidate)
+    if len(digits) >= 10:
+        last10 = digits[-10:]
+        for candidate in (last10, f"+52{last10}"):
+            if candidate not in variants:
+                variants.append(candidate)
+    return variants
+
+
+def _folio_piece_preview(doc: dict, max_names: int = 2) -> str:
+    discarded = {"agotada", "no_manejo"}
+    pieces = doc.get("pieces") or []
+    active = [p for p in pieces if p.get("status") not in discarded]
+    pool = active if active else pieces
+    names = [
+        (p.get("name") or p.get("tipoParteDescripcion") or "").strip()
+        for p in pool[:max_names]
+    ]
+    names = [n for n in names if n]
+    if not names:
+        return ""
+    if len(pool) > max_names:
+        return f"{', '.join(names)}…"
+    return ", ".join(names)
+
+
+def _folio_guest_summary(doc: dict) -> dict:
+    """Lightweight folio card for guest list screens (no full piece payloads)."""
+    vehicle = doc.get("vehicle") or {}
+    vehicle_label = " ".join(
+        str(part).strip()
+        for part in (vehicle.get("year"), vehicle.get("maker"), vehicle.get("model"))
+        if part
+    ) or "Sin vehículo"
+    customer = doc.get("customer") or {}
+    updated_at = doc.get("updated_at")
+    return {
+        "share_token": doc.get("share_token"),
+        "folio_code": doc.get("folio_code"),
+        "status": doc.get("status"),
+        "vehicle_label": vehicle_label,
+        "piece_preview": _folio_piece_preview(doc),
+        "updated_at": updated_at.isoformat() if hasattr(updated_at, "isoformat") else updated_at,
+        "customer_name": customer.get("name"),
+    }
+
+
+def list_by_verified_phone(phone: str, limit: int = 25) -> List[dict]:
+    """Return guest folio summaries for a Firebase-verified phone number."""
+    if not phone or not str(phone).strip():
+        return []
+    seen_tokens = set()
+    summaries: List[dict] = []
+    for variant in _phone_lookup_variants(phone):
+        docs = folioRepository.find_by_customer_phone(variant, limit=limit)
+        for doc in docs:
+            token = doc.get("share_token")
+            if not token or token in seen_tokens:
+                continue
+            seen_tokens.add(token)
+            summaries.append(_folio_guest_summary(doc))
+        if len(summaries) >= limit:
+            break
+    summaries.sort(key=lambda s: s.get("updated_at") or "", reverse=True)
+    return summaries[:limit]
+
+
 def _propagate_customer_to_orders(order_ids: List[str], customer: dict) -> None:
     """Reassign existing Order docs to the linked buyer group after customer link."""
     from app.repositories import OrderRepository as orderRepository
@@ -150,8 +237,8 @@ def update_pieces(folio_id: str, pieces: List[dict]) -> dict:
     if not doc:
         raise HTTPException(status_code=404, detail="Folio not found")
     _require_seller_folio_editable(doc)
-    _require_capture_editable_after_order(doc)
     _reject_new_pieces_when_ordered(doc, pieces)
+    _reject_ordered_piece_option_changes(doc, pieces)
     # validate through schema by round-tripping the whole doc
     merged = {**doc, "pieces": pieces, "updated_at": _now()}
     validated = MostradorFolio(**merged)
@@ -171,7 +258,7 @@ def update(folio_id: str, patch: Dict[str, Any]) -> dict:
         _require_seller_folio_editable(doc)
     if "pieces" in patch:
         _reject_new_pieces_when_ordered(doc, patch["pieces"])
-        _require_capture_editable_after_order(doc)
+        _reject_ordered_piece_option_changes(doc, patch["pieces"])
     allowed = {"vehicle", "customer", "status", "source", "pieces", "participant_shops", "visibility", "part_request_ids", "assignment_with_options"}
     merged = {**doc}
     for key, value in patch.items():
@@ -195,13 +282,401 @@ def _filter_pieces_for_visibility(folio_doc: dict, key: str) -> dict:
     return {**folio_doc, "pieces": pieces}
 
 
+def _scope_options_for_shop(folio_doc: dict, shop_key: str) -> dict:
+    """A participant shop only ever sees ITS OWN options — never other shops' bids."""
+    pieces = []
+    for p in (folio_doc.get("pieces") or []):
+        pieces.append({
+            **p,
+            "options": [
+                o for o in (p.get("options") or [])
+                if o.get("source_shop_id") == shop_key
+            ],
+        })
+    return {**folio_doc, "pieces": pieces}
+
+
+def _offer_to_mostrador_option(offer: dict, fallback_group_id: str) -> dict:
+    """Map a PartRequest Offer document into a folio MostradorOption shape."""
+    group_info = offer.get("group_info") or {}
+    shop_name = group_info.get("name") if isinstance(group_info, dict) else None
+    group_id = str(offer.get("group_id") or fallback_group_id or "")
+    brand = (offer.get("brand") or "").strip()
+    price = offer.get("price")
+    return {
+        "brand": offer.get("brand"),
+        "code": offer.get("code"),
+        "price": price,
+        "guarantee": offer.get("guarantee"),
+        "unit_of_measure": offer.get("unit_of_measure") or "Pieza",
+        "photos": offer.get("photos") or [],
+        "note": offer.get("internalComments") or offer.get("publicComments"),
+        "ready": bool(brand and price is not None),
+        "availability_status": "",
+        "source_shop_id": group_id,
+        "source_shop_name": shop_name,
+        "captured_by_buyer": False,
+        "source_confirmation": None,
+    }
+
+
+def _merge_part_request_offers_into_folio(doc: dict, shop_group_id: str) -> dict:
+    """Project seller PartRequest offers back into folio options for assist/capture reads."""
+    if not shop_group_id or not _assignment_context(doc):
+        return doc
+
+    from app.repositories import PartRequestRepository as partRequestRepository
+    from app.repositories import OfferRepository as offerRepository
+    from app.schemas.Offer import OfferStatus
+
+    folio_id_str = str(doc.get("_id") or "")
+    if not folio_id_str:
+        return doc
+
+    active_statuses = [
+        OfferStatus.created.value,
+        OfferStatus.selected.value,
+        OfferStatus.pending_approval.value,
+        OfferStatus.workshop_approval_pending.value,
+        OfferStatus.pending_changes.value,
+    ]
+
+    prs = list(partRequestRepository.find(
+        {"mostrador_folio_id": folio_id_str, "isActive": True}, {}
+    ))
+    pr_by_piece = {
+        str(pr.get("mostrador_piece_id")): str(pr["_id"])
+        for pr in prs
+        if pr.get("mostrador_piece_id")
+    }
+
+    pieces: List[dict] = []
+    for piece in doc.get("pieces") or []:
+        piece_id = piece.get("piece_id")
+        if not piece_id or piece.get("status") in _DISCARDED_PIECE_STATUSES:
+            pieces.append(piece)
+            continue
+
+        pr_id = pr_by_piece.get(str(piece_id))
+        if not pr_id:
+            pieces.append(piece)
+            continue
+
+        options = list(piece.get("options") or [])
+        option_by_key = {
+            _option_match_key(opt, shop_group_id): idx
+            for idx, opt in enumerate(options)
+        }
+
+        offers = list(offerRepository.find({
+            "request_id": pr_id,
+            "group_id": str(shop_group_id),
+            "status": {"$in": active_statuses},
+        }, {}))
+
+        for offer in offers:
+            opt = _offer_to_mostrador_option(offer, shop_group_id)
+            if not opt.get("brand") or opt.get("price") is None:
+                continue
+            key = _option_match_key(opt, shop_group_id)
+            if key in option_by_key:
+                idx = option_by_key[key]
+                options[idx] = {**options[idx], **opt}
+            else:
+                option_by_key[key] = len(options)
+                options.append(opt)
+
+        pieces.append({**piece, "options": options})
+
+    return {**doc, "pieces": pieces}
+
+
+def _participant_shop_entry(doc: dict, group_id: str) -> Optional[dict]:
+    return next(
+        (
+            s for s in (doc.get("participant_shops") or [])
+            if s.get("eassymo") and str(s.get("group_id") or "") == str(group_id)
+        ),
+        None,
+    )
+
+
+def _require_participant_or_origin(doc: dict, group_id: str) -> dict:
+    """Return participant shop entry, or allow origin seller group (full access)."""
+    if str(doc.get("origin_group_id") or "") == str(group_id):
+        return {}
+    shop = _participant_shop_entry(doc, group_id)
+    if not shop:
+        raise HTTPException(status_code=403, detail="Group is not a participant on this folio")
+    return shop
+
+
 def get_tube(tube_token: str) -> dict:
     """Temp-shop restricted view: only pieces the tube is allowed to quote."""
     doc = folioRepository.find_by_tube_token(tube_token)
     if not doc:
         raise HTTPException(status_code=404, detail="Tube not found")
+    shop_entry = next(
+        (s for s in (doc.get("participant_shops") or []) if s.get("tube_token") == tube_token),
+        None,
+    )
     scoped = _filter_pieces_for_visibility(doc, tube_token)
+    scoped = _scope_options_for_shop(scoped, tube_token)
+    hydrated = _hydrate(scoped)
+    if shop_entry:
+        hydrated["tube_shop"] = {
+            "tube_token": tube_token,
+            "name": shop_entry.get("name") or "Tienda invitada",
+        }
+        hydrated["participant_shops"] = [shop_entry]
+    else:
+        hydrated["participant_shops"] = []
+    return hydrated
+
+
+def require_tube_token(tube_token: str) -> dict:
+    """Validate tube token and return the matching participant shop entry."""
+    doc = folioRepository.find_by_tube_token(tube_token)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Tube not found")
+    shop = next(
+        (s for s in (doc.get("participant_shops") or []) if s.get("tube_token") == tube_token),
+        None,
+    )
+    if not shop:
+        raise HTTPException(status_code=404, detail="Tube shop not found")
+    return shop
+
+
+def get_for_group(folio_id: str, group_id: str) -> dict:
+    """Invited Eassymo group view: visibility-scoped pieces + own options only."""
+    if not group_id:
+        raise HTTPException(status_code=400, detail="group_id is required")
+    doc = folioRepository.find_by_id(folio_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Folio not found")
+
+    origin = str(doc.get("origin_group_id") or "")
+    if origin == str(group_id):
+        merged = _merge_part_request_offers_into_folio(doc, group_id)
+        scoped = _scope_options_for_shop(merged, group_id)
+        return _hydrate(scoped)
+
+    shop = _participant_shop_entry(doc, group_id)
+    if not shop:
+        raise HTTPException(status_code=403, detail="Group is not a participant on this folio")
+
+    scoped = _filter_pieces_for_visibility(doc, group_id)
+    merged = _merge_part_request_offers_into_folio(scoped, group_id)
+    scoped = _scope_options_for_shop(merged, group_id)
     return _hydrate(scoped)
+
+
+def get_redirect_info(folio_id: str) -> dict:
+    """Public: minimal routing fields for a folio (no pieces/pricing/customer)."""
+    doc = folioRepository.find_by_id(folio_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Folio not found")
+
+    share_token = doc.get("share_token")
+    if not share_token:
+        share_token = uuid4().hex
+        folioRepository.edit(folio_id, {"share_token": share_token, "updated_at": _now()})
+
+    status = doc.get("status")
+    if hasattr(status, "value"):
+        status = status.value
+
+    return {
+        "origin_group_id": doc.get("origin_group_id"),
+        "share_token": share_token,
+        "status": status,
+        "folio_code": doc.get("folio_code"),
+    }
+
+
+def claim_owner(
+    folio_id: str,
+    uid: str,
+    group_id: str,
+    name: Optional[str] = None,
+    phone: Optional[str] = None,
+) -> dict:
+    """Claim an unclaimed folio for the authenticated user's selected group."""
+    if not uid:
+        raise HTTPException(status_code=400, detail="uid is required")
+    if not group_id:
+        raise HTTPException(status_code=400, detail="group_id is required")
+
+    doc = folioRepository.find_by_id(folio_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Folio not found")
+
+    customer = doc.get("customer") or {}
+    existing_uid = customer.get("user_uid")
+    existing_group_id = customer.get("group_id")
+
+    if _is_claimed(doc):
+        if existing_uid and str(existing_uid) == str(uid):
+            return {
+                "folio": _hydrate(doc),
+                "claimed": False,
+                "group_id": existing_group_id,
+            }
+        if existing_group_id and str(existing_group_id) == str(group_id):
+            return {
+                "folio": _hydrate(doc),
+                "claimed": False,
+                "group_id": existing_group_id,
+            }
+        raise HTTPException(status_code=409, detail="El folio ya tiene dueño")
+
+    result = _link_folio_to_customer(
+        folio_id,
+        doc,
+        uid,
+        name,
+        phone,
+        str(group_id),
+    )
+    return {
+        **result,
+        "claimed": True,
+    }
+
+
+def claim_guest(folio_id: str, guest_device_id: str) -> dict:
+    """Claim an unclaimed folio for an anonymous guest (device-scoped, no account)."""
+    if not guest_device_id:
+        raise HTTPException(status_code=400, detail="guest_device_id is required")
+
+    doc = folioRepository.find_by_id(folio_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Folio not found")
+
+    customer = doc.get("customer") or {}
+    existing_uid = customer.get("user_uid")
+
+    if _is_claimed(doc):
+        if existing_uid and str(existing_uid) == str(guest_device_id):
+            return {
+                "folio": _hydrate(doc),
+                "claimed": False,
+            }
+        raise HTTPException(status_code=409, detail="El folio ya tiene dueño")
+
+    guest_customer = {
+        "type": "guest",
+        "name": None,
+        "phone": None,
+        "user_uid": str(guest_device_id),
+        "group_id": None,
+    }
+    updated = folioRepository.edit(
+        folio_id,
+        {"customer": guest_customer, "updated_at": _now()},
+    )
+    refreshed = folioRepository.find_by_id(folio_id)
+    return {
+        "folio": _hydrate(refreshed or updated),
+        "claimed": True,
+    }
+
+
+def submit_group_options(
+    folio_id: str,
+    piece_id: str,
+    options: List[dict],
+    group_id: str,
+) -> dict:
+    """Origin or invited Eassymo group submits options (own bids only)."""
+    if not group_id:
+        raise HTTPException(status_code=400, detail="group_id is required")
+    doc = folioRepository.find_by_id(folio_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Folio not found")
+    _require_piece_options_editable(doc, piece_id)
+
+    is_origin = str(doc.get("origin_group_id") or "") == str(group_id)
+    shop = _participant_shop_entry(doc, group_id)
+    if not is_origin and not shop:
+        raise HTTPException(status_code=403, detail="Group is not a participant on this folio")
+
+    if not is_origin:
+        visibility = (doc.get("visibility") or {}).get(group_id)
+        if visibility is not None and piece_id not in visibility:
+            raise HTTPException(status_code=403, detail="Piece is not visible to this group")
+
+    shop_name = (shop.get("name") if shop else None) or _group_name(group_id)
+    return _merge_piece_options(
+        doc,
+        folio_id,
+        piece_id,
+        options,
+        shop_id=group_id,
+        shop_name=shop_name,
+        captured_by_buyer=False,
+        log_activity=True,
+    )
+
+
+def confirm_guest_option(
+    folio_id: str,
+    piece_id: str,
+    option_index: int,
+    group_id: str,
+) -> dict:
+    """A participant shop confirms a guest-captured option as its official bid."""
+    if not group_id:
+        raise HTTPException(status_code=400, detail="group_id is required")
+    doc = folioRepository.find_by_id(folio_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Folio not found")
+    _require_piece_options_editable(doc, piece_id)
+
+    shop = _require_participant_or_origin(doc, group_id)
+    shop_name = shop.get("name") if shop else _group_name(group_id)
+
+    is_origin = str(doc.get("origin_group_id") or "") == str(group_id)
+    visibility = (doc.get("visibility") or {}).get(group_id)
+    if not is_origin and visibility is not None and piece_id not in visibility:
+        raise HTTPException(status_code=403, detail="Piece is not visible to this group")
+
+    target = next((p for p in (doc.get("pieces") or []) if p.get("piece_id") == piece_id), None)
+    if target is None:
+        raise HTTPException(status_code=404, detail="Piece not found")
+
+    options = list(target.get("options") or [])
+    if option_index < 0 or option_index >= len(options):
+        raise HTTPException(status_code=404, detail="Option not found")
+
+    opt = options[option_index]
+    if not opt.get("captured_by_buyer"):
+        raise HTTPException(status_code=400, detail="Option was not captured by buyer")
+    if opt.get("source_confirmation") == "confirmed":
+        raise HTTPException(status_code=400, detail="Option already confirmed")
+
+    options[option_index] = {
+        **opt,
+        "source_shop_id": group_id,
+        "source_shop_name": shop_name,
+        "captured_by_buyer": False,
+        "source_confirmation": "confirmed",
+        "ready": _option_is_ready(opt),
+    }
+
+    merged_piece = {**target, "options": options}
+    new_status = _recompute_piece_status(merged_piece)
+    from app.schemas.MostradorFolio import MostradorPiece
+    normalized = MostradorPiece(**{**merged_piece, "status": new_status}).model_dump()
+
+    updated = folioRepository.set_piece_options(
+        folio_id, piece_id, normalized["options"], new_status, _now())
+    if not updated:
+        raise HTTPException(status_code=500, detail="Could not confirm option")
+    sync_assigned_folio(folio_id)
+    refreshed = folioRepository.find_by_id(folio_id)
+    return _hydrate(refreshed)
 
 
 def _option_is_ready(option: dict) -> bool:
@@ -223,6 +698,67 @@ def _recompute_piece_status(piece: dict) -> str:
     return "pendiente"
 
 
+def _merge_piece_options(
+    doc: dict,
+    folio_id: str,
+    piece_id: str,
+    options: List[dict],
+    shop_id: Optional[str],
+    shop_name: Optional[str],
+    captured_by_buyer: bool = False,
+    *,
+    log_activity: bool = True,
+) -> dict:
+    """Merge options for one shop onto a piece; preserve other shops' options."""
+    target = next((p for p in (doc.get("pieces") or []) if p.get("piece_id") == piece_id), None)
+    if target is None:
+        raise HTTPException(status_code=404, detail="Piece not found")
+
+    others = [o for o in (target.get("options") or []) if o.get("source_shop_id") != shop_id]
+    existing_keys = {_option_match_key(o, shop_id or "") for o in others}
+    incoming = []
+    for opt in options:
+        tagged = {
+            **opt,
+            "source_shop_id": shop_id,
+            "source_shop_name": shop_name,
+            "ready": _option_is_ready(opt),
+            "captured_by_buyer": captured_by_buyer,
+        }
+        if captured_by_buyer and not tagged.get("source_confirmation"):
+            tagged["source_confirmation"] = "not_confirmed_by_shop"
+        key = _option_match_key(tagged, shop_id or "")
+        if key in existing_keys:
+            continue
+        existing_keys.add(key)
+        incoming.append(tagged)
+
+    merged_options = others + incoming
+    merged_piece = {**target, "options": merged_options}
+    new_status = _recompute_piece_status(merged_piece)
+
+    from app.schemas.MostradorFolio import MostradorPiece
+    normalized = MostradorPiece(**{**merged_piece, "status": new_status}).model_dump()
+
+    updated = folioRepository.set_piece_options(
+        folio_id, piece_id, normalized["options"], new_status, _now())
+    if not updated:
+        raise HTTPException(status_code=500, detail="Could not update piece options")
+    if log_activity:
+        piece_label = _piece_display_name(target)
+        shop_label = shop_name or "Una tienda"
+        _append_activity_log(
+            folio_id,
+            "shop_option_added",
+            f"{shop_label} agregó una opción para {piece_label}",
+            piece_id=piece_id,
+            shop_name=shop_name,
+        )
+    sync_assigned_folio(folio_id)
+    refreshed = folioRepository.find_by_id(folio_id)
+    return _hydrate(refreshed)
+
+
 def submit_shop_options(
     folio_id: str,
     piece_id: str,
@@ -239,51 +775,162 @@ def submit_shop_options(
     if not doc:
         raise HTTPException(status_code=404, detail="Folio not found")
     _require_seller_folio_editable(doc)
+    _require_piece_options_editable(doc, piece_id)
+
+    return _merge_piece_options(
+        doc,
+        folio_id,
+        piece_id,
+        options,
+        shop_id,
+        shop_name,
+        captured_by_buyer,
+        log_activity=True,
+    )
+
+
+def add_piece_by_shop(folio_id: str, group_id: str, piece_data: dict) -> dict:
+    """Origin or invited shop appends a piece while bidding on a shared folio."""
+    if not group_id:
+        raise HTTPException(status_code=400, detail="group_id is required")
+    doc = folioRepository.find_by_id(folio_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Folio not found")
+    _require_capture_editable_after_order(doc)
+
+    shop = _require_participant_or_origin(doc, group_id)
+    is_origin = str(doc.get("origin_group_id") or "") == str(group_id)
+    shop_name = (shop.get("name") if shop else None) or _group_name(group_id)
+
+    name = (piece_data.get("name") or piece_data.get("tipoParteDescripcion") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+
+    from app.schemas.MostradorFolio import MostradorPiece
+    tipo_parte_id = piece_data.get("tipoParteId")
+    if tipo_parte_id is not None and tipo_parte_id != "":
+        tipo_parte_id = str(tipo_parte_id)
+
+    piece_id = uuid4().hex
+    new_piece = MostradorPiece(
+        piece_id=piece_id,
+        name=name,
+        tipoParteDescripcion=name,
+        tipoParteId=tipo_parte_id,
+        categoriaId=piece_data.get("categoriaId"),
+        subCategoriaId=piece_data.get("subCategoriaId"),
+        qty=int(piece_data.get("qty") or 1),
+        unitOfMeasure=piece_data.get("unitOfMeasure") or "Pieza",
+        position=piece_data.get("position") or "No aplica",
+        note=bool(piece_data.get("note", False)),
+        sample=bool(piece_data.get("sample", False)),
+        status="pendiente",
+        options=[],
+        added_by_shop_id=group_id,
+        added_by_shop_name=shop_name,
+    )
+    pieces = list(doc.get("pieces") or [])
+    pieces.insert(0, new_piece.model_dump())
+    folioRepository.set_pieces(folio_id, pieces, _now())
+
+    if not is_origin:
+        visibility = dict(doc.get("visibility") or {})
+        allowed = list(visibility.get(group_id) or [])
+        if group_id in visibility and piece_id not in allowed:
+            allowed.append(piece_id)
+            visibility[group_id] = allowed
+            folioRepository.edit(folio_id, {"visibility": visibility, "updated_at": _now()})
+
+    sync_assigned_folio(folio_id)
+    refreshed = folioRepository.find_by_id(folio_id)
+    return _hydrate(refreshed)
+
+
+def add_piece_by_guest(folio_id: str, piece_data: dict) -> dict:
+    """Guest appends a free-text piece to a shared folio."""
+    doc = folioRepository.find_by_id(folio_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Folio not found")
+    _require_capture_editable_after_order(doc)
+
+    name = (piece_data.get("name") or piece_data.get("tipoParteDescripcion") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+
+    from app.schemas.MostradorFolio import MostradorPiece
+    tipo_parte_id = piece_data.get("tipoParteId")
+    if tipo_parte_id is not None and tipo_parte_id != "":
+        tipo_parte_id = str(tipo_parte_id)
+
+    new_piece = MostradorPiece(
+        piece_id=uuid4().hex,
+        name=name,
+        tipoParteDescripcion=name,
+        tipoParteId=tipo_parte_id,
+        categoriaId=piece_data.get("categoriaId"),
+        subCategoriaId=piece_data.get("subCategoriaId"),
+        qty=int(piece_data.get("qty") or 1),
+        unitOfMeasure=piece_data.get("unitOfMeasure") or "Pieza",
+        position=piece_data.get("position") or "No aplica",
+        note=bool(piece_data.get("note", False)),
+        sample=bool(piece_data.get("sample", False)),
+        status="pendiente",
+        options=[],
+        added_by_guest=True,
+    )
+    pieces = list(doc.get("pieces") or [])
+    pieces.insert(0, new_piece.model_dump())
+    folioRepository.set_pieces(folio_id, pieces, _now())
+    sync_assigned_folio(folio_id)
+    refreshed = folioRepository.find_by_id(folio_id)
+    return _hydrate(refreshed)
+
+
+def remove_guest_piece(folio_id: str, piece_id: str) -> dict:
+    """Guest removes a piece they added, only before it is ordered."""
+    doc = folioRepository.find_by_id(folio_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Folio not found")
     _require_capture_editable_after_order(doc)
 
     target = next((p for p in (doc.get("pieces") or []) if p.get("piece_id") == piece_id), None)
     if target is None:
         raise HTTPException(status_code=404, detail="Piece not found")
+    if not target.get("added_by_guest"):
+        raise HTTPException(status_code=403, detail="Solo puedes quitar piezas que agregaste")
+    if target.get("order"):
+        raise HTTPException(status_code=403, detail="No se puede quitar una pieza ya ordenada")
 
-    # keep options from other shops; drop this shop's previous options
-    others = [o for o in (target.get("options") or []) if o.get("source_shop_id") != shop_id]
-    incoming = []
-    for opt in options:
-        tagged = {
-            **opt,
-            "source_shop_id": shop_id,
-            "source_shop_name": shop_name,
-            "ready": _option_is_ready(opt),
-            "captured_by_buyer": captured_by_buyer,
-        }
-        if captured_by_buyer and not tagged.get("source_confirmation"):
-            tagged["source_confirmation"] = "not_confirmed_by_shop"
-        incoming.append(tagged)
-
-    merged_options = others + incoming
-    merged_piece = {**target, "options": merged_options}
-    new_status = _recompute_piece_status(merged_piece)
-
-    # validate through schema (single piece)
-    from app.schemas.MostradorFolio import MostradorPiece
-    normalized = MostradorPiece(**{**merged_piece, "status": new_status}).model_dump()
-
-    updated = folioRepository.set_piece_options(
-        folio_id, piece_id, normalized["options"], new_status, _now())
-    if not updated:
-        raise HTTPException(status_code=500, detail="Could not update piece options")
-    piece_label = _piece_display_name(target)
-    shop_label = shop_name or "Una tienda"
-    _append_activity_log(
-        folio_id,
-        "shop_option_added",
-        f"{shop_label} agregó una opción para {piece_label}",
-        piece_id=piece_id,
-        shop_name=shop_name,
-    )
+    pieces = [p for p in (doc.get("pieces") or []) if p.get("piece_id") != piece_id]
+    folioRepository.set_pieces(folio_id, pieces, _now())
     sync_assigned_folio(folio_id)
     refreshed = folioRepository.find_by_id(folio_id)
     return _hydrate(refreshed)
+
+
+def submit_guest_piece_options(
+    folio_id: str,
+    piece_id: str,
+    options: List[dict],
+    shop_id: Optional[str] = None,
+    shop_name: Optional[str] = None,
+) -> dict:
+    """Guest manually captures options on a piece (buyer-proxy quote)."""
+    doc = folioRepository.find_by_id(folio_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Folio not found")
+    _require_piece_options_editable(doc, piece_id)
+
+    return _merge_piece_options(
+        doc,
+        folio_id,
+        piece_id,
+        options,
+        shop_id=shop_id or "guest",
+        shop_name=shop_name,
+        captured_by_buyer=True,
+        log_activity=False,
+    )
 
 
 def invite_shop(
@@ -294,12 +941,13 @@ def invite_shop(
     visible_piece_ids: Optional[List[str]],
     *,
     client_origin: Optional[str] = None,
+    captured_by_buyer: bool = False,
 ) -> dict:
     """Add a participant shop. Temp shops (no account) get a tube_token + visibility scope."""
     doc = folioRepository.find_by_id(folio_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Folio not found")
-    _require_seller_folio_editable(doc)
+    _require_capture_editable_after_order(doc)
 
     tube_token = None if eassymo else uuid4().hex
     shop = {
@@ -307,6 +955,7 @@ def invite_shop(
         "name": name,
         "eassymo": eassymo,
         "tube_token": tube_token,
+        "captured_by_buyer": captured_by_buyer or None,
     }
 
     updated = folioRepository.push_participant_shop(folio_id, shop, visible_piece_ids, _now())
@@ -330,9 +979,39 @@ def invite_shop(
     elif eassymo and group_id:
         share_meta = {"group_id": group_id, "eassymo": True}
 
+    notification = None
+    if eassymo and group_id:
+        from app.repositories import GroupRepository as groupRepository
+        from app.factories import NotificationsCreator
+
+        group_doc = groupRepository.find_by_id(group_id)
+        if group_doc:
+            buyer_uid = _resolve_buyer_uid_for_group(group_doc)
+            if buyer_uid:
+                inviter_name = (doc.get("customer") or {}).get("name") or "Un cliente"
+                piece_count = len(visible_piece_ids or [])
+                navigate_to_url = f"/pos/mostrador-invite/{folio_id}"
+                notif = NotificationsCreator.create_mostrador_shop_invited_notification(
+                    inviter_name=inviter_name,
+                    piece_count=piece_count,
+                    owner=buyer_uid,
+                    owner_group=str(group_id),
+                    navigate_to_url=navigate_to_url,
+                    meta_data={
+                        "folioId": folio_id,
+                        "groupId": str(group_id),
+                        "visiblePieceIds": visible_piece_ids or [],
+                    },
+                )
+                notif_dict = notif.model_dump()
+                if hasattr(notif_dict.get("type"), "value"):
+                    notif_dict["type"] = notif_dict["type"].value
+                notification = notif_dict
+
     return {
         "folio": _hydrate(updated),
         **share_meta,
+        "notification": notification,
     }
 
 
@@ -583,6 +1262,7 @@ def finish_claim(
     phone = user_doc.get("phone")
 
     if account_kind == "buyer":
+        _require_not_claimed_by_other(doc, uid, group_id, allow_guest_reassign=True)
         return _link_folio_to_customer(folio_id, doc, uid, name, phone, group_id)
 
     notifications = _migrate_guest_notifications(folio_id, uid, group_id)
@@ -677,6 +1357,8 @@ def order_piece(
     piece_id: str,
     option_index: int,
     delivery_mode: str = "tienda",
+    delivery_address: Optional[dict] = None,
+    delivery_contact: Optional[dict] = None,
     *,
     allow_when_assigned: bool = False,
 ) -> dict:
@@ -696,21 +1378,34 @@ def order_piece(
     if not _option_is_ready(chosen):
         raise HTTPException(status_code=400, detail="Option is not orderable (missing brand/price)")
 
+    mode = delivery_mode or "tienda"
+    if mode == "domicilio":
+        if not delivery_address or not (delivery_address.get("address") or "").strip():
+            raise HTTPException(status_code=400, detail="delivery_address is required for domicilio")
+        contact_name = (delivery_contact or {}).get("name") or ""
+        contact_phone = (delivery_contact or {}).get("phone") or ""
+        if not str(contact_name).strip() or not str(contact_phone).strip():
+            raise HTTPException(status_code=400, detail="delivery_contact is required for domicilio")
+
     order = {
         "option_index": option_index,
-        "delivery_mode": delivery_mode or "tienda",
+        "delivery_mode": mode,
         "shop_id": chosen.get("source_shop_id"),
         "shop_name": chosen.get("source_shop_name"),
         "status": "ordenada",
         "ordered_at": _now(),
         "order_doc_id": None,
     }
+    if mode == "domicilio":
+        order["delivery_address"] = delivery_address
+        order["delivery_contact"] = delivery_contact
     from app.schemas.MostradorFolio import MostradorPieceOrder
     normalized = MostradorPieceOrder(**order).model_dump()
     updated = folioRepository.set_piece_order(folio_id, piece_id, normalized, _now())
     sync_assigned_folio(folio_id)
-    _ensure_mostrador_orders_materialized(folio_id)
-    sync_assigned_folio(folio_id)
+    if not chosen.get("captured_by_buyer"):
+        _ensure_mostrador_orders_materialized(folio_id)
+        sync_assigned_folio(folio_id)
     refreshed = folioRepository.find_by_id(folio_id)
     return _hydrate(refreshed)
 
@@ -793,9 +1488,16 @@ def claim_account(
     from app.services import UserService as userService
 
     if group_id:
+        _require_not_claimed_by_other(doc, uid, group_id, allow_guest_reassign=True)
         return _link_folio_to_customer(
             folio_id, doc, uid, name or group_name, phone, group_id
         )
+
+    if _is_claimed(doc):
+        customer = doc.get("customer") or {}
+        if customer.get("type") != "guest":
+            if customer.get("user_uid") and str(customer.get("user_uid")) != str(uid):
+                raise HTTPException(status_code=409, detail="El folio ya tiene dueño")
 
     customer = {
         "type": "eassymo",
@@ -921,6 +1623,38 @@ def _assignment_context(doc: dict) -> Optional[tuple]:
     return str(group_id), str(buyer_uid)
 
 
+def _is_claimed(doc: dict) -> bool:
+    """Folio has an owner (customer uid/group) or was materialized to part requests."""
+    customer = doc.get("customer") or {}
+    if customer.get("user_uid"):
+        return True
+    if customer.get("group_id"):
+        return True
+    return bool(doc.get("part_request_ids"))
+
+
+def _require_not_claimed_by_other(
+    doc: dict,
+    uid: str,
+    group_id: Optional[str] = None,
+    *,
+    allow_guest_reassign: bool = False,
+) -> None:
+    """Raise 409 when the folio is already owned by a different user/group."""
+    if not _is_claimed(doc):
+        return
+    customer = doc.get("customer") or {}
+    if allow_guest_reassign and customer.get("type") == "guest":
+        return
+    existing_uid = customer.get("user_uid")
+    existing_group_id = customer.get("group_id")
+    if existing_uid and str(existing_uid) == str(uid):
+        return
+    if group_id and existing_group_id and str(existing_group_id) == str(group_id):
+        return
+    raise HTTPException(status_code=409, detail="El folio ya tiene dueño")
+
+
 def _is_assigned_to_buyer(doc: dict) -> bool:
     customer = doc.get("customer") or {}
     if customer.get("group_id"):
@@ -949,6 +1683,50 @@ def _reject_new_pieces_when_ordered(doc: dict, pieces: List[dict]) -> None:
         raise HTTPException(
             status_code=403,
             detail="No se pueden agregar piezas después de crear una orden",
+        )
+
+
+def _piece_has_order(piece: dict) -> bool:
+    return bool(piece.get("order"))
+
+
+def _options_unchanged(old: List[dict], new: List[dict]) -> bool:
+    import json
+
+    return json.dumps(old or [], sort_keys=True, default=str) == json.dumps(
+        new or [], sort_keys=True, default=str
+    )
+
+
+def _reject_ordered_piece_option_changes(doc: dict, pieces: List[dict]) -> None:
+    old_by_id = {
+        p.get("piece_id"): p for p in (doc.get("pieces") or []) if p.get("piece_id")
+    }
+    for updated in pieces:
+        piece_id = updated.get("piece_id")
+        if not piece_id or piece_id not in old_by_id:
+            continue
+        old = old_by_id[piece_id]
+        if not _piece_has_order(old):
+            continue
+        if not _options_unchanged(old.get("options") or [], updated.get("options") or []):
+            raise HTTPException(
+                status_code=403,
+                detail="No se pueden modificar opciones de una pieza ya ordenada",
+            )
+
+
+def _require_piece_options_editable(doc: dict, piece_id: str) -> None:
+    target = next(
+        (p for p in (doc.get("pieces") or []) if p.get("piece_id") == piece_id),
+        None,
+    )
+    if target is None:
+        raise HTTPException(status_code=404, detail="Piece not found")
+    if _piece_has_order(target):
+        raise HTTPException(
+            status_code=403,
+            detail="No se pueden modificar opciones de una pieza ya ordenada",
         )
 
 
@@ -1041,6 +1819,43 @@ def _relink_order_for_piece(
     orderRepository.edit(ObjectId(order_doc_id), order_data)
 
 
+def _ensure_folio_specific_order_uid(folio_id: str, folio: dict) -> tuple[dict, str]:
+    """Ensure folio and in-memory doc share one canonical specific_order_uid."""
+    uid = folio.get("specific_order_uid")
+    if not uid:
+        uid = uuid4().hex
+        folioRepository.edit(folio_id, {"specific_order_uid": uid, "updated_at": _now()})
+        folio = {**folio, "specific_order_uid": uid}
+    return folio, uid
+
+
+def _sync_part_request_specific_order_uid(folio_id: str, specific_order_uid: str) -> None:
+    """Align all materialized PartRequests with the folio batch uid."""
+    from app.repositories import PartRequestRepository as partRequestRepository
+
+    if not specific_order_uid:
+        return
+    now = _now()
+    for pr in list(partRequestRepository.find({"mostrador_folio_id": folio_id}, {})):
+        if pr.get("specific_order_uid") == specific_order_uid:
+            continue
+        partRequestRepository.edit_part_request(str(pr["_id"]), {
+            "specific_order_uid": specific_order_uid,
+            "updatedAt": now,
+        })
+
+
+def _domicilio_delivery_fields(order_info: dict) -> dict:
+    if (order_info.get("delivery_mode") or "tienda") != "domicilio":
+        return {}
+    fields = {}
+    if order_info.get("delivery_address"):
+        fields["delivery_address"] = order_info.get("delivery_address")
+    if order_info.get("delivery_contact"):
+        fields["delivery_contact"] = order_info.get("delivery_contact")
+    return fields
+
+
 def _ensure_part_request_for_piece(
     folio: dict,
     piece: dict,
@@ -1077,8 +1892,11 @@ def _ensure_part_request_for_piece(
             "part": part_payload,
             "subscribedSellers": subscribed,
             "status": pr_status,
+            "specific_order_uid": specific_order_uid,
             "isActive": True,
             "updatedAt": now,
+            "mostrador_delivery_mode": order_info.get("delivery_mode") or "tienda",
+            **_domicilio_delivery_fields(order_info),
         }
         partRequestRepository.edit_part_request(pr_id, patch)
         return pr_id
@@ -1098,9 +1916,10 @@ def _ensure_part_request_for_piece(
         "origin": "mostrador",
         "mostrador_folio_id": folio_id,
         "mostrador_piece_id": piece_id,
-        "mostrador_delivery_mode": (piece.get("order") or {}).get("delivery_mode") or "tienda",
+        "mostrador_delivery_mode": order_info.get("delivery_mode") or "tienda",
         "createdAt": now,
         "updatedAt": now,
+        **_domicilio_delivery_fields(order_info),
     }
     vehicle_information = _load_vehicle_information(vehicle)
     if vehicle_information:
@@ -1248,6 +2067,7 @@ def sync_assigned_folio(folio_id: str) -> None:
     if not ctx:
         return
 
+    doc, specific_order_uid = _ensure_folio_specific_order_uid(folio_id, doc)
     buyer_group_id, buyer_uid = ctx
     folio_id_str = str(doc["_id"])
     seller_uid = doc.get("creator_user") or ""
@@ -1290,6 +2110,7 @@ def sync_assigned_folio(folio_id: str) -> None:
         "part_request_ids": active_pr_ids,
         "updated_at": _now(),
     })
+    _sync_part_request_specific_order_uid(folio_id_str, specific_order_uid)
     _ensure_mostrador_orders_materialized(folio_id)
 
 
@@ -1361,6 +2182,7 @@ def assign_to_group(folio_id: str, group_id: str, with_options: bool = True) -> 
         raise HTTPException(status_code=400, detail="Could not resolve a user for the target group")
 
     folio_id_str = str(doc["_id"])
+    doc, specific_order_uid = _ensure_folio_specific_order_uid(folio_id, doc)
     pr_ids = _materialize_part_requests_for_folio(
         doc, group_id, buyer_uid, with_options, folio_id_str)
 
@@ -1374,7 +2196,6 @@ def assign_to_group(folio_id: str, group_id: str, with_options: bool = True) -> 
     _propagate_customer_to_orders(doc.get("order_ids") or [], customer)
 
     merged_pr_ids = list({*(doc.get("part_request_ids") or []), *pr_ids})
-    specific_order_uid = doc.get("specific_order_uid") or uuid4().hex
     new_status = doc.get("status")
     if new_status not in (FolioStatus.CONFIRMED.value, FolioStatus.CLOSED.value):
         new_status = FolioStatus.SHARED.value
@@ -1490,6 +2311,8 @@ def _build_order_for_piece(folio: dict, piece: dict, specific_order_uid: str, fo
         mostrador_folio_id=folio_id,
         mostrador_piece_id=piece.get("piece_id"),
         mostrador_delivery_mode=order_info.get("delivery_mode") or "tienda",
+        delivery_address=order_info.get("delivery_address"),
+        delivery_contact=order_info.get("delivery_contact"),
         vehicleInformation=vehicle_information,
     )
 
@@ -1507,13 +2330,24 @@ def _build_order_for_piece(folio: dict, piece: dict, specific_order_uid: str, fo
     return order
 
 
+def _piece_has_seller_order_pending_materialization(piece: dict) -> bool:
+    order = piece.get("order")
+    if not order or order.get("order_doc_id"):
+        return False
+    option_index = order.get("option_index")
+    options = piece.get("options") or []
+    if option_index is None or option_index < 0 or option_index >= len(options):
+        return False
+    return not options[option_index].get("captured_by_buyer")
+
+
 def _ensure_mostrador_orders_materialized(folio_id: str, *, swallow_errors: bool = False) -> None:
     """Create in-person Order docs for embedded piece orders (buyer optional until assign)."""
     doc = folioRepository.find_by_id(folio_id)
     if not doc:
         return
     has_unmaterialized = any(
-        p.get("order") and not (p.get("order") or {}).get("order_doc_id")
+        _piece_has_seller_order_pending_materialization(p)
         for p in (doc.get("pieces") or [])
     )
     if not has_unmaterialized:
@@ -1552,6 +2386,18 @@ def confirm(folio_id: str, *, allow_when_assigned: bool = False) -> dict:
     if not ordered_pieces:
         raise HTTPException(status_code=400, detail="No ordered pieces to confirm")
 
+    seller_pending = [
+        p for p in ordered_pieces
+        if _piece_has_seller_order_pending_materialization(p)
+    ]
+    if not seller_pending:
+        return {
+            "folio": _hydrate(doc),
+            "order_ids": [],
+            "specific_order_uid": doc.get("specific_order_uid") or "",
+            "notifications": [],
+        }
+
     specific_order_uid = doc.get("specific_order_uid") or uuid4().hex
     created_ids: List[str] = []
     pieces = [dict(p) for p in (doc.get("pieces") or [])]
@@ -1563,6 +2409,14 @@ def confirm(folio_id: str, *, allow_when_assigned: bool = False) -> dict:
             continue
         if piece["order"].get("order_doc_id"):
             continue  # already created
+        option_index = piece["order"].get("option_index")
+        piece_options = piece.get("options") or []
+        if (
+            option_index is not None
+            and 0 <= option_index < len(piece_options)
+            and piece_options[option_index].get("captured_by_buyer")
+        ):
+            continue  # buyer walk-in capture — no seller order doc
         order = _build_order_for_piece(doc, piece, specific_order_uid, folio_id)
         if order is None:
             continue

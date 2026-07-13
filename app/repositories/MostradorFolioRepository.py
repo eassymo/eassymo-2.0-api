@@ -37,6 +37,16 @@ def find(filters: Dict[str, Any]):
     return _col().find(filters).sort("updated_at", -1)
 
 
+def find_by_customer_phone(phone: str, limit: int = 25) -> List[dict]:
+    """Folios shared with a guest/customer phone (E.164 or local variants)."""
+    filters = {
+        "customer.phone": phone,
+        "status": {"$ne": "canceled"},
+        "share_token": {"$exists": True, "$ne": None},
+    }
+    return list(_col().find(filters).sort("updated_at", -1).limit(limit))
+
+
 def find_orphans(group_id: str, limit: int = 20):
     """POS folios owned by the seller with no linked Eassymo buyer business."""
     filters = {

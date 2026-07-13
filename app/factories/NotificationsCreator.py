@@ -444,6 +444,31 @@ def create_mostrador_option_added_notification(
     )
 
 
+def create_mostrador_shop_invited_notification(
+    inviter_name: str,
+    piece_count: int,
+    owner: str,
+    owner_group: str,
+    navigate_to_url: str,
+    meta_data: Dict[str, Any],
+    visible_roles: Optional[List[str]] = None,
+) -> Notification:
+    if visible_roles is None:
+        visible_roles = DEFAULT_ROLES
+
+    pieces_label = f"{piece_count} pieza" if piece_count == 1 else f"{piece_count} piezas"
+    return Notification(
+        type=NotificationType.MOSTRADOR_SHOP_INVITED,
+        message=f"{inviter_name} te invitó a cotizar en una lista de mostrador ({pieces_label}).",
+        owner=owner,
+        ownerGroup=owner_group,
+        visibleRoles=visible_roles,
+        navigateToUrl=navigate_to_url,
+        read=False,
+        metaData=meta_data,
+    )
+
+
 # Dictionary mapping notification types to their creator functions
 NOTIFICATION_CREATORS = {
     NotificationType.PART_REQUEST_CREATED: create_part_request_notification,
@@ -464,4 +489,5 @@ NOTIFICATION_CREATORS = {
     NotificationType.MOSTRADOR_FOLIO_ASSIGNED: create_mostrador_folio_assigned_notification,
     NotificationType.MOSTRADOR_ORDER_CREATED: create_mostrador_order_created_notification,
     NotificationType.MOSTRADOR_OPTION_ADDED: create_mostrador_option_added_notification,
+    NotificationType.MOSTRADOR_SHOP_INVITED: create_mostrador_shop_invited_notification,
 }
