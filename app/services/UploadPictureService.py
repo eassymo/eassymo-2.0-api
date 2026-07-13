@@ -25,6 +25,18 @@ async def upload_guest_photos(files: List[UploadFile], guest_token: str) -> dict
     return {"message": "ok", "body": uploaded_urls}
 
 
+async def upload_tube_photos(files: List[UploadFile], tube_token: str) -> dict:
+    """Uploads files to S3 under tube/<tube_token>/ for temp-shop quoting."""
+    session = create_aws_session()
+    uploaded_urls: List[str] = []
+
+    for file in files:
+        url = await _upload_image_to_s3_with_prefix(session, file, prefix=f"tube/{tube_token}")
+        uploaded_urls.append(url)
+
+    return {"message": "ok", "body": uploaded_urls}
+
+
 async def _upload_image_to_s3_with_prefix(session, file: UploadFile, prefix: str) -> str:
     bucket_name = os.getenv("AWS_BUCKET_NAME")
     await file.seek(0)
