@@ -9,8 +9,11 @@ from fastapi import HTTPException, status
 from firebase_admin import auth
 from pymongo import ReturnDocument
 
+from sqlalchemy.orm import Session
+
 from app.config import database
 from app.repositories import PendingCartRepository
+from app.repositories.PartCatalogRepository import PartCatalogRepository
 from app.schemas.Brand import Brand
 from app.schemas.Guarantee import Guarantee
 from app.schemas.UserRoles import UserRoles
@@ -504,6 +507,430 @@ class AdminWriteService:
         )
         updated["_id"] = str(updated["_id"])
         return updated
+
+    @staticmethod
+    def _require_part_keys(data: Dict[str, Any]) -> tuple[int, int, int]:
+        try:
+            categoria_id = int(data["categoriaId"])
+            sub_categoria_id = int(data["subCategoriaId"])
+            tipo_parte_id = int(data["tipoParteId"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="categoriaId, subCategoriaId and tipoParteId are required",
+            ) from exc
+        return categoria_id, sub_categoria_id, tipo_parte_id
+
+    @staticmethod
+    def _ensure_part_exists(
+        mysql_db: Session,
+        categoria_id: int,
+        sub_categoria_id: int,
+        tipo_parte_id: int,
+    ) -> None:
+        if not PartCatalogRepository.part_exists(
+            mysql_db, categoria_id, sub_categoria_id, tipo_parte_id
+        ):
+            raise HTTPException(status_code=404, detail="Part type not found")
+
+    @staticmethod
+    def create_part_synonym(
+        mysql_db: Session,
+        admin_uid: str,
+        data: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        categoria_id, sub_categoria_id, tipo_parte_id = AdminWriteService._require_part_keys(data)
+        description = (data.get("tipoParteTagDescripcion") or data.get("description") or "").strip()
+        if not description:
+            raise HTTPException(status_code=400, detail="tipoParteTagDescripcion is required")
+        AdminWriteService._ensure_part_exists(
+            mysql_db, categoria_id, sub_categoria_id, tipo_parte_id
+        )
+        try:
+            tag = PartCatalogRepository.create_tag(
+                mysql_db,
+                categoria_id,
+                sub_categoria_id,
+                tipo_parte_id,
+                description,
+            )
+        except ValueError as exc:
+            if str(exc) == "DUPLICATE_TAG":
+                raise HTTPException(status_code=409, detail="Tag already exists for this part") from exc
+            raise
+        payload = {
+            "categoriaId": tag.CategoriaId,
+            "subCategoriaId": tag.SubCategoriaId,
+            "tipoParteId": tag.TipoParteId,
+            "tipoParteTagId": tag.TipoParteTagId,
+            "tipoParteTagDescripcion": tag.TipoParteTagDescripcion,
+        }
+        AdminWriteService._log_action(
+            admin_uid,
+            "create_part_synonym",
+            "part_tag",
+            f"{tipo_parte_id}:{tag.TipoParteTagId}",
+            payload,
+        )
+        return payload
+
+    @staticmethod
+    def update_part_synonym(
+        mysql_db: Session,
+        admin_uid: str,
+        tipo_parte_tag_id: int,
+        data: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        categoria_id, sub_categoria_id, tipo_parte_id = AdminWriteService._require_part_keys(data)
+        description = (data.get("tipoParteTagDescripcion") or data.get("description") or "").strip()
+        if not description:
+            raise HTTPException(status_code=400, detail="tipoParteTagDescripcion is required")
+        try:
+            tag = PartCatalogRepository.update_tag(
+                mysql_db,
+                categoria_id,
+                sub_categoria_id,
+                tipo_parte_id,
+                tipo_parte_tag_id,
+                description,
+            )
+        except ValueError as exc:
+            if str(exc) == "DUPLICATE_TAG":
+                raise HTTPException(status_code=409, detail="Tag already exists for this part") from exc
+            raise
+        if not tag:
+            raise HTTPException(status_code=404, detail="Tag not found")
+        payload = {
+            "categoriaId": tag.CategoriaId,
+            "subCategoriaId": tag.SubCategoriaId,
+            "tipoParteId": tag.TipoParteId,
+            "tipoParteTagId": tag.TipoParteTagId,
+            "tipoParteTagDescripcion": tag.TipoParteTagDescripcion,
+        }
+        AdminWriteService._log_action(
+            admin_uid,
+            "update_part_synonym",
+            "part_tag",
+            f"{tipo_parte_id}:{tag.TipoParteTagId}",
+            payload,
+        )
+        return payload
+
+    @staticmethod
+    def delete_part_synonym(
+        mysql_db: Session,
+        admin_uid: str,
+        tipo_parte_tag_id: int,
+        data: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        categoria_id, sub_categoria_id, tipo_parte_id = AdminWriteService._require_part_keys(data)
+        deleted = PartCatalogRepository.delete_tag(
+            mysql_db,
+            categoria_id,
+            sub_categoria_id,
+            tipo_parte_id,
+            tipo_parte_tag_id,
+        )
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Tag not found")
+        AdminWriteService._log_action(
+            admin_uid,
+            "delete_part_synonym",
+            "part_tag",
+            f"{tipo_parte_id}:{tipo_parte_tag_id}",
+            data,
+        )
+        return {"deleted": True}
+
+    @staticmethod
+    def create_measurement_unit(
+        mysql_db: Session,
+        admin_uid: str,
+        data: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        etiqueta = (data.get("etiquetaDefecto") or "").strip()
+        if not etiqueta:
+            raise HTTPException(status_code=400, detail="etiquetaDefecto is required")
+        unit = PartCatalogRepository.create_unit(
+            mysql_db,
+            etiqueta,
+            data.get("clavei18n"),
+        )
+        payload = {
+            "unidadMedidaId": unit.UnidadMedidaId,
+            "etiquetaDefecto": unit.etiquetadefecto,
+            "clavei18n": unit.clavei18n or "",
+        }
+        AdminWriteService._log_action(
+            admin_uid,
+            "create_measurement_unit",
+            "measurement_unit",
+            str(unit.UnidadMedidaId),
+            payload,
+        )
+        return payload
+
+    @staticmethod
+    def update_measurement_unit(
+        mysql_db: Session,
+        admin_uid: str,
+        unit_id: int,
+        data: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        etiqueta = (data.get("etiquetaDefecto") or "").strip()
+        if not etiqueta:
+            raise HTTPException(status_code=400, detail="etiquetaDefecto is required")
+        unit = PartCatalogRepository.update_unit(
+            mysql_db,
+            unit_id,
+            etiqueta,
+            data.get("clavei18n"),
+        )
+        if not unit:
+            raise HTTPException(status_code=404, detail="Measurement unit not found")
+        payload = {
+            "unidadMedidaId": unit.UnidadMedidaId,
+            "etiquetaDefecto": unit.etiquetadefecto,
+            "clavei18n": unit.clavei18n or "",
+        }
+        AdminWriteService._log_action(
+            admin_uid,
+            "update_measurement_unit",
+            "measurement_unit",
+            str(unit.UnidadMedidaId),
+            payload,
+        )
+        return payload
+
+    @staticmethod
+    def delete_measurement_unit(
+        mysql_db: Session,
+        admin_uid: str,
+        unit_id: int,
+    ) -> Dict[str, Any]:
+        try:
+            deleted = PartCatalogRepository.delete_unit(mysql_db, unit_id)
+        except ValueError as exc:
+            if str(exc) == "UNIT_IN_USE":
+                raise HTTPException(
+                    status_code=409,
+                    detail="Measurement unit is linked to one or more part types",
+                ) from exc
+            raise
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Measurement unit not found")
+        AdminWriteService._log_action(
+            admin_uid,
+            "delete_measurement_unit",
+            "measurement_unit",
+            str(unit_id),
+            {},
+        )
+        return {"deleted": True}
+
+    @staticmethod
+    def link_part_unit(
+        mysql_db: Session,
+        admin_uid: str,
+        data: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        categoria_id, sub_categoria_id, tipo_parte_id = AdminWriteService._require_part_keys(data)
+        try:
+            unit_id = int(data["unidadMedidaId"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="unidadMedidaId is required") from exc
+        AdminWriteService._ensure_part_exists(
+            mysql_db, categoria_id, sub_categoria_id, tipo_parte_id
+        )
+        PartCatalogRepository.link_unit(
+            mysql_db, categoria_id, sub_categoria_id, tipo_parte_id, unit_id
+        )
+        payload = {
+            "categoriaId": categoria_id,
+            "subCategoriaId": sub_categoria_id,
+            "tipoParteId": tipo_parte_id,
+            "unidadMedidaId": unit_id,
+        }
+        AdminWriteService._log_action(
+            admin_uid, "link_part_unit", "part_unit_link", str(tipo_parte_id), payload
+        )
+        return payload
+
+    @staticmethod
+    def unlink_part_unit(
+        mysql_db: Session,
+        admin_uid: str,
+        data: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        categoria_id, sub_categoria_id, tipo_parte_id = AdminWriteService._require_part_keys(data)
+        try:
+            unit_id = int(data["unidadMedidaId"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="unidadMedidaId is required") from exc
+        deleted = PartCatalogRepository.unlink_unit(
+            mysql_db, categoria_id, sub_categoria_id, tipo_parte_id, unit_id
+        )
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Unit link not found")
+        payload = {
+            "categoriaId": categoria_id,
+            "subCategoriaId": sub_categoria_id,
+            "tipoParteId": tipo_parte_id,
+            "unidadMedidaId": unit_id,
+        }
+        AdminWriteService._log_action(
+            admin_uid, "unlink_part_unit", "part_unit_link", str(tipo_parte_id), payload
+        )
+        return {"deleted": True}
+
+    @staticmethod
+    def create_position(
+        mysql_db: Session,
+        admin_uid: str,
+        data: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        nombre = (data.get("posicionNombre") or "").strip()
+        if not nombre:
+            raise HTTPException(status_code=400, detail="posicionNombre is required")
+        position = PartCatalogRepository.create_position(
+            mysql_db,
+            nombre,
+            data.get("clavei18n"),
+        )
+        payload = {
+            "posicionId": position.PosicionId,
+            "posicionNombre": position.PosicionNombre,
+            "clavei18n": position.clavei18n or "",
+        }
+        AdminWriteService._log_action(
+            admin_uid,
+            "create_position",
+            "position",
+            str(position.PosicionId),
+            payload,
+        )
+        return payload
+
+    @staticmethod
+    def update_position(
+        mysql_db: Session,
+        admin_uid: str,
+        position_id: int,
+        data: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        nombre = (data.get("posicionNombre") or "").strip()
+        if not nombre:
+            raise HTTPException(status_code=400, detail="posicionNombre is required")
+        position = PartCatalogRepository.update_position(
+            mysql_db,
+            position_id,
+            nombre,
+            data.get("clavei18n"),
+        )
+        if not position:
+            raise HTTPException(status_code=404, detail="Position not found")
+        payload = {
+            "posicionId": position.PosicionId,
+            "posicionNombre": position.PosicionNombre,
+            "clavei18n": position.clavei18n or "",
+        }
+        AdminWriteService._log_action(
+            admin_uid,
+            "update_position",
+            "position",
+            str(position.PosicionId),
+            payload,
+        )
+        return payload
+
+    @staticmethod
+    def delete_position(
+        mysql_db: Session,
+        admin_uid: str,
+        position_id: int,
+    ) -> Dict[str, Any]:
+        try:
+            deleted = PartCatalogRepository.delete_position(mysql_db, position_id)
+        except ValueError as exc:
+            if str(exc) == "POSITION_IN_USE":
+                raise HTTPException(
+                    status_code=409,
+                    detail="Position is linked to one or more part types",
+                ) from exc
+            raise
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Position not found")
+        AdminWriteService._log_action(
+            admin_uid,
+            "delete_position",
+            "position",
+            str(position_id),
+            {},
+        )
+        return {"deleted": True}
+
+    @staticmethod
+    def link_part_position(
+        mysql_db: Session,
+        admin_uid: str,
+        data: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        categoria_id, sub_categoria_id, tipo_parte_id = AdminWriteService._require_part_keys(data)
+        try:
+            position_id = int(data["posicionId"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="posicionId is required") from exc
+        AdminWriteService._ensure_part_exists(
+            mysql_db, categoria_id, sub_categoria_id, tipo_parte_id
+        )
+        PartCatalogRepository.link_position(
+            mysql_db, categoria_id, sub_categoria_id, tipo_parte_id, position_id
+        )
+        payload = {
+            "categoriaId": categoria_id,
+            "subCategoriaId": sub_categoria_id,
+            "tipoParteId": tipo_parte_id,
+            "posicionId": position_id,
+        }
+        AdminWriteService._log_action(
+            admin_uid,
+            "link_part_position",
+            "part_position_link",
+            str(tipo_parte_id),
+            payload,
+        )
+        return payload
+
+    @staticmethod
+    def unlink_part_position(
+        mysql_db: Session,
+        admin_uid: str,
+        data: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        categoria_id, sub_categoria_id, tipo_parte_id = AdminWriteService._require_part_keys(data)
+        try:
+            position_id = int(data["posicionId"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="posicionId is required") from exc
+        deleted = PartCatalogRepository.unlink_position(
+            mysql_db, categoria_id, sub_categoria_id, tipo_parte_id, position_id
+        )
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Position link not found")
+        payload = {
+            "categoriaId": categoria_id,
+            "subCategoriaId": sub_categoria_id,
+            "tipoParteId": tipo_parte_id,
+            "posicionId": position_id,
+        }
+        AdminWriteService._log_action(
+            admin_uid,
+            "unlink_part_position",
+            "part_position_link",
+            str(tipo_parte_id),
+            payload,
+        )
+        return {"deleted": True}
 
     @staticmethod
     def list_audit_log(page: int = 1, page_size: int = 20) -> Dict[str, Any]:

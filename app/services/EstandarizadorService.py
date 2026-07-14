@@ -3,6 +3,9 @@ from typing import Dict, Any, List
 from sqlalchemy.orm import Session
 
 from app.repositories.EstandarizadorRepository import EstandarizadorRepository
+from app.repositories.VehiculoSensibilidadesRepository import (
+    VehiculoSensibilidadesRepository,
+)
 from app.repositories.NonAcesVehiclesRepository import find_distinct_makes
 from app.utils.armadora_names import (
     format_armadora_display_name,
@@ -17,6 +20,30 @@ def _unidad_to_item(u) -> Dict[str, Any]:
         "unidadMedidaId": u.UnidadMedidaId,
         "etiquetaDefecto": u.etiquetadefecto or "",
         "clavei18n": u.clavei18n or "",
+    }
+
+
+def get_all_unidades_medida(mysql_db: Session) -> Dict[str, Any]:
+    lst = EstandarizadorRepository.find_all_unidades_medida(mysql_db)
+    return {
+        "success": True,
+        "lstUnidadesMedida": [_unidad_to_item(u) for u in lst],
+    }
+
+
+def _position_to_item(p) -> Dict[str, Any]:
+    return {
+        "posicionId": p.PosicionId,
+        "posicionNombre": p.PosicionNombre or "",
+        "clavei18n": p.clavei18n or "",
+    }
+
+
+def get_all_posiciones(mysql_db: Session) -> Dict[str, Any]:
+    lst = VehiculoSensibilidadesRepository.find_all_posiciones(mysql_db)
+    return {
+        "success": True,
+        "lstPosiciones": [_position_to_item(p) for p in lst],
     }
 
 
