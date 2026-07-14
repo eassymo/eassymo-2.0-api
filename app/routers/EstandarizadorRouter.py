@@ -6,6 +6,8 @@ from app.config.database import get_mysql_db
 from app.services.EstandarizadorService import (
     get_unidades_medida_by_parte,
     get_all_ensambladoras,
+    get_all_unidades_medida,
+    get_all_posiciones,
 )
 
 estandarizadorRouter = APIRouter(prefix="/estandarizador", tags=["Estandarizador"])
@@ -37,6 +39,34 @@ def find_all_ensambladoras(
 ):
     try:
         result = get_all_ensambladoras(mysql_db)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=result)
+    except Exception:
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"success": False, "code": "GENERIC_ERROR"},
+        )
+
+
+@estandarizadorRouter.get("/findAllUnidadesMedida")
+def find_all_unidades_medida(
+    mysql_db: Session = Depends(get_mysql_db),
+):
+    try:
+        result = get_all_unidades_medida(mysql_db)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=result)
+    except Exception:
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"success": False, "code": "GENERIC_ERROR"},
+        )
+
+
+@estandarizadorRouter.get("/findAllPosiciones")
+def find_all_posiciones(
+    mysql_db: Session = Depends(get_mysql_db),
+):
+    try:
+        result = get_all_posiciones(mysql_db)
         return JSONResponse(status_code=status.HTTP_200_OK, content=result)
     except Exception:
         return JSONResponse(

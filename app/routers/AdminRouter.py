@@ -1,9 +1,12 @@
 from fastapi import APIRouter, Body, Depends, Query, Request, status
 from fastapi.responses import JSONResponse
 from typing import Optional
+from sqlalchemy.orm import Session
 
+from app.config.database import get_mysql_db
 from app.dependencies.super_admin import require_super_admin
 from app.services.AdminMetricsService import AdminMetricsService
+from app.services.AdminPartCatalogService import AdminPartCatalogService
 from app.services.AdminWriteService import AdminWriteService
 from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response
 
@@ -501,5 +504,305 @@ def list_audit_log(
 ):
     try:
         return _ok(AdminWriteService.list_audit_log(page, page_size))
+    except Exception as e:
+        return _err(e)
+
+
+# ── Part catalog (MySQL) ────────────────────────────────────────────────────
+
+@adminRouter.get("/part-catalog/parts")
+def list_part_catalog_parts(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(24, ge=1, le=100),
+    mysql_db: Session = Depends(get_mysql_db),
+):
+    try:
+        return _ok(AdminPartCatalogService.list_part_types(mysql_db, page, page_size))
+    except Exception as e:
+        return _err(e)
+
+
+@adminRouter.get("/part-catalog/tags")
+def list_part_catalog_tags(
+    categoriaId: int = Query(...),
+    subCategoriaId: int = Query(...),
+    tipoParteId: int = Query(...),
+    mysql_db: Session = Depends(get_mysql_db),
+):
+    try:
+        return _ok(
+            AdminPartCatalogService.list_part_tags(
+                mysql_db, categoriaId, subCategoriaId, tipoParteId
+            )
+        )
+    except Exception as e:
+        return _err(e)
+
+
+@adminRouter.post("/part-catalog/tags")
+def create_part_catalog_tag(
+    request: Request,
+    data: dict = Body(...),
+    mysql_db: Session = Depends(get_mysql_db),
+):
+    try:
+        admin_uid = request.state.user.get("uid")
+        result = AdminWriteService.create_part_synonym(mysql_db, admin_uid, data)
+        return _ok(result)
+    except Exception as e:
+        return _err(e)
+
+
+@adminRouter.put("/part-catalog/tags/{tipo_parte_tag_id}")
+def update_part_catalog_tag(
+    request: Request,
+    tipo_parte_tag_id: int,
+    data: dict = Body(...),
+    mysql_db: Session = Depends(get_mysql_db),
+):
+    try:
+        admin_uid = request.state.user.get("uid")
+        result = AdminWriteService.update_part_synonym(
+            mysql_db, admin_uid, tipo_parte_tag_id, data
+        )
+        return _ok(result)
+    except Exception as e:
+        return _err(e)
+
+
+@adminRouter.delete("/part-catalog/tags/{tipo_parte_tag_id}")
+def delete_part_catalog_tag(
+    request: Request,
+    tipo_parte_tag_id: int,
+    categoriaId: int = Query(...),
+    subCategoriaId: int = Query(...),
+    tipoParteId: int = Query(...),
+    mysql_db: Session = Depends(get_mysql_db),
+):
+    try:
+        admin_uid = request.state.user.get("uid")
+        result = AdminWriteService.delete_part_synonym(
+            mysql_db,
+            admin_uid,
+            tipo_parte_tag_id,
+            {
+                "categoriaId": categoriaId,
+                "subCategoriaId": subCategoriaId,
+                "tipoParteId": tipoParteId,
+            },
+        )
+        return _ok(result)
+    except Exception as e:
+        return _err(e)
+
+
+@adminRouter.get("/measurement-units")
+def list_measurement_units(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    search: Optional[str] = Query(None),
+    mysql_db: Session = Depends(get_mysql_db),
+):
+    try:
+        return _ok(
+            AdminPartCatalogService.list_measurement_units(
+                mysql_db, page, page_size, search
+            )
+        )
+    except Exception as e:
+        return _err(e)
+
+
+@adminRouter.post("/measurement-units")
+def create_measurement_unit(
+    request: Request,
+    data: dict = Body(...),
+    mysql_db: Session = Depends(get_mysql_db),
+):
+    try:
+        admin_uid = request.state.user.get("uid")
+        result = AdminWriteService.create_measurement_unit(mysql_db, admin_uid, data)
+        return _ok(result)
+    except Exception as e:
+        return _err(e)
+
+
+@adminRouter.put("/measurement-units/{unit_id}")
+def update_measurement_unit(
+    request: Request,
+    unit_id: int,
+    data: dict = Body(...),
+    mysql_db: Session = Depends(get_mysql_db),
+):
+    try:
+        admin_uid = request.state.user.get("uid")
+        result = AdminWriteService.update_measurement_unit(
+            mysql_db, admin_uid, unit_id, data
+        )
+        return _ok(result)
+    except Exception as e:
+        return _err(e)
+
+
+@adminRouter.delete("/measurement-units/{unit_id}")
+def delete_measurement_unit(
+    request: Request,
+    unit_id: int,
+    mysql_db: Session = Depends(get_mysql_db),
+):
+    try:
+        admin_uid = request.state.user.get("uid")
+        result = AdminWriteService.delete_measurement_unit(mysql_db, admin_uid, unit_id)
+        return _ok(result)
+    except Exception as e:
+        return _err(e)
+
+
+@adminRouter.get("/part-catalog/units")
+def list_part_catalog_units(
+    categoriaId: int = Query(...),
+    subCategoriaId: int = Query(...),
+    tipoParteId: int = Query(...),
+    mysql_db: Session = Depends(get_mysql_db),
+):
+    try:
+        return _ok(
+            AdminPartCatalogService.list_part_unit_links(
+                mysql_db, categoriaId, subCategoriaId, tipoParteId
+            )
+        )
+    except Exception as e:
+        return _err(e)
+
+
+@adminRouter.post("/part-catalog/units/link")
+def link_part_catalog_unit(
+    request: Request,
+    data: dict = Body(...),
+    mysql_db: Session = Depends(get_mysql_db),
+):
+    try:
+        admin_uid = request.state.user.get("uid")
+        result = AdminWriteService.link_part_unit(mysql_db, admin_uid, data)
+        return _ok(result)
+    except Exception as e:
+        return _err(e)
+
+
+@adminRouter.delete("/part-catalog/units/link")
+def unlink_part_catalog_unit(
+    request: Request,
+    data: dict = Body(...),
+    mysql_db: Session = Depends(get_mysql_db),
+):
+    try:
+        admin_uid = request.state.user.get("uid")
+        result = AdminWriteService.unlink_part_unit(mysql_db, admin_uid, data)
+        return _ok(result)
+    except Exception as e:
+        return _err(e)
+
+
+@adminRouter.get("/positions")
+def list_positions(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    search: Optional[str] = Query(None),
+    mysql_db: Session = Depends(get_mysql_db),
+):
+    try:
+        return _ok(
+            AdminPartCatalogService.list_positions(mysql_db, page, page_size, search)
+        )
+    except Exception as e:
+        return _err(e)
+
+
+@adminRouter.post("/positions")
+def create_position(
+    request: Request,
+    data: dict = Body(...),
+    mysql_db: Session = Depends(get_mysql_db),
+):
+    try:
+        admin_uid = request.state.user.get("uid")
+        result = AdminWriteService.create_position(mysql_db, admin_uid, data)
+        return _ok(result)
+    except Exception as e:
+        return _err(e)
+
+
+@adminRouter.put("/positions/{position_id}")
+def update_position(
+    request: Request,
+    position_id: int,
+    data: dict = Body(...),
+    mysql_db: Session = Depends(get_mysql_db),
+):
+    try:
+        admin_uid = request.state.user.get("uid")
+        result = AdminWriteService.update_position(
+            mysql_db, admin_uid, position_id, data
+        )
+        return _ok(result)
+    except Exception as e:
+        return _err(e)
+
+
+@adminRouter.delete("/positions/{position_id}")
+def delete_position(
+    request: Request,
+    position_id: int,
+    mysql_db: Session = Depends(get_mysql_db),
+):
+    try:
+        admin_uid = request.state.user.get("uid")
+        result = AdminWriteService.delete_position(mysql_db, admin_uid, position_id)
+        return _ok(result)
+    except Exception as e:
+        return _err(e)
+
+
+@adminRouter.get("/part-catalog/positions")
+def list_part_catalog_positions(
+    categoriaId: int = Query(...),
+    subCategoriaId: int = Query(...),
+    tipoParteId: int = Query(...),
+    mysql_db: Session = Depends(get_mysql_db),
+):
+    try:
+        return _ok(
+            AdminPartCatalogService.list_part_position_links(
+                mysql_db, categoriaId, subCategoriaId, tipoParteId
+            )
+        )
+    except Exception as e:
+        return _err(e)
+
+
+@adminRouter.post("/part-catalog/positions/link")
+def link_part_catalog_position(
+    request: Request,
+    data: dict = Body(...),
+    mysql_db: Session = Depends(get_mysql_db),
+):
+    try:
+        admin_uid = request.state.user.get("uid")
+        result = AdminWriteService.link_part_position(mysql_db, admin_uid, data)
+        return _ok(result)
+    except Exception as e:
+        return _err(e)
+
+
+@adminRouter.delete("/part-catalog/positions/link")
+def unlink_part_catalog_position(
+    request: Request,
+    data: dict = Body(...),
+    mysql_db: Session = Depends(get_mysql_db),
+):
+    try:
+        admin_uid = request.state.user.get("uid")
+        result = AdminWriteService.unlink_part_position(mysql_db, admin_uid, data)
+        return _ok(result)
     except Exception as e:
         return _err(e)
