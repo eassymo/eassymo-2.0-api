@@ -18,8 +18,22 @@ class WhatsappService:
         self.account_sid = os.getenv("TWILIO_ACCOUNT_SID")
         self.auth_token = os.getenv("TWILIO_AUTH_TOKEN")
         self.from_number = os.getenv("TWILIO_WHATSAPP_NUMBER")
+        self.client = None
 
-        self.client = Client(self.account_sid, self.auth_token)
+        if self.account_sid and self.auth_token:
+            self.client = Client(self.account_sid, self.auth_token)
+        else:
+            logger.warning(
+                "Twilio credentials not configured; WhatsApp features are disabled"
+            )
+
+    def _get_client(self) -> Client:
+        if self.client is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Twilio is not configured. Set TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN.",
+            )
+        return self.client
 
     def send_template_message(self, message: WhatsappMessage) -> Dict[str, Any]:
         try:
@@ -30,7 +44,7 @@ class WhatsappService:
 
             print(self)
 
-            response = self.client.messages.create(
+            response = self._get_client().messages.create(
                 from_=f"whatsapp:{self.from_number}",
                 to=f"whatsapp:{message.to}",
                 content_sid=message.template.name,
@@ -69,7 +83,7 @@ class WhatsappService:
 
         try:
             if template_sid:
-                response = self.client.messages.create(
+                response = self._get_client().messages.create(
                     from_=f"whatsapp:{self.from_number}",
                     to=f"whatsapp:{guest_phone}",
                     content_sid=template_sid,
@@ -80,7 +94,7 @@ class WhatsappService:
                     f"Hola {guest_name}, tienes una entrega asignada en Eassymo 🚚\n"
                     f"Toca el enlace para ver los detalles y confirmar tu entrega:\n{invite_url}"
                 )
-                response = self.client.messages.create(
+                response = self._get_client().messages.create(
                     from_=f"whatsapp:{self.from_number}",
                     to=f"whatsapp:{guest_phone}",
                     body=freeform_body,
@@ -106,7 +120,7 @@ class WhatsappService:
 
     def check_message_status(self, message_sid: str) -> Dict[str, Any]:
         try:
-            message = self.client.messages(message_sid).fetch()
+            message = self._get_client().messages(message_sid).fetch()
             
             return {
                 "message_sid": message_sid,

@@ -105,14 +105,11 @@ def initialize_firebase():
                 print("Invalid JSON in FIREBASE_SERVICE_ACCOUNT_JSON: {}".format(e))
         
         # If we get here, we need proper credentials
-        raise ValueError(
-            "Firebase service account credentials not found or invalid. "
-            "Please set either:\n"
-            "1. FIREBASE_SERVICE_ACCOUNT_PATH (path to service account file)\n"
-            "2. Place *firebase-adminsdk*.json in the API project root\n"
-            "3. FIREBASE_SERVICE_ACCOUNT_JSON (JSON string of service account)\n"
-            "4. Individual environment variables (FIREBASE_PROJECT_ID, FIREBASE_PRIVATE_KEY, etc.)"
+        print(
+            "Firebase credentials not configured; auth and realtime DB features are disabled. "
+            "Set FIREBASE_SERVICE_ACCOUNT_PATH or related env vars to enable them."
         )
+        return
         
     except Exception as e:
         print("Error initializing Firebase: {}".format(e))
@@ -121,6 +118,13 @@ def initialize_firebase():
         print("   - Set FIREBASE_SERVICE_ACCOUNT_PATH or place the JSON in the API root")
         print("   - Verify your service account has Auth admin permissions")
         raise
+
+
+def _ensure_firebase_initialized():
+    if not firebase_admin._apps:
+        raise ValueError(
+            "Firebase is not configured. Set FIREBASE_SERVICE_ACCOUNT_PATH or related env vars."
+        )
 
 
 def validate_service_account_creds(cred_dict):
@@ -150,6 +154,7 @@ def verify_firebase_token(id_token: str):
     Verify Firebase ID token from Authorization header
     """
     try:
+        _ensure_firebase_initialized()
         decoded_token = auth.verify_id_token(id_token)
         return decoded_token
     except Exception as e:
@@ -179,6 +184,7 @@ def get_database_reference(path: str):
     Get Firebase Realtime Database reference
     """
     try:
+        _ensure_firebase_initialized()
         return db.reference(path)
     except Exception as e:
         print(f"❌ Error getting database reference: {e}")
