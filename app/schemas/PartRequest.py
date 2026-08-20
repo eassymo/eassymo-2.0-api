@@ -136,6 +136,10 @@ class PartRequest(BaseModel):
         None,
         description="tienda|domicilio|pickup, mirrors MostradorPieceOrder.delivery_mode",
     )
+    recycled_from_request_ids: Optional[List[str]] = Field(
+        default=None,
+        description="Original part request ids recycled by the seller into this batch",
+    )
 
     @root_validator(pre=True)
     def convert_objectId(cls, values):
