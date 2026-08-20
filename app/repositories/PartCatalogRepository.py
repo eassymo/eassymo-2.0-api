@@ -4,7 +4,7 @@ from typing import List, Optional, Tuple
 
 from sqlalchemy import delete, func, insert, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 
 from models import (
     Posiciones,
@@ -169,7 +169,19 @@ class PartCatalogRepository:
         offset: int,
         limit: int,
     ) -> Tuple[List[Tiposparte], int]:
-        q = mysql_db.query(Tiposparte).filter(Tiposparte.TipoParteActivo == 1)
+        q = (
+            mysql_db.query(Tiposparte)
+            .options(
+                load_only(
+                    Tiposparte.CategoriaId,
+                    Tiposparte.SubCategoriaId,
+                    Tiposparte.TipoParteId,
+                    Tiposparte.TipoParteDescripcion,
+                    Tiposparte.TipoParteActivo,
+                )
+            )
+            .filter(Tiposparte.TipoParteActivo == 1)
+        )
         total = q.count()
         items = (
             q.order_by(Tiposparte.TipoParteDescripcion.asc())
@@ -487,7 +499,7 @@ class PartCatalogRepository:
         tipo_parte_id: int,
     ) -> bool:
         return (
-            mysql_db.query(Tiposparte)
+            mysql_db.query(Tiposparte.TipoParteId)
             .filter(
                 Tiposparte.CategoriaId == categoria_id,
                 Tiposparte.SubCategoriaId == sub_categoria_id,

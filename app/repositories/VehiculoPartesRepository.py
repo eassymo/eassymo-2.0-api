@@ -1,8 +1,11 @@
 from typing import List, Set, Tuple
+import logging
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_, func, select, exists, text, tuple_
 
 from models import Tiposparte, Tipospartetag, Categorias, Subcategorias
+
+logger = logging.getLogger(__name__)
 
 
 def _escape_boolean_word(w: str) -> str:
@@ -68,7 +71,11 @@ class VehiculoPartesRepository:
             keys_desc = set(mysql_db.execute(stmt_desc, params).all())
             keys_tag = set(mysql_db.execute(stmt_tag, params).all())
             return keys_desc | keys_tag
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "FULLTEXT part search unavailable (%s); using regex fallback",
+                exc,
+            )
             return set()
 
     @staticmethod

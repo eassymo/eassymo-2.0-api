@@ -9,7 +9,7 @@ from app.config.database import get_mysql_db
 AcesVehiclesRouter = APIRouter(prefix="/AcesVehicles")
 
 
-@AcesVehiclesRouter.get("/", tags=["Aces Vehicles"])
+@AcesVehiclesRouter.get("", tags=["Aces Vehicles"])
 def find(
     search_argument: Optional[str] = Query(None, title="search_argument"),
     year: Optional[str] = Query(None, title="year"),
