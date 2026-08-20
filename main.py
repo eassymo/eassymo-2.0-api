@@ -109,7 +109,7 @@ async def auth_middleware(request: Request, call_next):
 origins = [
     "https://www.eassymo.mx",
     "https://eassymo-2-0-client.vercel.app",
-    "https://eassymo-2-0-client-nw5q0qylv-fernando-francos-projects-1618c379.vercel.app"
+    "https://eassymo-2-0-client-nw5q0qylv-fernando-francos-projects-1618c379.vercel.app",
 ]
 
 app.add_middleware(
