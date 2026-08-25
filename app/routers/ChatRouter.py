@@ -4,7 +4,7 @@ from app.schemas.Message import Message
 from app.services import ChatService as chatService
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
-from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response
+from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response, error_json_response
 
 chatRouter = APIRouter(prefix="/chat")
 
@@ -15,7 +15,7 @@ def insert(chat: Chat = Body(...)):
         response = chatService.insert(chat)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except Exception as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)
 
 
 @chatRouter.post("/send-message/{chatId}", response_description="Boolean that confirms message is stored", tags=["Chat"])
@@ -28,7 +28,7 @@ def send_message(request:Request, message: Message = Body(...), groupselected: s
         
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except Exception as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)
 
 
 @chatRouter.get("/find-by-request-or-order-id", response_description="chat found based on the request or order id", tags=["Chat"])
@@ -37,7 +37,7 @@ def find_by_request_or_order_id(id: str = Query(None, title="id"), type: str = Q
         response = chatService.find_by_request_or_order_id(id, type)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except Exception as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)
 
 
 @chatRouter.post('/to-be-read', response_description="Object with id of request and pending messages", tags=["Chat"])
@@ -56,7 +56,7 @@ def to_be_read(request:Request, body=Body(...), groupselected: str = Header(None
 
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except Exception as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)
 
 
 @chatRouter.post('/read-messages', response_description="Boolean that will indicate if messages where read for a certain user")
@@ -65,4 +65,4 @@ def read_messages(id: str = Query(None, title="order or request id"), user_uid: 
         response = chatService.read_messages(id, user_uid, type, groupselected)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except Exception as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)

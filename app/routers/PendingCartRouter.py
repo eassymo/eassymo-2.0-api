@@ -3,7 +3,7 @@ from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 from app.services import PendingCartService as pendingCartService
 from app.schemas.PendingCart import SavePendingCartRequest
-from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response
+from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response, error_json_response
 
 pendingCartRouter = APIRouter(prefix="/pending-cart")
 
@@ -22,7 +22,7 @@ def save_pending_cart(body: SavePendingCartRequest = Body(...)):
             content=get_successful_response(jsonable_encoder(response)),
         )
     except Exception as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)
 
 
 @pendingCartRouter.get(
@@ -38,7 +38,7 @@ def get_pending_cart(user_uid: str, groupselected: str = Header(None)):
             content=get_successful_response(jsonable_encoder(response)),
         )
     except Exception as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)
 
 
 @pendingCartRouter.delete(
@@ -54,4 +54,4 @@ def delete_pending_cart(user_uid: str, groupselected: str = Header(None)):
             content=get_successful_response(jsonable_encoder(response)),
         )
     except Exception as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)

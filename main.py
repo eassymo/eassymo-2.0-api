@@ -35,6 +35,7 @@ from app.routers import PendingCartRouter as pendingCartRouter
 from app.routers import DeliveryRouter as deliveryRouter
 from app.routers import AdminRouter as adminRouter
 from app.routers import MostradorFolioRouter as mostradorFolioRouter
+from app.routers import ReviewRouter as reviewRouter
 
 
 import app.utils.firebase_admin
@@ -47,6 +48,22 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.encoders import jsonable_encoder
 
 app = FastAPI()
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(_request: Request, exc: HTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(_request: Request, exc: Exception):
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
 
 
 @app.exception_handler(RequestValidationError)
@@ -74,7 +91,6 @@ async def auth_middleware(request: Request, call_next):
         "/redoc",
         "/openapi.json",
         "/users/create",
-        "/delivery/guest-orders",
     ]
 
     # Prefix-based public paths (delivery invite pages + public/guest mostrador views)
@@ -82,7 +98,15 @@ async def auth_middleware(request: Request, call_next):
         "/delivery-invite/",
         "/mostrador/public/",
         "/mostrador/tube/",
+        "/delivery/guest-orders",
     ]
+
+    # Guest delivery flow — X-Guest-Token replaces Firebase auth on these paths
+    guest_token_paths = frozenset({
+        "/order/change-status",
+        "/delivery/confirm-pickup",
+        "/photo/guest",
+    })
 
     path = request.url.path
 
@@ -92,8 +116,7 @@ async def auth_middleware(request: Request, call_next):
     if any(path.startswith(prefix) for prefix in public_prefixes):
         return await call_next(request)
 
-    # Allow guest token auth to pass through for change-status
-    if path == "/order/change-status" and request.headers.get("X-Guest-Token"):
+    if path in guest_token_paths and request.headers.get("X-Guest-Token"):
         return await call_next(request)
 
     try:
@@ -155,4 +178,5 @@ app.include_router(categoriasRouter.categoriasRouter)
 app.include_router(pendingCartRouter.pendingCartRouter)
 app.include_router(deliveryRouter.deliveryRouter)
 app.include_router(adminRouter.adminRouter)
+app.include_router(reviewRouter.reviewRouter)
 app.include_router(mostradorFolioRouter.mostradorRouter)

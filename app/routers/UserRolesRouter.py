@@ -4,7 +4,7 @@ from app.schemas.UserRoles import UserRoles
 from app.utils import TypeUtilities as typeUtilities
 from app.services import UserRolesService as userRolesService
 from typing import Optional
-from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response
+from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response, error_json_response
 from fastapi.encoders import jsonable_encoder
 
 
@@ -17,7 +17,7 @@ def insert(payload: UserRoles = Body()):
         response = userRolesService.insert(payload)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except HTTPException as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)
 
 
 @userRolesRouter.get("", description="find user roles", tags=["User Roles"])
@@ -43,7 +43,7 @@ def find(
 
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except HTTPException as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)
 
 
 @userRolesRouter.post("/activate-role", description="Activate the user role", tags=["User Roles"])
@@ -59,7 +59,7 @@ def activate_role(
 
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except HTTPException as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)
 
 
 @userRolesRouter.post("/add-role-to-user", description="Adds an active role to a user for a group", tags=["User Roles"])
@@ -75,7 +75,7 @@ def add_role_to_user(
 
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except HTTPException as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)
 
 
 @userRolesRouter.post("/delete-role-from-user", description="deletes a given role for a user", tags=["User Roles"])
@@ -92,4 +92,4 @@ def remove(
 
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except HTTPException as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)

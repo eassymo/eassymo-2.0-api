@@ -3,7 +3,7 @@ from fastapi import APIRouter, Body, status, Query, Request
 from app.schemas.Order import Order, OrderStatus
 from app.services import OrderService
 from app.services import DeliveryService
-from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response
+from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response, error_json_response
 from typing import Optional
 
 # Role value for delivery persons (DEALER_SHOP)
@@ -24,7 +24,7 @@ def find(
             id, group_id, current_role, search_argument)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)
 
 
 @orderRouter.post("/assign-delivery", description="Assigns a delivery person and advances order to DISPATCHED", tags=["Orders"])
@@ -211,7 +211,7 @@ def find_by_id(id: str):
         response = OrderService.find_by_id(id)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)
 
 
 @orderRouter.post("/change-delivery-time", description="Changes the delivery time of an order", tags=["Orders"])
@@ -219,5 +219,6 @@ def change_delivery_time(data: dict = Body(...)):
     try:
         response = OrderService.change_delivery_time(
             data["order_id"], data["new_delivery_time"], data["is_delayed"])
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)

@@ -55,7 +55,10 @@ def find_user(uid: str):
     try:
         return userRepository.find_by_uid(uid)
     except PyMongoError as e:
-        return 'Error While fetching user'
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error while fetching user",
+        )
 
 
 def find_users(filters: Dict[str, Any]):
@@ -115,7 +118,10 @@ def update_user(uid: str, user: UserSchema):
         userRepository.update_user(uid, user_to_be_updated)
         return {"message": "ok", "body": user_to_be_updated}
     except PyMongoError as error:
-        return {"message": f'Error while updating user {error}'}
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error while updating user {error}",
+        )
 
 
 def validate_if_users_exists(uid: str):
