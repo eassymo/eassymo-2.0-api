@@ -17,7 +17,10 @@ def find(
 ) -> JSONResponse:
     try:
         if not search_argument:
-            return get_unsuccessful_response(Exception("Please provide a search argument"))
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Please provide a search argument",
+            )
 
         vehicles = AcesVehiclesService.find_aces_vehicles(
             mysql_db, search_argument, year)

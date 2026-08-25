@@ -8,6 +8,8 @@ from app.dependencies.super_admin import require_super_admin
 from app.services.AdminMetricsService import AdminMetricsService
 from app.services.AdminPartCatalogService import AdminPartCatalogService
 from app.services.AdminWriteService import AdminWriteService
+from app.services import ReviewService
+from app.schemas.Review import ResolveDisputeRequest
 from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response
 
 adminRouter = APIRouter(
@@ -504,6 +506,38 @@ def list_audit_log(
 ):
     try:
         return _ok(AdminWriteService.list_audit_log(page, page_size))
+    except Exception as e:
+        return _err(e)
+
+
+# ── Review disputes ─────────────────────────────────────────────────────────
+
+@adminRouter.get("/review-disputes")
+def list_review_disputes(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    status: Optional[str] = Query(None),
+):
+    try:
+        return _ok(ReviewService.list_disputes(page=page, page_size=page_size, status=status))
+    except Exception as e:
+        return _err(e)
+
+
+@adminRouter.put("/review-disputes/{dispute_id}")
+def resolve_review_dispute(
+    request: Request,
+    dispute_id: str,
+    payload: ResolveDisputeRequest = Body(...),
+):
+    try:
+        admin_uid = request.state.user.get("uid")
+        result = ReviewService.resolve_dispute(
+            admin_uid=admin_uid,
+            dispute_id=dispute_id,
+            payload=payload,
+        )
+        return _ok(result)
     except Exception as e:
         return _err(e)
 

@@ -1,7 +1,7 @@
 from fastapi.responses import JSONResponse
 from fastapi import APIRouter, Body, status, Query
 from app.services import PartRequestService as partRequestService
-from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response
+from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response, error_json_response
 from app.schemas.PartRequest import PartRequest, PartRequestEdit
 from typing import List, Dict, Any
 from fastapi.encoders import jsonable_encoder
@@ -24,7 +24,7 @@ def create(request: Request, payload: PartRequest):
         response = partRequestService.insert(payload, user_token)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except Exception as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)
 
 
 @partRequestRouter.get("", response_description="Will return the list of part requests using the user uid and group uid")
@@ -41,7 +41,7 @@ def find(
             user_uid, group_id, specific_order_uid, stat)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except Exception as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)
 
 
 @partRequestRouter.get("/grouped", response_description="part requests grouped by group")
@@ -77,7 +77,7 @@ def find_grouped(
 
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(part_requests))
     except Exception as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)
 
 
 @partRequestRouter.get("/vehicles-available-in-requests", tags=["PartRequest"])
@@ -96,7 +96,7 @@ def vehicles_available_in_requests(
             content=get_successful_response({"vehicleIds": vehicle_ids}),
         )
     except Exception as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)
 
 
 @partRequestRouter.get("/group/group-by-parent", response_description="part requests grouped by parent_request_uid", tags=["PartRequest"])
@@ -116,7 +116,7 @@ def find_grouped_by_parent_request_uid(
 
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(results)))
     except Exception as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)
 
 
 
@@ -156,7 +156,7 @@ def find_vehicle_requests_with_offers(
             content=get_successful_response(part_requests_with_offers),
         )
     except Exception as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)
 
 
 @partRequestRouter.get("/{id}", response_description="Will return the specific part response")
@@ -170,7 +170,7 @@ def find_by_id(request: Request, id: str):
         }
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)
 
 
 @partRequestRouter.get("/search/reduced", response_description="Will return the reduced description")
@@ -188,7 +188,7 @@ def search(
 
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(reduced_part_requests))
     except Exception as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)
 
 
 def __format_reduced_parts(part_requests):
@@ -211,7 +211,7 @@ def build_filter(prop_name: Optional[str] = Query(None, title="prop_name")):
         filter_options = partRequestService.build_filter(prop_name)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(filter_options))
     except Exception as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)
 
 
 @partRequestRouter.get("/sibling-requests-with-offers/{parent_request_uid}", response_description="part request with offers")
@@ -236,7 +236,7 @@ def find_sibling_requests_with_offers(
             parent_request_uid, offer_owner_group, part_request_status, filters_dict)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(part_requests_with_offers))
     except Exception as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)
 
 
 @partRequestRouter.put("", tags=["PartRequest"])
@@ -247,7 +247,7 @@ def edit_part_request(
         edited_part_request = partRequestService.edit_part_request(payload)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(edited_part_request))
     except Exception as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)
 
 
 @partRequestRouter.put("/join_seller_to_part_request", tags=["PartRequest"])
@@ -259,4 +259,4 @@ def join_seller_to_part_request(
             payload["specific_order_uid"], payload["new_seller_group_id"])
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(edited_part_request))
     except HTTPException as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)

@@ -419,6 +419,24 @@ def find_offer_by_id(offer_uid: str):
             status_code=500, detail=f'Error while fetching offer {e}')
 
 
+def _find_existing_order_for_selection(request_id: str) -> dict | None:
+    for query in (
+        {"part_request._id": request_id},
+        {"part_request.id": request_id},
+    ):
+        existing = orderRepository.find_one(query)
+        if existing is not None:
+            return existing
+    return None
+
+
+def _selected_offer_response(offer: Offer, order_doc: dict) -> dict:
+    offer_json = offer.toJson()
+    offer_json.pop("_id", None)
+    offer_json["order_id"] = str(order_doc["_id"])
+    return offer_json
+
+
 def change_offer_status(request_id: str, offer_id: str, status: str, user_token: str):
     try:
         part_request: PartRequest = _get_part_request_data(request_id)
@@ -438,6 +456,28 @@ def change_offer_status(request_id: str, offer_id: str, status: str, user_token:
                     )
                 offer.update_status(OfferStatus.pending_approval)
             case offer_status.selected:
+                existing_order = _find_existing_order_for_selection(request_id)
+                if existing_order is not None:
+                    existing_offer_id = existing_order.get("offer", {}).get("_id")
+                    if existing_offer_id == offer_id:
+                        return _selected_offer_response(offer, existing_order)
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Part request already has a selected offer",
+                    )
+
+                if offer.status == OfferStatus.selected:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Offer already selected",
+                    )
+
+                if part_request.status == PartRequestStatus.OFFER_SELECTED:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Part request already has a selected offer",
+                    )
+
                 part_request.update_status(PartRequestStatus.OFFER_SELECTED)
                 offer.update_status(OfferStatus.selected)
 
@@ -472,8 +512,10 @@ def change_offer_status(request_id: str, offer_id: str, status: str, user_token:
 
         return offer_json
 
+    except HTTPException:
+        raise
     except Exception as e:
-        HTTPException(
+        raise HTTPException(
             status_code=500, detail=f'Error while changing offer status {e}')
 
 
@@ -553,7 +595,7 @@ def _get_part_request_data(request_id: str) -> PartRequest:
             return PartRequest(**part_request_data)
         return None
     except Exception as e:
-        HTTPException(
+        raise HTTPException(
             status_code=500, detail=f'Error while fetching part request {e}')
 
 
@@ -564,8 +606,132 @@ def _get_offer_data(offer_id: str) -> Offer:
             return Offer(**offer_data)
         return None
     except Exception as e:
-        HTTPException(
+        raise HTTPException(
             status_code=500, detail=f'Error while fetching part offer {e}')
+
+
+def _serialize_offer_doc(doc: dict, role: str) -> dict:
+    serialized = Offer(**doc).toJson()
+    serialized["role"] = role
+    if doc.get("part_request"):
+        pr = doc["part_request"]
+        serialized["part_request_snapshot"] = {
+            "_id": str(pr.get("_id", "")),
+            "creatorGroup": pr.get("creatorGroup"),
+            "status": pr.get("status"),
+            "part": pr.get("part"),
+            "vehicleInformation": pr.get("vehicleInformation"),
+            "createdAt": str(pr.get("createdAt", "")),
+        }
+    if doc.get("group_info"):
+        gi = doc["group_info"]
+        serialized["group_info"] = {
+            "_id": str(gi.get("_id", "")),
+            "name": gi.get("name"),
+            "type": gi.get("type"),
+            "city": gi.get("city"),
+            "state": gi.get("state"),
+        }
+    counterpart_group_id = None
+    if role == "seller" and doc.get("part_request"):
+        counterpart_group_id = doc["part_request"].get("creatorGroup")
+    elif role == "buyer":
+        counterpart_group_id = doc.get("group_id")
+    if counterpart_group_id:
+        counterpart = groupRepository.find_by_id(
+            str(counterpart_group_id), {"name": 1, "type": 1, "city": 1, "state": 1}
+        )
+        if counterpart:
+            serialized["counterpart_group"] = {
+                "_id": str(counterpart.get("_id", "")),
+                "name": counterpart.get("name"),
+                "type": counterpart.get("type"),
+                "city": counterpart.get("city"),
+                "state": counterpart.get("state"),
+            }
+    return serialized
+
+
+def find_by_group(
+    group_id: str,
+    *,
+    page: int = 1,
+    page_size: int = 20,
+    role: Optional[str] = None,
+    status: Optional[str] = None,
+) -> dict:
+    status_filter: Dict = {}
+    if status:
+        status_filter["status"] = status
+
+    seller_filters = {"group_id": group_id, **status_filter}
+    seller_docs = [
+        {**doc, "_role": "seller"}
+        for doc in offerRepository.find(seller_filters)
+    ]
+
+    buyer_request_ids = [
+        str(doc["_id"])
+        for doc in partRequestRepository.find(
+            {"creatorGroup": group_id},
+            {"_id": 1},
+        )
+    ]
+    buyer_docs: List[dict] = []
+    if buyer_request_ids:
+        buyer_filters = {"request_id": {"$in": buyer_request_ids}, **status_filter}
+        buyer_docs = [
+            {**doc, "_role": "buyer"}
+            for doc in offerRepository.find(buyer_filters)
+        ]
+
+    if role == "seller":
+        merged = seller_docs
+    elif role == "buyer":
+        merged = buyer_docs
+    else:
+        merged = seller_docs + buyer_docs
+
+    def sort_key(doc):
+        created = doc.get("createdAt")
+        if created is None:
+            return datetime.min.replace(tzinfo=ZoneInfo("UTC"))
+        if isinstance(created, str):
+            try:
+                return datetime.fromisoformat(created.replace(" ", "T"))
+            except ValueError:
+                return datetime.min.replace(tzinfo=ZoneInfo("UTC"))
+        if getattr(created, "tzinfo", None) is None:
+            return created.replace(tzinfo=ZoneInfo("UTC"))
+        return created
+
+    merged.sort(key=sort_key, reverse=True)
+
+    total = len(merged)
+    skip = (page - 1) * page_size
+    page_docs = merged[skip : skip + page_size]
+
+    offer_ids = [doc["_id"] for doc in page_docs if doc.get("_id")]
+    enriched_by_id = {
+        str(doc["_id"]): doc
+        for doc in offerRepository.find_by_ids_enriched(offer_ids)
+    }
+
+    items = []
+    for raw in page_docs:
+        oid = raw["_id"]
+        enriched = enriched_by_id.get(str(oid), raw)
+        enriched = {**raw, **enriched}
+        items.append(_serialize_offer_doc(enriched, raw["_role"]))
+
+    total_pages = max(1, (total + page_size - 1) // page_size) if total else 0
+    return {
+        "items": items,
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "total_pages": total_pages,
+    }
 
 
 def build_and_send_notification(

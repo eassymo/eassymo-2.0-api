@@ -399,6 +399,14 @@ def assign_delivery(
             group_id=offer_group_id,
         )
 
+        if assignment_type == "guest" and guest_phone and guest_name and assignment.guest_token:
+            invite_url = f"https://eassymo.mx/delivery-invite/{assignment.guest_token}"
+            WhatsappService().send_delivery_invite(
+                guest_phone=guest_phone,
+                guest_name=guest_name,
+                invite_url=invite_url,
+            )
+
         order.delivery_assignment = assignment
 
         if assignment_type == "guest":
@@ -413,17 +421,6 @@ def assign_delivery(
 
         updated_doc = orderRepository.edit(oid, order_data)
         result = Order(**updated_doc).toJson()
-
-        if assignment_type == "guest" and guest_phone and guest_name and assignment.guest_token:
-            invite_url = f"https://eassymo.mx/delivery-invite/{assignment.guest_token}"
-            try:
-                WhatsappService().send_delivery_invite(
-                    guest_phone=guest_phone,
-                    guest_name=guest_name,
-                    invite_url=invite_url,
-                )
-            except Exception:
-                pass
 
         return result
 
