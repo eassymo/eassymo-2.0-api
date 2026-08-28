@@ -171,7 +171,10 @@ def verify_firebase_token(id_token: str):
     """
     try:
         _ensure_firebase_initialized()
-        decoded_token = auth.verify_id_token(id_token)
+        # clock_skew_seconds: client clocks are often 1–2s ahead of the API.
+        # Fresh tokens right after login have iat=now on the client; without
+        # skew tolerance Firebase rejects them as "Token used too early" (401).
+        decoded_token = auth.verify_id_token(id_token, clock_skew_seconds=60)
         return decoded_token
     except Exception as e:
         print(f"❌ Error verifying Firebase token: {e}")

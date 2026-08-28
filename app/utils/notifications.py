@@ -5,6 +5,7 @@ from typing import Dict, Any
 
 from app.schemas.Notification import Notification
 from app.utils.firebase_admin import get_database_reference
+from app.services import push_service
 
 
 def _push_notification(path: str, notification_data: Dict[str, Any], owner: str) -> None:
@@ -16,6 +17,10 @@ def _push_notification(path: str, notification_data: Dict[str, Any], owner: str)
         "timestamp": {"sv": "timestamp"},
     }
     notifications_ref.push(payload)
+    try:
+        push_service.send_push_from_notification({**notification_data, "uid": uid})
+    except Exception:
+        pass
 
 
 def send_notification(notification: Notification, user_token: str = None) -> None:

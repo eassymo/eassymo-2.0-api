@@ -38,6 +38,7 @@ from app.routers import DeliveryRouter as deliveryRouter
 from app.routers import AdminRouter as adminRouter
 from app.routers import MostradorFolioRouter as mostradorFolioRouter
 from app.routers import ReviewRouter as reviewRouter
+from app.routers import PushRouter as pushRouter
 
 
 import app.utils.firebase_admin
@@ -190,3 +191,4 @@ app.include_router(deliveryRouter.deliveryRouter)
 app.include_router(adminRouter.adminRouter)
 app.include_router(reviewRouter.reviewRouter)
 app.include_router(mostradorFolioRouter.mostradorRouter)
+app.include_router(pushRouter.pushRouter)
