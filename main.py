@@ -144,16 +144,21 @@ async def auth_middleware(request: Request, call_next):
 
 CORS_ALLOW_ORIGINS = [
     "https://www.eassymo.mx",
+    "https://eassymo.mx",
+    "https://www.eassymo.com",
+    "https://eassymo.com",
     "https://eassymo-2-0-client.vercel.app",
     "https://eassymo-2-0-client-nw5q0qylv-fernando-francos-projects-1618c379.vercel.app",
 ]
 
 CORS_LOCALHOST_REGEX = r"https?://(localhost|127\.0\.0\.1)(:\d+)?$"
+CORS_EASSYMO_REGEX = r"https://(www\.)?eassymo\.(mx|com)$"
+CORS_ORIGIN_REGEX = rf"({CORS_LOCALHOST_REGEX})|({CORS_EASSYMO_REGEX})"
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ALLOW_ORIGINS,
-    allow_origin_regex=CORS_LOCALHOST_REGEX,
+    allow_origin_regex=CORS_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

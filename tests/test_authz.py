@@ -10,7 +10,7 @@ from app.dependencies.group_auth import (
     is_group_owner,
     user_belongs_to_group,
 )
-from main import CORS_ALLOW_ORIGINS, CORS_LOCALHOST_REGEX
+from main import CORS_ALLOW_ORIGINS, CORS_LOCALHOST_REGEX, CORS_EASSYMO_REGEX
 
 
 def _request_with_user(uid: str):
@@ -82,3 +82,6 @@ def test_assert_group_membership_denies_outsider(mock_find_group, mock_find_user
 def test_cors_allowlist_is_not_wildcard():
     assert "*" not in CORS_ALLOW_ORIGINS
     assert "localhost" in CORS_LOCALHOST_REGEX
+    assert "eassymo.com" in CORS_EASSYMO_REGEX
+    assert "https://eassymo.com" in CORS_ALLOW_ORIGINS
+    assert "https://eassymo.mx" in CORS_ALLOW_ORIGINS
