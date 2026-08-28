@@ -55,10 +55,16 @@ def get_my_orders(
 
 @deliveryRouter.get("/delivery/guest-orders", description="Orders assigned to a guest delivery token")
 def get_guest_orders(
-    token: str = Query(..., title="token"),
+    request: Request,
     status_filter: Optional[str] = Query(None, alias="status"),
 ):
     try:
+        token = request.headers.get("X-Guest-Token")
+        if not token:
+            return JSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                content=get_unsuccessful_response(Exception("Missing X-Guest-Token header")),
+            )
         result = DeliveryService.get_guest_orders(token, status_filter)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(result))
     except Exception as e:
@@ -71,10 +77,16 @@ def get_guest_orders(
     description="Single order assigned to a guest delivery token",
 )
 def get_guest_order_by_id(
+    request: Request,
     order_id: str,
-    token: str = Query(..., title="token"),
 ):
     try:
+        token = request.headers.get("X-Guest-Token")
+        if not token:
+            return JSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                content=get_unsuccessful_response(Exception("Missing X-Guest-Token header")),
+            )
         result = DeliveryService.get_guest_order_by_id(token, order_id)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(result))
     except Exception as e:

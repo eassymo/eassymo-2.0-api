@@ -10,6 +10,7 @@ from app.services import MostradorFolioService as folioService
 from app.services import UploadPictureService as uploadPictureService
 from app.services.VehiculoPartesService import search_partes_paginator
 from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response
+from app.dependencies.group_auth import assert_group_membership, require_authenticated_uid
 from app.utils.firebase_admin import verify_firebase_token
 from typing import Annotated, List, Optional
 
@@ -31,8 +32,10 @@ def create(request: Request, data: dict = Body(...), groupselected: str = Header
 
 
 @mostradorRouter.get("", description="List folios for the selected group")
-def list_folios(groupselected: str = Header(None)):
+def list_folios(request: Request, groupselected: str = Header(None)):
     try:
+        caller_uid = require_authenticated_uid(request)
+        assert_group_membership(caller_uid, str(groupselected))
         response = folioService.list_for_group(groupselected)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
@@ -40,8 +43,10 @@ def list_folios(groupselected: str = Header(None)):
 
 
 @mostradorRouter.get("/orphans", description="List POS folios without a linked Eassymo customer")
-def list_orphan_folios(groupselected: str = Header(None)):
+def list_orphan_folios(request: Request, groupselected: str = Header(None)):
     try:
+        caller_uid = require_authenticated_uid(request)
+        assert_group_membership(caller_uid, str(groupselected))
         response = folioService.list_orphans(groupselected)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:

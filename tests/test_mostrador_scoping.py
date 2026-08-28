@@ -249,7 +249,9 @@ def test_confirm_guest_option_tags_shop(monkeypatch):
     monkeypatch.setattr(
         svc.folioRepository,
         "set_piece_options",
-        lambda *args, **kwargs: doc,
+        lambda fid, piece_id, options, status, ts: (
+            doc["pieces"][0].update({"options": options, "status": status}) or doc
+        ),
     )
     monkeypatch.setattr(svc, "sync_assigned_folio", lambda fid: None)
     monkeypatch.setattr(svc.folioRepository, "find_by_id", lambda fid: doc)
@@ -320,7 +322,10 @@ def test_submit_group_options_allows_origin(monkeypatch):
     monkeypatch.setattr(
         svc,
         "_merge_piece_options",
-        lambda *args, **kwargs: {**doc, "pieces": [{"piece_id": "p1", "options": kwargs.get("options", [])}]},
+        lambda doc, folio_id, piece_id, options, **kwargs: {
+            **doc,
+            "pieces": [{"piece_id": "p1", "options": options}],
+        },
     )
 
     result = svc.submit_group_options("fid", "p1", [{"brand": "Bosch"}], "origin-1")
@@ -500,7 +505,7 @@ def test_get_redirect_info_backfills_missing_share_token(monkeypatch):
 
     assert result["share_token"]
     assert edited["share_token"] == result["share_token"]
-    assert edited["updated_at"] == "now"
+    assert edited["updated_at"] == "2026-07-10T12:00:00Z"
 
 
 def test_get_redirect_info_not_found(monkeypatch):
