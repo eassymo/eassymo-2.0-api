@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 
 from app.schemas.Review import OpenDisputeRequest, SubmitReviewRequest
 from app.services import ReviewService
+from app.dependencies.group_auth import assert_group_membership, require_authenticated_uid
 from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response
 
 reviewRouter = APIRouter(prefix="/review", tags=["Reviews"])
@@ -49,6 +50,8 @@ def pending_reviews(request: Request):
                 status_code=status.HTTP_400_BAD_REQUEST,
                 content=get_unsuccessful_response("GroupSelected header is required"),
             )
+        caller_uid = require_authenticated_uid(request)
+        assert_group_membership(caller_uid, reviewer_group_id)
         result = ReviewService.get_pending_reviews(reviewer_group_id)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(result))
     except HTTPException as e:
@@ -66,6 +69,8 @@ def submitted_reviews(request: Request):
                 status_code=status.HTTP_400_BAD_REQUEST,
                 content=get_unsuccessful_response("GroupSelected header is required"),
             )
+        caller_uid = require_authenticated_uid(request)
+        assert_group_membership(caller_uid, reviewer_group_id)
         result = ReviewService.get_submitted_reviews(reviewer_group_id)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(result))
     except HTTPException as e:

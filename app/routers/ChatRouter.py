@@ -4,6 +4,7 @@ from app.schemas.Message import Message
 from app.services import ChatService as chatService
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
+from app.dependencies.group_auth import assert_group_membership, require_authenticated_uid
 from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response, error_json_response
 
 chatRouter = APIRouter(prefix="/chat")
@@ -60,9 +61,11 @@ def to_be_read(request:Request, body=Body(...), groupselected: str = Header(None
 
 
 @chatRouter.post('/read-messages', response_description="Boolean that will indicate if messages where read for a certain user")
-def read_messages(id: str = Query(None, title="order or request id"), user_uid: str = Query(None, title="user_uid"), type: str = Query(None, title="type"), groupselected: str = Header(None)):
+def read_messages(request: Request, id: str = Query(None, title="order or request id"), user_uid: str = Query(None, title="user_uid"), type: str = Query(None, title="type"), groupselected: str = Header(None)):
     try:
-        response = chatService.read_messages(id, user_uid, type, groupselected)
+        caller_uid = require_authenticated_uid(request)
+        assert_group_membership(caller_uid, str(groupselected))
+        response = chatService.read_messages(id, caller_uid, type, groupselected)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except Exception as e:
         return error_json_response(e)

@@ -1,3 +1,5 @@
+import os
+
 from fastapi import HTTPException
 from app.routers import UserRouter as userRouter
 from app.routers import RolesRouter as rolesRouter
@@ -47,7 +49,15 @@ from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from fastapi.encoders import jsonable_encoder
 
-app = FastAPI()
+_IS_PROD = os.getenv("ENVIRONMENT", "").lower() in ("production", "prod") or os.getenv(
+    "RAILWAY_ENVIRONMENT", ""
+).lower() == "production"
+
+app = FastAPI(
+    docs_url=None if _IS_PROD else "/docs",
+    redoc_url=None if _IS_PROD else "/redoc",
+    openapi_url=None if _IS_PROD else "/openapi.json",
+)
 
 
 @app.exception_handler(HTTPException)
@@ -86,12 +96,9 @@ async def part_request_body_validation_handler(
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
-    public_paths = [
-        "/docs",
-        "/redoc",
-        "/openapi.json",
-        "/users/create",
-    ]
+    public_paths = []
+    if not _IS_PROD:
+        public_paths.extend(["/docs", "/redoc", "/openapi.json"])
 
     # Prefix-based public paths (delivery invite pages + public/guest mostrador views)
     public_prefixes = [
@@ -129,15 +136,18 @@ async def auth_middleware(request: Request, call_next):
             content={"detail": str(e.detail)}
         )
 
-origins = [
+CORS_ALLOW_ORIGINS = [
     "https://www.eassymo.mx",
     "https://eassymo-2-0-client.vercel.app",
     "https://eassymo-2-0-client-nw5q0qylv-fernando-francos-projects-1618c379.vercel.app",
 ]
 
+CORS_LOCALHOST_REGEX = r"https?://(localhost|127\.0\.0\.1)(:\d+)?$"
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ALLOW_ORIGINS,
+    allow_origin_regex=CORS_LOCALHOST_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

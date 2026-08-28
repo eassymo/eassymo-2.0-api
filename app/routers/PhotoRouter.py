@@ -8,6 +8,7 @@ from fastapi import UploadFile, Form
 from app.services import UploadPictureService as uploadPictureService
 from app.repositories import GuestDeliveryProfileRepository as guestProfileRepository
 from app.repositories import OrderRepository as orderRepository
+from app.dependencies.group_auth import require_authenticated_uid
 from app.schemas.GuestDeliveryProfile import GuestDeliveryProfileStatus
 
 
@@ -15,8 +16,13 @@ photoRouter = APIRouter(prefix="/photo")
 
 
 @photoRouter.post("/", response_description="Upload photo", tags=["Photos"])
-async def upload_photo(files: Annotated[List[UploadFile], Form()], userId: Annotated[str, Form()]):
-    response = await uploadPictureService.upload_user_photos(files, userId)
+async def upload_photo(
+    request: Request,
+    files: Annotated[List[UploadFile], Form()],
+    userId: Annotated[str, Form()] = None,
+):
+    caller_uid = require_authenticated_uid(request)
+    response = await uploadPictureService.upload_user_photos(files, caller_uid)
     return JSONResponse(status_code=status.HTTP_200_OK, content=response)
 
 

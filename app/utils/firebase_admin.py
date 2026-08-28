@@ -10,6 +10,22 @@ load_dotenv()
 _API_ROOT = Path(__file__).resolve().parents[2]
 
 
+def _is_production() -> bool:
+    return os.getenv("ENVIRONMENT", "").lower() in ("production", "prod") or os.getenv(
+        "RAILWAY_ENVIRONMENT", ""
+    ).lower() == "production"
+
+
+def _should_use_local_service_account_file() -> bool:
+    allow_local_env = os.getenv("ALLOW_LOCAL_FIREBASE_SERVICE_ACCOUNT_FILE")
+    if allow_local_env is not None and allow_local_env.lower() == "true":
+        return True
+    if allow_local_env is not None and allow_local_env.lower() == "false":
+        return False
+    # Local dev default: use gitignored adminsdk JSON when present (prod never does).
+    return not _is_production()
+
+
 def _find_default_service_account_file():
     """Use downloaded Firebase service account JSON in the API project root."""
     matches = sorted(_API_ROOT.glob("*firebase-adminsdk*.json"))
@@ -39,7 +55,7 @@ def initialize_firebase():
             return
 
         # Option 2: Service account JSON file in project root (local dev only; file must be gitignored)
-        if os.getenv("ALLOW_LOCAL_FIREBASE_SERVICE_ACCOUNT_FILE", "true").lower() == "true":
+        if _should_use_local_service_account_file():
             default_service_account = _find_default_service_account_file()
             if default_service_account:
                 cred = credentials.Certificate(default_service_account)

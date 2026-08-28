@@ -7,6 +7,7 @@ from app.utils.armadora_names import (
     normalize_armadora_name,
     pick_preferred_armadora_display,
 )
+from app.utils.regex_sanitize import sanitize_search_term, MAX_SEARCH_LENGTH
 
 
 def find_distinct_makes() -> List[str]:
@@ -50,7 +51,11 @@ def find_non_aces_by_name(search_argument: str, year: int) -> List[StandarizedVe
     try:
         standarized_vehicles: List[StandarizedVehicles] = []
 
-        search_pattern = {"$regex": search_argument, "$options": "i"}
+        safe_search = sanitize_search_term(search_argument)
+        if not safe_search:
+            return []
+
+        search_pattern = {"$regex": safe_search, "$options": "i"}
         
         pipeline = [
             {
@@ -82,15 +87,15 @@ def find_non_aces_by_name(search_argument: str, year: int) -> List[StandarizedVe
                     "relevance_score": {
                         "$add": [
                             # Exact make match gets highest score
-                            {"$cond": [{"$eq": [{"$toLower": "$make"}, search_argument.lower()]}, 100, 0]},
+                            {"$cond": [{"$eq": [{"$toLower": "$make"}, search_argument.lower()[:MAX_SEARCH_LENGTH]]}, 100, 0]},
                             # Exact model match gets high score
-                            {"$cond": [{"$eq": [{"$toLower": "$model"}, search_argument.lower()]}, 90, 0]},
+                            {"$cond": [{"$eq": [{"$toLower": "$model"}, search_argument.lower()[:MAX_SEARCH_LENGTH]]}, 90, 0]},
                             # Make starts with search gets medium score
-                            {"$cond": [{"$regexMatch": {"input": "$make", "regex": f"^{search_argument}", "options": "i"}}, 50, 0]},
+                            {"$cond": [{"$regexMatch": {"input": "$make", "regex": f"^{safe_search}", "options": "i"}}, 50, 0]},
                             # Model starts with search gets medium score
-                            {"$cond": [{"$regexMatch": {"input": "$model", "regex": f"^{search_argument}", "options": "i"}}, 45, 0]},
+                            {"$cond": [{"$regexMatch": {"input": "$model", "regex": f"^{safe_search}", "options": "i"}}, 45, 0]},
                             # Contains match gets low score
-                            {"$cond": [{"$regexMatch": {"input": "$make_model_combined", "regex": search_argument, "options": "i"}}, 10, 0]}
+                            {"$cond": [{"$regexMatch": {"input": "$make_model_combined", "regex": safe_search, "options": "i"}}, 10, 0]}
                         ]
                     }
                 }

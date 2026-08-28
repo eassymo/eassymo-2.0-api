@@ -1,10 +1,10 @@
 from fastapi.responses import JSONResponse
-from fastapi import APIRouter, Body, status, Query, HTTPException
+from fastapi import APIRouter, Body, Request, status, Query, HTTPException
 from app.schemas.UserRoles import UserRoles
-from app.utils import TypeUtilities as typeUtilities
 from app.services import UserRolesService as userRolesService
 from typing import Optional
-from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response, error_json_response
+from app.utils.ResponseUtils import get_successful_response, error_json_response
+from app.dependencies.group_auth import authorize_role_mutation
 from fastapi.encoders import jsonable_encoder
 
 
@@ -12,8 +12,9 @@ userRolesRouter = APIRouter(prefix="/userRoles")
 
 
 @userRolesRouter.post("", description="Insert a new user role", tags=["User Roles"])
-def insert(payload: UserRoles = Body()):
+def insert(request: Request, payload: UserRoles = Body()):
     try:
+        authorize_role_mutation(request, payload.user_uid, payload.group)
         response = userRolesService.insert(payload)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except HTTPException as e:
@@ -47,13 +48,13 @@ def find(
 
 
 @userRolesRouter.post("/activate-role", description="Activate the user role", tags=["User Roles"])
-def activate_role(
-        payload=Body(...)
-):
+def activate_role(request: Request, payload=Body(...)):
     try:
         user_uid = payload["user_uid"]
         role = payload["role"]
         new_group_id = payload["new_group_id"]
+
+        authorize_role_mutation(request, user_uid, new_group_id)
 
         response = userRolesService.activate_role(user_uid, role, new_group_id)
 
@@ -63,13 +64,13 @@ def activate_role(
 
 
 @userRolesRouter.post("/add-role-to-user", description="Adds an active role to a user for a group", tags=["User Roles"])
-def add_role_to_user(
-    payload=Body(...)
-):
+def add_role_to_user(request: Request, payload=Body(...)):
     try:
         user_uid = payload["user_uid"]
         role = payload["role"]
         group = payload["group"]
+
+        authorize_role_mutation(request, user_uid, group)
 
         response = userRolesService.add_role_to_user(user_uid, role, group)
 
@@ -79,13 +80,13 @@ def add_role_to_user(
 
 
 @userRolesRouter.post("/delete-role-from-user", description="deletes a given role for a user", tags=["User Roles"])
-def remove(
-    payload=Body(...)
-):
+def remove(request: Request, payload=Body(...)):
     try:
         user_uid = payload["user_uid"]
         role = payload["role"]
         group = payload["group"]
+
+        authorize_role_mutation(request, user_uid, group)
 
         response = userRolesService.remove_role_from_user(
             user_uid, role, group)
