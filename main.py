@@ -61,6 +61,11 @@ app = FastAPI(
 )
 
 
+@app.get("/health", tags=["Health"])
+async def healthcheck():
+    return {"status": "ok"}
+
+
 @app.exception_handler(HTTPException)
 async def http_exception_handler(_request: Request, exc: HTTPException):
     return JSONResponse(
@@ -97,7 +102,7 @@ async def part_request_body_validation_handler(
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
-    public_paths = []
+    public_paths = ["/health"]
     if not _IS_PROD:
         public_paths.extend(["/docs", "/redoc", "/openapi.json"])
 
