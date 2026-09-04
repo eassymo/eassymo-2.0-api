@@ -5,6 +5,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from bson import ObjectId
 from app.schemas.Groups import GroupSchema
+from app.utils.datetime_utils import serialize_datetime
 
 
 class OfferType(Enum):
@@ -91,10 +92,10 @@ class Offer(BaseModel):
             data["type"] = self.type.value
 
         if data.get("updatedAt") != None:
-            data["updatedAt"] = str(self.updatedAt)
+            data["updatedAt"] = serialize_datetime(self.updatedAt)
 
         if data.get("createdAt") != None:
-            data["createdAt"] = str(self.createdAt)
+            data["createdAt"] = serialize_datetime(self.createdAt)
 
         if data.get("group_info") != None:
             data["group_info"] = self.group_info.toJson()

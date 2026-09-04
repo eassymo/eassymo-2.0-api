@@ -55,7 +55,32 @@ def insert(partRequestInvite: RequestInvite) -> RequestInvite:
         part_request_invite_data = PartRequestInviteRepository.find_by_id(
             inserted_id)
 
-        return RequestInvite(**part_request_invite_data)
+        invite = RequestInvite(**part_request_invite_data)
+
+        if partRequestInvite.invited_group:
+            from app.services import notification_fanout
+
+            inviter_group_doc = GroupRepository.find_by_id(partRequestInvite.inviter_group)
+            inviter_group_name = (inviter_group_doc or {}).get("name") or ""
+            linked = list(PartRequestRepository.find({
+                "specific_order_uid": partRequestInvite.parent_request_id
+            }, {}))
+            for part_request_raw in linked:
+                part_request_fmt = PartRequest(**part_request_raw).toJson()
+                for group_found in notification_fanout._users_by_group_ids(
+                    [str(partRequestInvite.invited_group)],
+                ):
+                    for user_id in group_found.get("users") or []:
+                        notification_fanout.fanout_part_request_invite(
+                            invite_id=str(inserted_id),
+                            inviter_group_name=inviter_group_name,
+                            inviter_user=str(partRequestInvite.inviter_user or ""),
+                            owner=str(user_id),
+                            owner_group=str(partRequestInvite.invited_group),
+                            part_request=part_request_fmt,
+                        )
+
+        return invite
     except (HTTPException, PyMongoError) as e:
         raise HTTPException(e)
 
@@ -153,6 +178,26 @@ def find_and_link_census_invites_with_created_group(
 
             part_requests_invites_modified.append(RequestInvite(
                 **part_request_invite_modified).toJson())
+
+        from app.services import notification_fanout
+
+        for invite_json in part_requests_invites_modified:
+            invite_id = str(invite_json.get("_id") or invite_json.get("id") or "")
+            inviter_group_name = invite_json.get("inviter_group_name") or ""
+            inviter_user = invite_json.get("inviter_user") or ""
+            invited_group = invite_json.get("invited_group") or ""
+            for part_request in invite_json.get("linked_part_requests") or []:
+                users = notification_fanout._users_by_group_ids([invited_group]) if invited_group else []
+                for group_found in users:
+                    for user_id in group_found.get("users") or []:
+                        notification_fanout.fanout_part_request_invite(
+                            invite_id=invite_id,
+                            inviter_group_name=inviter_group_name,
+                            inviter_user=inviter_user,
+                            owner=str(user_id),
+                            owner_group=invited_group,
+                            part_request=part_request,
+                        )
 
         return part_requests_invites_modified
 

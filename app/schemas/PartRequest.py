@@ -5,6 +5,7 @@ from app.schemas.Groups import GroupSchema
 from app.schemas.Offer import Offer
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from app.utils.datetime_utils import serialize_datetime
 from typing import Optional
 from bson import ObjectId
 from enum import Enum
@@ -176,8 +177,8 @@ class PartRequest(BaseModel):
         if self.offers != None and len(self.offers) > 0:
             data["offers"] = [offer.toJson() for offer in self.offers]
 
-        data["createdAt"] = self.createdAt.isoformat() if self.createdAt else None
-        data["updatedAt"] = self.updatedAt.isoformat() if self.updatedAt else None
+        data["createdAt"] = serialize_datetime(self.createdAt)
+        data["updatedAt"] = serialize_datetime(self.updatedAt)
 
         if data.get("status") is not None:
             status = self.status

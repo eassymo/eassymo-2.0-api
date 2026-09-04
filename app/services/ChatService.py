@@ -1,10 +1,19 @@
+import logging
 from app.repositories import ChatRepository as chatRepository
+from app.repositories import PartRequestRepository as partRequestRepository
+from app.repositories import OrderRepository as orderRepository
 from app.schemas.Chat import Chat
 from app.schemas.Message import Message
-from typing import List, Dict, Any, Optional
+from app.services import realtime_bus
+from app.services.chat_display import mask_chat_for_viewer
+from typing import List, Dict, Any, Optional, Literal
 from pymongo.errors import PyMongoError
 from fastapi import HTTPException, status
 from bson import ObjectId
+
+logger = logging.getLogger(__name__)
+
+ChatEntityType = Literal["request", "order"]
 
 
 def _user_group_read_key(user_uid: str, group_id: Optional[str]) -> str:
@@ -44,6 +53,166 @@ def _mark_message_read_for_user(message: Message, user_group_key: str, group_id:
     message.isRead = True
 
 
+def _group_can_access_part_request_doc(part_request: dict, group_id: str) -> bool:
+    gid = str(group_id).strip()
+    if gid == str(part_request.get("creatorGroup", "")):
+        return True
+    sellers = [str(s) for s in (part_request.get("subscribedSellers") or [])]
+    if gid in sellers:
+        return True
+    followers = [str(f) for f in (part_request.get("subscribedFollowers") or [])]
+    if gid in followers:
+        return True
+    return False
+
+
+def _assert_chat_entity_access(entity_id: str, entity_type: str, group_id: str) -> None:
+    if entity_type == "request":
+        part_request = partRequestRepository.find_one_by_id(entity_id)
+        if not part_request:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Part request not found")
+        if not _group_can_access_part_request_doc(part_request, group_id):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Group cannot access this chat")
+        return
+
+    if entity_type == "order":
+        try:
+            order_oid = ObjectId(entity_id)
+        except Exception as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid order id") from exc
+
+        orders = list(orderRepository.find_by_id(order_oid))
+        if not orders:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+
+        order = orders[0]
+        part_request = order.get("part_request") or {}
+        if _group_can_access_part_request_doc(part_request, group_id):
+            return
+
+        offer_group = (order.get("offer") or {}).get("group_id")
+        if str(group_id) == str(offer_group):
+            return
+
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Group cannot access this chat")
+
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid chat type")
+
+
+def grant_realtime_access(
+    entity_id: str,
+    entity_type: ChatEntityType,
+    user_uid: str,
+    group_id: str,
+) -> bool:
+    _assert_chat_entity_access(entity_id, entity_type, group_id)
+    participant_uids = _participant_uids_for_entity(
+        entity_type,
+        entity_id,
+        extra_uids=[user_uid],
+    )
+    if not participant_uids:
+        participant_uids = [user_uid]
+    return realtime_bus.grant_chat_acl(entity_type, entity_id, participant_uids)
+
+
+def _uids_from_group_ids(group_ids: List[str]) -> List[str]:
+    clean_ids = [str(group_id).strip() for group_id in group_ids if group_id]
+    if not clean_ids:
+        return []
+    try:
+        from app.services import GroupService as groupService
+
+        rows = groupService.find_users_by_groups_ids_v2(clean_ids)
+    except Exception:
+        logger.warning("Failed resolving chat participant uids for groups=%s", clean_ids, exc_info=True)
+        return []
+
+    uids: List[str] = []
+    for row in rows or []:
+        for uid in row.get("users") or []:
+            if uid:
+                uids.append(str(uid))
+    return uids
+
+
+def _participant_uids_for_entity(
+    entity_type: ChatEntityType,
+    entity_id: str,
+    extra_uids: Optional[List[str]] = None,
+) -> List[str]:
+    uids = {str(uid) for uid in (extra_uids or []) if uid}
+
+    try:
+        if entity_type == "request":
+            part_request = partRequestRepository.find_one_by_id(entity_id) or {}
+            creator_user = part_request.get("creatorUser")
+            if creator_user:
+                uids.add(str(creator_user))
+            group_ids = [
+                part_request.get("creatorGroup"),
+                *(part_request.get("subscribedSellers") or []),
+                *(part_request.get("subscribedFollowers") or []),
+            ]
+            uids.update(_uids_from_group_ids(group_ids))
+        elif entity_type == "order":
+            try:
+                order_oid = ObjectId(entity_id)
+            except Exception:
+                return list(uids)
+            orders = list(orderRepository.find_by_id(order_oid))
+            if not orders:
+                return list(uids)
+            order = orders[0]
+            part_request = order.get("part_request") or {}
+            creator_user = part_request.get("creatorUser")
+            if creator_user:
+                uids.add(str(creator_user))
+            offer_group = (order.get("offer") or {}).get("group_id")
+            group_ids = [
+                part_request.get("creatorGroup"),
+                *(part_request.get("subscribedSellers") or []),
+                *(part_request.get("subscribedFollowers") or []),
+                offer_group,
+            ]
+            uids.update(_uids_from_group_ids(group_ids))
+    except Exception:
+        logger.warning(
+            "Failed resolving chat participants type=%s id=%s",
+            entity_type,
+            entity_id,
+            exc_info=True,
+        )
+
+    return list(uids)
+
+
+def _publish_message_event(chat: Chat, chat_id: ObjectId, message: Message) -> None:
+    if chat.requestId:
+        entity_type: ChatEntityType = "request"
+        entity_id = str(chat.requestId)
+    elif chat.orderId:
+        entity_type = "order"
+        entity_id = str(chat.orderId)
+    else:
+        return
+
+    participant_uids = _participant_uids_for_entity(
+        entity_type,
+        entity_id,
+        extra_uids=[message.senderId],
+    )
+    realtime_bus.grant_chat_acl(entity_type, entity_id, participant_uids)
+    realtime_bus.publish_chat_event(
+        entity_type,
+        entity_id,
+        {
+            "chatId": str(chat_id),
+            "message": message.toJson(),
+        },
+    )
+
+
 def insert(chat: Chat):
     try:
         chat_json = chat.toJson()
@@ -64,13 +233,21 @@ def insert(chat: Chat):
             status_code=500, detail=f'Error while inserting chat {err}')
 
 
-def find_by_request_or_order_id(request_order_id: str, type: str):
+def find_by_request_or_order_id(
+    request_order_id: str,
+    type: str,
+    viewer_group_id: Optional[str] = None,
+):
     try:
 
         chat_data: any = None
         chat: Chat | None = None
+        creator_group_id: Optional[str] = None
 
         if type == "request":
+            part_request = partRequestRepository.find_one_by_id(request_order_id)
+            if part_request:
+                creator_group_id = part_request.get("creatorGroup")
             aggregation_result = list(
                 chatRepository.find_by_request_id(request_order_id))
             if len(aggregation_result) > 0:
@@ -84,7 +261,17 @@ def find_by_request_or_order_id(request_order_id: str, type: str):
         if chat_data is not None:
             chat = Chat(**chat_data)
 
-        return chat.toJson() if chat is not None else None
+        if chat is None:
+            return None
+
+        chat_json = chat.toJson()
+        entity_type: ChatEntityType = "request" if type == "request" else "order"
+        return mask_chat_for_viewer(
+            chat_json,
+            entity_type=entity_type,
+            creator_group_id=str(creator_group_id) if creator_group_id else None,
+            viewer_group_id=viewer_group_id,
+        )
 
     except PyMongoError as err:
         raise HTTPException(
@@ -175,6 +362,8 @@ def add_message(message: Message, user_uid: str, group_id: str):
         chat_json.pop("_id")
 
         chatRepository.update_chat(chat_id, chat_json)
+
+        _publish_message_event(chat, chat_id, message)
 
         return True
     except PyMongoError as err:

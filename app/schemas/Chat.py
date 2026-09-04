@@ -1,11 +1,11 @@
 from pydantic import BaseModel, Field, root_validator
 from datetime import datetime
 from app.schemas.Message import Message
-from typing import List
+from typing import List, Optional
 from zoneinfo import ZoneInfo
 from bson import ObjectId
-from typing import Optional
 from app.schemas.Groups import GroupSchema
+from app.utils.datetime_utils import serialize_datetime
 from uuid import uuid4
 
 
@@ -35,8 +35,8 @@ class Chat(BaseModel):
     def toJson(self):
         data = self.dict(by_alias=True)
 
-        data["createdAt"] = str(self.createdAt)
-        data["updatedAt"] = str(self.updatedAt)
+        data["createdAt"] = serialize_datetime(self.createdAt)
+        data["updatedAt"] = serialize_datetime(self.updatedAt)
 
         if "group_info" in self:
             data["group_info"] = self.group_info.toJson()

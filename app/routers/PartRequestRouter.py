@@ -260,3 +260,21 @@ def join_seller_to_part_request(
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(edited_part_request))
     except HTTPException as e:
         return error_json_response(e)
+
+
+@partRequestRouter.post("/{part_request_id}/send-reminder", tags=["PartRequest"])
+def send_seller_reminder(part_request_id: str, payload=Body(...)):
+    try:
+        pending_group_ids = payload.get("pending_group_ids") or []
+        store_name = payload.get("store_name") or ""
+        sent = partRequestService.send_seller_reminder(
+            part_request_id,
+            pending_group_ids,
+            store_name,
+        )
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content=get_successful_response({"sent": sent}),
+        )
+    except Exception as e:
+        return error_json_response(e)

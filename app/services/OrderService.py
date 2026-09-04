@@ -272,6 +272,7 @@ def change_order_status(
     delivery_customer_signature_url: str | None = None,
     delivery_received_by_name: str | None = None,
     to_be_delivered_time: str | None = None,
+    is_delayed: Optional[bool] = None,
     requesting_user_uid: Optional[str] = None,
     enforce_delivery_completion_proof: bool = False,
 ):
@@ -300,6 +301,8 @@ def change_order_status(
         if to_be_delivered_time is not None:
             parsed_time = date_parser.parse(to_be_delivered_time)
             order.to_be_delivered_time = parsed_time
+            if is_delayed:
+                order.current_deliver_promise_delayed = True
 
         _assert_order_status_transition(order, new_status, requesting_user_uid)
 
@@ -331,7 +334,16 @@ def change_order_status(
 
         edited_order = orderRepository.edit(order_id, order_data)
 
-        return Order(**edited_order).toJson()
+        result = Order(**edited_order).toJson()
+
+        from app.services import notification_fanout
+
+        notification_fanout.fanout_order_status_change(order=result, new_status=new_status)
+
+        if is_delayed:
+            notification_fanout.fanout_order_delayed(order=result)
+
+        return result
 
     except HTTPException:
         raise
@@ -422,6 +434,10 @@ def assign_delivery(
         updated_doc = orderRepository.edit(oid, order_data)
         result = Order(**updated_doc).toJson()
 
+        from app.services import notification_fanout
+
+        notification_fanout.fanout_order_status_change(order=result, new_status=new_status)
+
         return result
 
     except HTTPException:
@@ -444,7 +460,14 @@ def change_delivery_time(order_id: str | ObjectId, new_delivery_time: datetime, 
 
             edited_order = orderRepository.edit(order_id, order_data)
 
-            return Order(**edited_order).toJson()
+            result = Order(**edited_order).toJson()
+
+            if is_delayed:
+                from app.services import notification_fanout
+
+                notification_fanout.fanout_order_delayed(order=result)
+
+            return result
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f'Error while changing order delivery time {e}')

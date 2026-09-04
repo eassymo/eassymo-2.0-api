@@ -20,22 +20,61 @@ def insert(chat: Chat = Body(...)):
 
 
 @chatRouter.post("/send-message/{chatId}", response_description="Boolean that confirms message is stored", tags=["Chat"])
-def send_message(request:Request, message: Message = Body(...), groupselected: str = Header(None)):
+def send_message(request: Request, message: Message = Body(...), groupselected: str = Header(None)):
     try:
-
-        user_info = request.state._state.get('user')
-
-        response = chatService.add_message(message, user_info.get('uid'), groupselected)
-        
+        caller_uid = require_authenticated_uid(request)
+        assert_group_membership(caller_uid, str(groupselected))
+        response = chatService.add_message(message, caller_uid, groupselected)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except Exception as e:
         return error_json_response(e)
 
 
-@chatRouter.get("/find-by-request-or-order-id", response_description="chat found based on the request or order id", tags=["Chat"])
-def find_by_request_or_order_id(id: str = Query(None, title="id"), type: str = Query(None, title="type")):
+@chatRouter.post("/realtime-access", response_description="Grant RTDB ACL for chat events", tags=["Chat"])
+def realtime_access(request: Request, body=Body(...), groupselected: str = Header(None)):
     try:
-        response = chatService.find_by_request_or_order_id(id, type)
+        caller_uid = require_authenticated_uid(request)
+        assert_group_membership(caller_uid, str(groupselected))
+        entity_id = body.get("id")
+        entity_type = body.get("type")
+        if not entity_id or not entity_type:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content=get_unsuccessful_response("id and type are required"),
+            )
+        granted = chatService.grant_realtime_access(entity_id, entity_type, caller_uid, groupselected)
+        if not granted:
+            return JSONResponse(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                content=get_unsuccessful_response("Failed to grant realtime chat access"),
+            )
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content=get_successful_response(jsonable_encoder({"granted": granted})),
+        )
+    except Exception as e:
+        return error_json_response(e)
+
+
+@chatRouter.get("/find-by-request-or-order-id", response_description="chat found based on the request or order id", tags=["Chat"])
+def find_by_request_or_order_id(
+    request: Request,
+    id: str = Query(None, title="id"),
+    type: str = Query(None, title="type"),
+    groupselected: str = Header(None),
+):
+    try:
+        caller_uid = require_authenticated_uid(request)
+        assert_group_membership(caller_uid, str(groupselected))
+        if type == "request":
+            chatService._assert_chat_entity_access(id, "request", str(groupselected))
+        elif type == "order":
+            chatService._assert_chat_entity_access(id, "order", str(groupselected))
+        response = chatService.find_by_request_or_order_id(
+            id,
+            type,
+            viewer_group_id=str(groupselected),
+        )
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except Exception as e:
         return error_json_response(e)
