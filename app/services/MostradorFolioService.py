@@ -12,6 +12,14 @@ def _now():
     return datetime.now(ZoneInfo('UTC'))
 
 
+def _dispatch_notifications(result: dict) -> dict:
+    from app.services import notification_fanout
+
+    notification_fanout.persist_notification_dict(result.get("notification"))
+    notification_fanout.persist_notification_dicts(result.get("notifications"))
+    return result
+
+
 def _generate_folio_code() -> str:
     """Short human code used by 'Capturar Folio'."""
     return uuid4().hex[-6:].upper()
@@ -1008,11 +1016,11 @@ def invite_shop(
                     notif_dict["type"] = notif_dict["type"].value
                 notification = notif_dict
 
-    return {
+    return _dispatch_notifications({
         "folio": _hydrate(updated),
         **share_meta,
         "notification": notification,
-    }
+    })
 
 
 def _group_name(group_id: Optional[str]) -> str:
@@ -1230,13 +1238,13 @@ def _link_folio_to_customer(
     notifications = _migrate_guest_notifications(folio_id, uid, group_id)
     refreshed = folioRepository.find_by_id(folio_id)
     from app.services import UserService as userService
-    return {
+    return _dispatch_notifications({
         "folio": _hydrate(refreshed or updated),
         "group_id": group_id,
         "needs_group": False,
         "user": userService.get_user_with_groups(uid),
         "notifications": notifications,
-    }
+    })
 
 
 def finish_claim(
@@ -1267,13 +1275,13 @@ def finish_claim(
 
     notifications = _migrate_guest_notifications(folio_id, uid, group_id)
     refreshed = folioRepository.find_by_id(folio_id)
-    return {
+    return _dispatch_notifications({
         "folio": _hydrate(refreshed or doc),
         "group_id": group_id,
         "needs_group": False,
         "user": userService.get_user_with_groups(uid),
         "notifications": notifications,
-    }
+    })
 
 
 def share(
@@ -1342,14 +1350,14 @@ def share(
             notif_dict["type"] = notif_dict["type"].value
         notification = notif_dict
 
-    return {
+    return _dispatch_notifications({
         "folio": _hydrate(updated),
         "share_token": share_token,
         "share_path": share_path,
         "share_url": share_url,
         "whatsapp_url": whatsapp_url,
         "notification": notification,
-    }
+    })
 
 
 def order_piece(
@@ -1543,13 +1551,13 @@ def create_taller_account(
     if group_id:
         notifications = _migrate_guest_notifications(folio_id, uid, group_id)
         refreshed = folioRepository.find_by_id(folio_id)
-        return {
+        return _dispatch_notifications({
             "folio": _hydrate(refreshed or doc),
             "group_id": group_id,
             "needs_group": False,
             "user": userService.get_user_with_groups(uid),
             "notifications": notifications,
-        }
+        })
 
     refreshed = folioRepository.find_by_id(folio_id)
     return {
@@ -2243,7 +2251,7 @@ def assign_to_group(folio_id: str, group_id: str, with_options: bool = True) -> 
             notif_dict["type"] = notif_dict["type"].value
         notification = notif_dict
 
-    return {"folio": _hydrate(refreshed), "part_request_ids": pr_ids, "notification": notification}
+    return _dispatch_notifications({"folio": _hydrate(refreshed), "part_request_ids": pr_ids, "notification": notification})
 
 
 def _build_order_for_piece(folio: dict, piece: dict, specific_order_uid: str, folio_id: str):
@@ -2452,12 +2460,12 @@ def confirm(folio_id: str, *, allow_when_assigned: bool = False) -> dict:
         "updated_at": _now(),
     })
 
-    return {
+    return _dispatch_notifications({
         "folio": _hydrate(updated),
         "order_ids": created_ids,
         "specific_order_uid": specific_order_uid,
         "notifications": notifications,
-    }
+    })
 
 
 def complete_in_person_delivery(folio_id: str) -> dict:

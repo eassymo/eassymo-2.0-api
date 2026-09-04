@@ -84,6 +84,7 @@ def change_order_status(request: Request, data: dict = Body(...)):
         delivery_received_by_name = data.get("delivery_received_by_name")
 
         to_be_delivered_time = data.get("to_be_delivered_time")
+        is_delayed = data.get("is_delayed")
 
         if not new_status:
             return JSONResponse(
@@ -132,6 +133,7 @@ def change_order_status(request: Request, data: dict = Body(...)):
                 delivery_customer_signature_url=delivery_customer_signature_url,
                 delivery_received_by_name=delivery_received_by_name,
                 to_be_delivered_time=to_be_delivered_time,
+                is_delayed=is_delayed,
                 requesting_user_uid=None,
                 enforce_delivery_completion_proof=True,
             )
@@ -180,6 +182,7 @@ def change_order_status(request: Request, data: dict = Body(...)):
                 delivery_customer_signature_url=delivery_customer_signature_url,
                 delivery_received_by_name=delivery_received_by_name,
                 to_be_delivered_time=to_be_delivered_time,
+                is_delayed=is_delayed,
                 requesting_user_uid=user.get("uid"),
                 enforce_delivery_completion_proof=True,
             )
@@ -196,6 +199,7 @@ def change_order_status(request: Request, data: dict = Body(...)):
             delivery_customer_signature_url=delivery_customer_signature_url,
             delivery_received_by_name=delivery_received_by_name,
             to_be_delivered_time=to_be_delivered_time,
+            is_delayed=is_delayed,
             requesting_user_uid=user.get("uid"),
             enforce_delivery_completion_proof=False,
         )

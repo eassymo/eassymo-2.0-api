@@ -216,6 +216,17 @@ def insert(part_request: PartRequest, user_token: str = None):
                     user_token=user_token
                 )
 
+        from app.services import notification_fanout
+
+        creator_name = part_request.group_info.name if part_request.group_info else ""
+        notification_fanout.fanout_part_request_created(
+            part_requests=found_part_requests,
+            creator_group_name=creator_name,
+            subscribed_sellers=list(part_request.subscribedSellers or []),
+            subscribed_followers=list(part_request.subscribedFollowers or []),
+            commissioner_group=part_request.commissioner_group,
+        )
+
         return found_part_requests
     except Exception as e:
         raise HTTPException(
@@ -1266,6 +1277,7 @@ def edit_part_request(part_request_data: List[PartRequestEdit]):
                         status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
                 subs = list(current_part_request.subscribedSellers or [])
+                previous_subs = set(subs)
                 if part_request_edit.subscribedSellers is not None:
                     subs = list(set(subs + part_request_edit.subscribedSellers))
 
@@ -1273,6 +1285,8 @@ def edit_part_request(part_request_data: List[PartRequestEdit]):
                     subs,
                     merged.creatorGroup,
                 )
+
+                new_seller_group_ids = sorted(set(subs) - previous_subs)
 
                 vehicle_maker = _vehicle_maker_from_information(
                     current_part_request.vehicleInformation
@@ -1304,6 +1318,18 @@ def edit_part_request(part_request_data: List[PartRequestEdit]):
                 edited_part_request = partRequestRepository.edit_part_request(
                     part_request_edit.id, part_request_json)
                 edited_ids.append(str(edited_part_request["_id"]))
+
+                if new_seller_group_ids:
+                    from app.services import notification_fanout
+
+                    creator_group_doc = groupRepository.find_by_id(merged.creatorGroup)
+                    creator_name = (creator_group_doc or {}).get("name") or ""
+                    formatted = __format_part_request(edited_part_request)
+                    notification_fanout.fanout_part_request_to_new_sellers(
+                        part_request=formatted,
+                        creator_group_name=creator_name,
+                        new_seller_group_ids=new_seller_group_ids,
+                    )
 
         return edited_ids
     except Exception as e:
@@ -1439,3 +1465,18 @@ def find_grouped_by_parent_request_uid(
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f'Error while finding part requests grouped by parent_request_uid: {e}')
+
+
+def send_seller_reminder(part_request_id: str, pending_group_ids: List[str], store_name: str) -> int:
+    from app.services import notification_fanout
+
+    part_request_data = partRequestRepository.find_one_by_id(part_request_id)
+    if not part_request_data:
+        raise HTTPException(status_code=404, detail="Part request not found")
+
+    formatted = __format_part_request(part_request_data)
+    return notification_fanout.fanout_part_request_reminder(
+        part_request=formatted,
+        pending_group_ids=pending_group_ids,
+        store_name=store_name,
+    )

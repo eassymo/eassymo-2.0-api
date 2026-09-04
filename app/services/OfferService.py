@@ -98,6 +98,15 @@ def insert(payload: Offer, user_token: str):
 
         inserted_id = offerRepository.insert(offer_payload).inserted_id
 
+        if part_request is not None:
+            from app.services import notification_fanout
+
+            notification_fanout.fanout_offer_after_insert(
+                offer_payload=offer_payload,
+                part_request=part_request.toJson(),
+                offer_id=str(inserted_id),
+            )
+
         return str(inserted_id)
     except Exception as e:
         raise HTTPException(
@@ -441,6 +450,7 @@ def change_offer_status(request_id: str, offer_id: str, status: str, user_token:
     try:
         part_request: PartRequest = _get_part_request_data(request_id)
         offer: Offer = _get_offer_data(offer_id)
+        previous_status = offer.status
         offer_status = OfferStatus[status.lower()]
         order_id: str = ""
         match offer_status:
@@ -509,6 +519,33 @@ def change_offer_status(request_id: str, offer_id: str, status: str, user_token:
 
         if len(order_id) > 0:
             offer_json["order_id"] = order_id
+
+        from app.services import notification_fanout
+
+        part_request_json = part_request.toJson()
+        offer_json_for_notify = offer.toJson()
+
+        if offer_status == OfferStatus.selected and order_id:
+            creator_group_doc = groupRepository.find_by_id(str(part_request.creatorGroup))
+            buyer_name = (creator_group_doc or {}).get("name") or ""
+            notification_fanout.fanout_offer_selected(
+                offer=offer_json_for_notify,
+                part_request=part_request_json,
+                order_id=order_id,
+                buyer_store_name=buyer_name,
+            )
+        elif (
+            offer_status == OfferStatus.created
+            and previous_status == OfferStatus.pending_approval
+            and offer_json_for_notify.get("call_center_that_posted_offer")
+        ):
+            offer_group_doc = groupRepository.find_by_id(str(offer.group_id))
+            approver_name = (offer_group_doc or {}).get("name") or ""
+            notification_fanout.fanout_callcenter_offer_approved(
+                offer=offer_json_for_notify,
+                part_request=part_request_json,
+                approver_group_name=approver_name,
+            )
 
         return offer_json
 

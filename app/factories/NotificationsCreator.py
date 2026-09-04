@@ -32,6 +32,29 @@ def create_part_request_notification(
         metaData=meta_data
     )
 
+def create_part_request_reminder_notification(
+    store_name: str,
+    part_name: str,
+    owner: str,
+    owner_group: str,
+    navigate_to_url: str,
+    meta_data: Dict[str, Any],
+    visible_roles: Optional[List[str]] = None
+) -> Notification:
+    if visible_roles is None:
+        visible_roles = DEFAULT_ROLES
+
+    return Notification(
+        type=NotificationType.PART_REQUEST_REMINDER,
+        message=f"Recuerda que el {store_name} está buscando {part_name} pieza. Envía tu mejor oferta y sorpréndelos con tu servicio.",
+        owner=owner,
+        ownerGroup=owner_group,
+        visibleRoles=visible_roles,
+        navigateToUrl=navigate_to_url,
+        read=False,
+        metaData=meta_data
+    )
+
 def create_offer_workshop_approval(
     store_name: str,
     part_name: str,
@@ -227,6 +250,31 @@ def create_order_received_notification(
     )
 
 
+def create_order_delayed_notification(
+    store_name: str,
+    part_name: str,
+    order_id: str,
+    owner: str,
+    owner_group: str,
+    navigate_to_url: str,
+    meta_data: Dict[str, Any],
+    visible_roles: Optional[List[str]] = None
+) -> Notification:
+    if visible_roles is None:
+        visible_roles = DEFAULT_ROLES
+
+    return Notification(
+        type=NotificationType.ORDER_DELAYED,
+        message=f"El negocio {store_name} indica que tu pieza {part_name} llegará más tarde de lo acordado.",
+        owner=owner,
+        ownerGroup=owner_group,
+        visibleRoles=visible_roles,
+        navigateToUrl=navigate_to_url,
+        read=False,
+        metaData=meta_data
+    )
+
+
 def create_invite_accepted_notification(
     store_name: str,
     owner: str,
@@ -267,6 +315,30 @@ def create_part_request_invite_notification(
     return Notification(
         type=NotificationType.PART_REQUEST_INVITE,
         message=f"¡{inviter_group_name} Te está invitando a ofertar en su solicitud por un {part_description}.",
+        owner=owner,
+        ownerGroup=owner_group,
+        visibleRoles=visible_roles,
+        navigateToUrl=navigate_to_url,
+        read=False,
+        metaData=meta_data
+    )
+
+
+def create_part_request_reminder_notification(
+    store_name: str,
+    part_name: str,
+    owner: str,
+    owner_group: str,
+    navigate_to_url: str,
+    meta_data: Dict[str, Any],
+    visible_roles: Optional[List[str]] = None
+) -> Notification:
+    if visible_roles is None:
+        visible_roles = DEFAULT_ROLES
+
+    return Notification(
+        type=NotificationType.PART_REQUEST_REMINDER,
+        message=f"Recuerda que el {store_name} está buscando {part_name} pieza. Envía tu mejor oferta y sorpréndelos con tu servicio.",
         owner=owner,
         ownerGroup=owner_group,
         visibleRoles=visible_roles,
@@ -478,6 +550,7 @@ NOTIFICATION_CREATORS = {
     NotificationType.ORDER_READY_TO_BE_SENT: create_order_ready_to_be_sent_notification,
     NotificationType.ORDER_SENT: create_order_sent_notification,
     NotificationType.ORDER_RECIEVED: create_order_received_notification,
+    NotificationType.ORDER_DELAYED: create_order_delayed_notification,
     NotificationType.INVITE_ACCEPTED: create_invite_accepted_notification,
     NotificationType.PART_REQUEST_INVITE: create_part_request_invite_notification,
     NotificationType.CALLCENTER_CONNECTED_GROUP_SELECTED_FOR_REQUEST: create_callcenter_connected_group_selected_notification,
