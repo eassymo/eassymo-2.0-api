@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 from app.dto.group_dto import EditGroupDto
 from bson import ObjectId
 from app.schemas.GeoJsonLocation import GeoJson
+from app.utils.phone_normalize import normalize_phone_e164
 import re
 
 GROUP_SEARCH_FIELDS = ("name", "address", "city", "state", "email")
@@ -90,6 +91,11 @@ def create_group(
         "users": [user_id],
         "owner": user_id
     }
+    raw_intake = (group_data.get("pos_whatsapp_intake") or "").strip()
+    if raw_intake:
+        group_data["pos_whatsapp_intake"] = normalize_phone_e164(raw_intake)
+    elif group_data.get("pos_whatsapp_intake") is not None:
+        group_data["pos_whatsapp_intake"] = None
 
     created_group = groupRepository.insert(group_data)
     created_group_id = str(created_group.inserted_id)
@@ -257,7 +263,14 @@ def edit_group_by_id(user_uid: str, id: str, payload: EditGroupDto):
                 raise HTTPException(
                     status_code=401, detail='Only the owner of the group can edit information')
 
-            edited_group = groupRepository.edit_group(id, payload.model_dump(exclude_none=True))
+            update_data = payload.model_dump(exclude_none=True)
+            if update_data.get("pos_whatsapp_intake") is not None:
+                raw_intake = (update_data.get("pos_whatsapp_intake") or "").strip()
+                update_data["pos_whatsapp_intake"] = (
+                    normalize_phone_e164(raw_intake) if raw_intake else None
+                )
+
+            edited_group = groupRepository.edit_group(id, update_data)
 
             if edited_group != None:
                 group = GroupSchema(**edited_group)

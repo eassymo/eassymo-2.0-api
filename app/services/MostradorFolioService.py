@@ -495,8 +495,18 @@ def get_redirect_info(folio_id: str) -> dict:
     if hasattr(status, "value"):
         status = status.value
 
+    origin_group_name = None
+    origin_group_id = doc.get("origin_group_id")
+    if origin_group_id:
+        from app.repositories import GroupRepository as groupRepository
+
+        group = groupRepository.find_by_id(str(origin_group_id), {"name": 1})
+        if group:
+            origin_group_name = group.get("name")
+
     return {
-        "origin_group_id": doc.get("origin_group_id"),
+        "origin_group_id": origin_group_id,
+        "origin_group_name": origin_group_name,
         "share_token": share_token,
         "status": status,
         "folio_code": doc.get("folio_code"),
@@ -1054,6 +1064,15 @@ def _group_public_info(group_id: Optional[str]) -> Optional[dict]:
         return None
 
 
+def _is_production_environment() -> bool:
+    import os
+
+    env = (os.getenv("ENVIRONMENT") or "").lower()
+    if env in ("production", "prod"):
+        return True
+    return (os.getenv("RAILWAY_ENVIRONMENT") or "").lower() == "production"
+
+
 def _resolve_client_base_url(client_origin: Optional[str] = None) -> str:
     import os
     from urllib.parse import urlparse
@@ -1068,6 +1087,8 @@ def _resolve_client_base_url(client_origin: Optional[str] = None) -> str:
         parsed = urlparse(origin if "://" in origin else f"https://{origin}")
         if parsed.scheme and parsed.netloc:
             return f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+    if not _is_production_environment():
+        return "http://localhost:3000"
     return ""
 
 

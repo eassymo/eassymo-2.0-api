@@ -22,6 +22,7 @@ class FolioSource(str, Enum):
     ORDER = "order"
     OFFER_CREATOR = "offer_creator"
     QR_LOAD = "qr_load"
+    WHATSAPP = "whatsapp"
 
 
 class PieceStatus(str, Enum):
@@ -163,6 +164,9 @@ class MostradorFolio(BaseModel):
     folio_code: Optional[str] = Field(None, description="short human code (Capturar Folio)")
     share_token: Optional[str] = Field(None, description="UUID for public/customer view")
     source: FolioSource = Field(FolioSource.COUNTER)
+    whatsapp_intake_id: Optional[str] = Field(
+        None, description="WhatsappInboundMessages id or MessageSid"
+    )
     status: FolioStatus = Field(FolioStatus.DRAFT)
     origin_group_id: Optional[str] = Field(None, description="seller group that opened it")
     creator_user: Optional[str] = Field(None, description="creator uid")
@@ -211,6 +215,7 @@ class AccountProvisionResponse(BaseModel):
 
 class FolioRedirectInfoResponse(BaseModel):
     origin_group_id: Optional[str] = None
+    origin_group_name: Optional[str] = None
     share_token: str
     status: Optional[str] = None
     folio_code: Optional[str] = None
