@@ -113,6 +113,7 @@ async def auth_middleware(request: Request, call_next):
         "/mostrador/public/",
         "/mostrador/tube/",
         "/delivery/guest-orders",
+        "/whatsAppMessage/inbound",
     ]
 
     # Guest delivery flow — X-Guest-Token replaces Firebase auth on these paths

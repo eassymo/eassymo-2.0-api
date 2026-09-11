@@ -38,34 +38,41 @@ class WhatsappService:
     def send_template_message(self, message: WhatsappMessage) -> Dict[str, Any]:
         try:
             content_variables = {
-                str(i+1): str(value) 
+                str(i + 1): str(value)
                 for i, value in enumerate(message.template.variables)
             }
-
-            print(self)
 
             response = self._get_client().messages.create(
                 from_=f"whatsapp:{self.from_number}",
                 to=f"whatsapp:{message.to}",
                 content_sid=message.template.name,
-                content_variables=json.dumps(content_variables)
+                content_variables=json.dumps(content_variables),
             )
 
-            print(f"Message sent successfully. SID: {response.sid}")
+            logger.info("WhatsApp template sent. SID=%s template=%s", response.sid, message.template.name)
 
             return {
                 "success": True,
                 "message_sid": response.sid,
                 "status": response.status,
                 "to": message.to,
-                "template_name": message.template.name
+                "template_name": message.template.name,
             }
         except TwilioRestException as e:
-            logger.error(f"Twilio error: {str(e)}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to send Whatsapp template"
+            logger.error(
+                "Twilio template send failed code=%s template=%s to=%s: %s",
+                e.code,
+                message.template.name,
+                message.to,
+                e.msg,
             )
+            detail = f"Failed to send WhatsApp template (Twilio {e.code}: {e.msg})"
+            if e.code in (21655, 92006):
+                detail += (
+                    ". Verify TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN are LIVE credentials "
+                    "for the account that owns this Content SID, not Test Credentials."
+                )
+            raise HTTPException(status_code=500, detail=detail)
         except Exception as e:
             logger.error(f"Unexpected error: {str(e)}")
             raise HTTPException(
@@ -116,6 +123,33 @@ class WhatsappService:
             raise HTTPException(
                 status_code=500,
                 detail="Unexpected error while sending delivery invite",
+            )
+
+    def send_text_message(self, to: str, body: str) -> Dict[str, Any]:
+        """Send a freeform WhatsApp message (requires an open 24h session window)."""
+        try:
+            response = self._get_client().messages.create(
+                from_=f"whatsapp:{self.from_number}",
+                to=f"whatsapp:{to}",
+                body=body,
+            )
+            return {
+                "success": True,
+                "message_sid": response.sid,
+                "status": response.status,
+                "to": to,
+            }
+        except TwilioRestException as e:
+            logger.error(f"Twilio text message error: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to send WhatsApp text message",
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error sending text message: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail="Unexpected error while sending WhatsApp text message",
             )
 
     def check_message_status(self, message_sid: str) -> Dict[str, Any]:

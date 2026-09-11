@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field, EmailStr, model_validator
 from typing import List, Optional, Union
+from datetime import datetime
 from enum import Enum
 from bson import ObjectId
 from app.schemas.Groups import GroupSchema
@@ -23,6 +24,14 @@ class UserSchema(BaseModel):
                             description="User Email address")
     phone: str = Field(None, max_length=13)
     phoneExtention: Optional[str] = Field(None, max_length=4)
+    pos_whatsapp: Optional[str] = Field(
+        None,
+        description="Verified WhatsApp used to forward POS intake messages",
+    )
+    pos_whatsapp_verified_at: Optional[datetime] = Field(
+        None,
+        description="When pos_whatsapp was confirmed via template link",
+    )
     uid: str = Field(
         None, description="Equivalence id that links the record with the firebase record")
     location: object = Field(None)

@@ -18,6 +18,10 @@ class GroupSchema(BaseModel):
                       description="Name of the group")
     type: int = Field(None, description="Type of group")
     whatsAppNumber:  Optional[str] = Field(None, description="Whatsapp number")
+    pos_whatsapp_intake: Optional[str] = Field(
+        None,
+        description="Seller WhatsApp number authorized to forward requests into POS",
+    )
     state: str = Field(None, description="location state of group")
     city: str = Field(None, description="location city of the group")
     country: Optional[str] = Field(

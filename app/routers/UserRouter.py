@@ -5,11 +5,14 @@ from app.utils import TypeUtilities as typeUtilities
 from app.services import UserService as userService
 from typing import Optional
 from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response
-from app.dependencies.group_auth import require_authenticated_uid
+from app.dto.whatsapp_intake_dto import WhatsappIntakeConfirmDto, WhatsappIntakeStartDto
+from app.services.WhatsappIntakeVerificationService import WhatsappIntakeVerificationService
+from app.dependencies.group_auth import require_authenticated_uid, require_group_membership_from_header
 from fastapi.encoders import jsonable_encoder
 
-
 userRouter = APIRouter(prefix="/users")
+whatsapp_intake_service = WhatsappIntakeVerificationService()
+
 
 @userRouter.post("/create", response_description="User creation endpoint", response_model=UserSchema, tags=["Users"])
 def create(request: Request, user: UserSchema = Body(...)):
@@ -21,6 +24,64 @@ def create(request: Request, user: UserSchema = Body(...)):
         )
     response = typeUtilities.parse_json(userService.create_user(user))
     return JSONResponse(status_code=status.HTTP_201_CREATED, content=response)
+
+
+@userRouter.get(
+    "/me/whatsapp-intake/status",
+    response_description="Verified POS WhatsApp status for current user",
+    tags=["Users", "WhatsApp"],
+)
+def whatsapp_intake_status(request: Request):
+    uid = require_authenticated_uid(request)
+    body = whatsapp_intake_service.get_status(uid)
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content=get_successful_response(body),
+    )
+
+
+@userRouter.post(
+    "/me/whatsapp-intake/start",
+    response_description="Send WhatsApp template with confirm URL",
+    tags=["Users", "WhatsApp"],
+)
+def whatsapp_intake_start(request: Request, payload: WhatsappIntakeStartDto = Body(...)):
+    uid = require_authenticated_uid(request)
+    body = whatsapp_intake_service.start(uid, payload.phone)
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content=get_successful_response(body),
+    )
+
+
+@userRouter.get(
+    "/me/whatsapp-intake/pending/{token}",
+    response_description="Preview pending WhatsApp verification",
+    tags=["Users", "WhatsApp"],
+)
+def whatsapp_intake_preview(request: Request, token: str):
+    uid = require_authenticated_uid(request)
+    body = whatsapp_intake_service.preview(uid, token)
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content=get_successful_response(body),
+    )
+
+
+@userRouter.post(
+    "/me/whatsapp-intake/confirm",
+    response_description="Confirm WhatsApp link and save pos_whatsapp on user",
+    tags=["Users", "WhatsApp"],
+)
+def whatsapp_intake_confirm(request: Request, payload: WhatsappIntakeConfirmDto = Body(...)):
+    uid = require_authenticated_uid(request)
+    require_group_membership_from_header(request)
+    body = whatsapp_intake_service.confirm(uid, payload.token)
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content=get_successful_response(body),
+    )
+
 
 @userRouter.get("", response_description="users found", tags=["Users"])
 def find(search_argument: Optional[str] = Query(None, title="search_argument")):
