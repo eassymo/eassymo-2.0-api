@@ -29,11 +29,7 @@ class WhatsappInboundService:
         self.whatsapp_service = WhatsappService()
         self.intake_processor = WhatsappIntakeProcessorService()
 
-    def _public_webhook_url(self, request: Request) -> str:
-        configured = os.getenv("TWILIO_WEBHOOK_PUBLIC_URL", "").strip()
-        if configured:
-            return configured.rstrip("/")
-
+    def _request_webhook_url(self, request: Request) -> str:
         proto = request.headers.get("x-forwarded-proto", request.url.scheme)
         host = request.headers.get("x-forwarded-host") or request.headers.get(
             "host"
@@ -42,6 +38,16 @@ class WhatsappInboundService:
         if request.url.query:
             path = f"{path}?{request.url.query}"
         return f"{proto}://{host}{path}"
+
+    def _signature_candidate_urls(self, request: Request) -> list[str]:
+        candidates: list[str] = []
+        configured = os.getenv("TWILIO_WEBHOOK_PUBLIC_URL", "").strip().rstrip("/")
+        if configured:
+            candidates.append(configured)
+        derived = self._request_webhook_url(request).rstrip("/")
+        if derived not in candidates:
+            candidates.append(derived)
+        return candidates
 
     def validate_signature(
         self, request: Request, params: Mapping[str, str]
@@ -62,11 +68,17 @@ class WhatsappInboundService:
         if not signature:
             raise HTTPException(status_code=403, detail="Missing Twilio signature")
 
-        url = self._public_webhook_url(request)
         validator = RequestValidator(self.auth_token)
-        if not validator.validate(url, dict(params), signature):
-            logger.warning("Invalid Twilio signature for inbound webhook url=%s", url)
-            raise HTTPException(status_code=403, detail="Invalid Twilio signature")
+        param_dict = dict(params)
+        for url in self._signature_candidate_urls(request):
+            if validator.validate(url, param_dict, signature):
+                return
+
+        logger.warning(
+            "Invalid Twilio signature for inbound webhook candidates=%s",
+            self._signature_candidate_urls(request),
+        )
+        raise HTTPException(status_code=403, detail="Invalid Twilio signature")
 
     @staticmethod
     def _strip_whatsapp_prefix(value: str) -> str:
