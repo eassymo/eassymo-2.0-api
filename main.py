@@ -127,6 +127,10 @@ async def auth_middleware(request: Request, call_next):
     if path in public_paths:
         return await call_next(request)
 
+    # Twilio posts here with X-Twilio-Signature, not a Firebase bearer token.
+    if path.rstrip("/") == "/whatsAppMessage/inbound":
+        return await call_next(request)
+
     if any(path.startswith(prefix) for prefix in public_prefixes):
         return await call_next(request)
 

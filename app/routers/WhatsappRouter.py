@@ -1,8 +1,9 @@
-from fastapi.responses import JSONResponse
-from fastapi import APIRouter, Body, status, HTTPException, Path
+from fastapi.responses import JSONResponse, Response
+from fastapi import APIRouter, Body, status, HTTPException, Path, Request
 from app.schemas.WhatasppMessage import WhatsappMessage
 from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response
 from app.services import WhatsappService as whatsAppService
+from app.services.WhatsappInboundService import WhatsappInboundService
 import logging
 
 logger = logging.getLogger(__name__)
@@ -10,6 +11,23 @@ logger = logging.getLogger(__name__)
 whatsAppRouter = APIRouter(prefix="/whatsAppMessage")
 
 whatsapp_service = whatsAppService.WhatsappService()
+inbound_service = WhatsappInboundService()
+
+
+@whatsAppRouter.post("/inbound", tags=["WhatsApp"])
+async def inbound_whatsapp(request: Request):
+    form = await request.form()
+    try:
+        twiml, payload, created = inbound_service.handle_inbound(request, form)
+    except HTTPException as exc:
+        logger.error("Inbound WhatsApp webhook rejected: %s", exc.detail)
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=get_unsuccessful_response(exc),
+        )
+    inbound_service.maybe_send_ack(payload, created)
+    inbound_service.process_intake(payload, created)
+    return Response(content=twiml, media_type="application/xml")
 
 
 @whatsAppRouter.post("/send_template", tags=["WhatsApp"])
