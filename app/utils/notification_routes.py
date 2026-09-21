@@ -16,9 +16,13 @@ def buyer_offer_review_path(
     return "/dashboard-v2"
 
 
-def order_management_v2_path(order_id: str) -> str:
+def order_management_v2_path(order_id: str, current_role: int | None = None) -> str:
     order_id = (order_id or "").strip()
-    return f"/order-management-v2/{order_id}" if order_id else "/order-management-v2"
+    if not order_id:
+        return "/order-management-v2"
+    if current_role is not None:
+        return f"/order-management-v2/{order_id}?currentRole={current_role}"
+    return f"/order-management-v2/{order_id}"
 
 
 def buyer_offer_notification_meta(

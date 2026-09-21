@@ -9,7 +9,7 @@ from app.config.database import get_mysql_db
 AcesVehiclesRouter = APIRouter(prefix="/AcesVehicles")
 
 
-@AcesVehiclesRouter.get("/", tags=["Aces Vehicles"])
+@AcesVehiclesRouter.get("", tags=["Aces Vehicles"])
 def find(
     search_argument: Optional[str] = Query(None, title="search_argument"),
     year: Optional[str] = Query(None, title="year"),
@@ -17,7 +17,10 @@ def find(
 ) -> JSONResponse:
     try:
         if not search_argument:
-            return get_unsuccessful_response(Exception("Please provide a search argument"))
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Please provide a search argument",
+            )
 
         vehicles = AcesVehiclesService.find_aces_vehicles(
             mysql_db, search_argument, year)

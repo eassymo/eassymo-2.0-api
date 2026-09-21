@@ -11,6 +11,7 @@ listRouter = APIRouter(prefix="/lists")
 
 
 @listRouter.post("", response_description="id of the created list", tags=["Lists"])
+@listRouter.post("/", response_description="id of the created list", tags=["Lists"], include_in_schema=False)
 def create_list(payload: ListsSchema = Body(...)):
     try:
         response = typeUtilities.parse_json(listService.create_list(payload))
@@ -29,13 +30,14 @@ def insert(payload: ListsSchema = Body()):
 
 
 @listRouter.get("", response_description="created lists for user", tags=["Lists"])
+@listRouter.get("/", response_description="created lists for user", tags=["Lists"], include_in_schema=False)
 def find_lists(userId: str = Query(None, title="userId",
                           description="The current selected user"), 
                groupId: str = Query(None, title="groupId",
                           description="The current selected group")):
     response = typeUtilities.parse_json(
         listService.get_lists_by_user_and_group(userId, groupId))
-    return JSONResponse(status_code=status.HTTP_201_CREATED, content=response)
+    return JSONResponse(status_code=status.HTTP_200_OK, content=response)
 
 
 @listRouter.put("/{list_id}", response_description="updated result", tags=["Lists"])

@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Optional, List
 from bson import ObjectId
 from app.schemas.GeoJsonLocation import GeoJson
+from app.schemas.Review import ReputationSummary
 
 
 class GroupType(Enum):
@@ -39,6 +40,9 @@ class GroupSchema(BaseModel):
     can_be_invited: Optional[bool] = Field(None)
     is_callcenter: Optional[bool] = Field(False)
     is_commissioner: Optional[bool] = Field(False, description="Makrs if the group will be of type commission")
+    reputation: Optional[ReputationSummary] = Field(
+        None, description="Denormalized review reputation aggregate"
+    )
 
     @root_validator(pre=True)
     def convert_objectId(cls, value):

@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field, root_validator
 from enum import Enum
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from app.utils.datetime_utils import serialize_datetime
 from typing import List
 from uuid import uuid4
 from typing import Optional
@@ -48,7 +49,7 @@ class Message(BaseModel):
         data = self.dict()
 
         data["type"] = self.type.value
-        data["createdAt"] = str(self.createdAt)
+        data["createdAt"] = serialize_datetime(self.createdAt)
         data["metaData"] = self.metaData.dict() if self.metaData is not None else None
         data["link"] =  self.link.dict() if self.link is not None else None
 

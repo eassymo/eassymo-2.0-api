@@ -49,6 +49,7 @@ class WhatsappService:
                 for i, value in enumerate(message.template.variables)
             }
 
+
             response = self._get_client().messages.create(
                 from_=f"whatsapp:{self.from_number}",
                 to=f"whatsapp:{message.to}",

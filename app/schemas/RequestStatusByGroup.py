@@ -15,7 +15,11 @@ class RequestStatusByGroup(BaseModel):
     createdAt: Optional[datetime] = Field(datetime.now(ZoneInfo('UTC')))
     updatedAt: Optional[datetime] = Field(
         default=datetime.now(ZoneInfo('UTC')))
-    status: OfferStatus = Field(None)
+    status: Optional[OfferStatus] = Field(None)
+    recycled_parent_request_uid: Optional[str] = Field(
+        None,
+        description="When set, this seller group recycled the original part request into a new parent batch",
+    )
 
     @root_validator(pre=True)
     def convert_objectId(cls, values):
@@ -34,6 +38,7 @@ class RequestStatusByGroup(BaseModel):
         data = self.model_dump(by_alias=True)
         data["createdAt"] = str(self.createdAt)
         data["updatedAt"] = str(self.updatedAt)
-        data["status"] = self.status.value
+        if self.status is not None:
+            data["status"] = self.status.value
 
         return data

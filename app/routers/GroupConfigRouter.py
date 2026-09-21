@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Body, status
+from fastapi import APIRouter, Body, HTTPException, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
@@ -11,7 +11,7 @@ from app.schemas.GroupConfig import (
 from app.services import GroupConfigService
 from app.services import ArmadoraCompatibilityService
 from app.services import SistemasCompatibilityService
-from app.utils.ResponseUtils import get_successful_response
+from app.utils.ResponseUtils import get_successful_response, error_json_response
 
 groupConfigRouter = APIRouter(prefix="/group-config", tags=["GroupConfig"])
 
@@ -33,11 +33,10 @@ def evaluate_sistemas_compatibility(payload: SistemasCompatibilityRequest = Body
             status_code=status.HTTP_200_OK,
             content=get_successful_response(jsonable_encoder(result)),
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={"success": False, "code": "GENERIC_ERROR", "error": str(e)},
-        )
+        return error_json_response(e)
 
 
 @groupConfigRouter.post("/armadora-compatibility")
@@ -51,11 +50,10 @@ def evaluate_armadora_compatibility(payload: ArmadoraCompatibilityRequest = Body
             status_code=status.HTTP_200_OK,
             content=get_successful_response(jsonable_encoder(result)),
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={"success": False, "code": "GENERIC_ERROR", "error": str(e)},
-        )
+        return error_json_response(e)
 
 
 @groupConfigRouter.get("/{group_id}")
@@ -66,11 +64,10 @@ def get_group_config(group_id: str):
             status_code=status.HTTP_200_OK,
             content=get_successful_response(jsonable_encoder(config.toJson())),
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={"success": False, "code": "GENERIC_ERROR", "error": str(e)},
-        )
+        return error_json_response(e)
 
 
 @groupConfigRouter.put("/{group_id}/armadoras")
@@ -84,11 +81,10 @@ def upsert_armadoras_config(
             status_code=status.HTTP_200_OK,
             content=get_successful_response(jsonable_encoder(config.toJson())),
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={"success": False, "code": "GENERIC_ERROR", "error": str(e)},
-        )
+        return error_json_response(e)
 
 
 @groupConfigRouter.put("/{group_id}/sistemas")
@@ -102,8 +98,7 @@ def upsert_sistemas_config(
             status_code=status.HTTP_200_OK,
             content=get_successful_response(jsonable_encoder(config.toJson())),
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={"success": False, "code": "GENERIC_ERROR", "error": str(e)},
-        )
+        return error_json_response(e)

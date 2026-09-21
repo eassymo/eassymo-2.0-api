@@ -1,17 +1,24 @@
 from fastapi.responses import JSONResponse
-from fastapi import APIRouter, Body, status, Query, HTTPException
+from fastapi import APIRouter, Body, Request, status, Query, HTTPException
 from app.schemas.Users import UserSchema
 from app.utils import TypeUtilities as typeUtilities
 from app.services import UserService as userService
 from typing import Optional
 from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response
+from app.dependencies.group_auth import require_authenticated_uid
 from fastapi.encoders import jsonable_encoder
 
 
 userRouter = APIRouter(prefix="/users")
 
 @userRouter.post("/create", response_description="User creation endpoint", response_model=UserSchema, tags=["Users"])
-def create(user: UserSchema = Body(...)):
+def create(request: Request, user: UserSchema = Body(...)):
+    caller_uid = require_authenticated_uid(request)
+    if str(user.uid) != str(caller_uid):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Token uid must match user uid",
+        )
     response = typeUtilities.parse_json(userService.create_user(user))
     return JSONResponse(status_code=status.HTTP_201_CREATED, content=response)
 
@@ -39,8 +46,14 @@ def update(uid: str, user:UserSchema = Body()):
 
 
 @userRouter.post("/add-role", response_model=UserSchema, tags=["Users"])
-def add_role(payload = Body(...)):
+def add_role(request: Request, payload = Body(...)):
     try:
+        caller_uid = require_authenticated_uid(request)
+        if str(payload["user_uid"]) != str(caller_uid):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cannot modify roles for another user",
+            )
         response = userService.add_role_to_user(payload["user_uid"], payload["role_id"])
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except (HTTPException) as e:
@@ -48,8 +61,14 @@ def add_role(payload = Body(...)):
 
 
 @userRouter.post("/remove-role", response_model=UserSchema, tags=["Users"])
-def add_role(payload = Body(...)):
+def remove_role(request: Request, payload = Body(...)):
     try:
+        caller_uid = require_authenticated_uid(request)
+        if str(payload["user_uid"]) != str(caller_uid):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cannot modify roles for another user",
+            )
         response = userService.remove_role_from_user(payload["user_uid"], payload["role_id"])
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except (HTTPException) as e:

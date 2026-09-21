@@ -5,6 +5,23 @@ from app.config import database
 from bson import ObjectId
 
 
+def _object_id_eq_expr(var_name: str) -> Dict[str, Any]:
+    """Match groups._id to a string variable; empty/invalid ids never match."""
+    return {
+        "$eq": [
+            "$_id",
+            {
+                "$convert": {
+                    "input": f"$${var_name}",
+                    "to": "objectId",
+                    "onError": None,
+                    "onNull": None,
+                }
+            },
+        ]
+    }
+
+
 def _updated_at_completion_match_expr(start_utc: datetime, end_utc: datetime) -> Dict[str, Any]:
     """
     Orders usually store updated_at as a string (Order.toJson uses str(datetime)).
@@ -65,13 +82,7 @@ def find_by_id(id: ObjectId):
                 "from": "groups",
                 "let": {"group_id": "$offer.group_id"},
                 "pipeline": [
-                    {
-                        "$match": {
-                            "$expr": {
-                                "$eq": ["$_id", {"$toObjectId": "$$group_id"}]
-                            }
-                        }
-                    }
+                    {"$match": {"$expr": _object_id_eq_expr("group_id")}}
                 ],
                 "as": "offer_group"
             }
@@ -87,13 +98,7 @@ def find_by_id(id: ObjectId):
                 "from": "groups",
                 "let": {"creator_group": "$part_request.creatorGroup"},
                 "pipeline": [
-                    {
-                        "$match": {
-                            "$expr": {
-                                "$eq": ["$_id", {"$toObjectId": "$$creator_group"}]
-                            }
-                        }
-                    }
+                    {"$match": {"$expr": _object_id_eq_expr("creator_group")}}
                 ],
                 "as": "request_group"
             }
@@ -141,13 +146,7 @@ def find(
                 "from": "groups",
                 "let": {"group_id": "$offer.group_id"},
                 "pipeline": [
-                    {
-                        "$match": {
-                            "$expr": {
-                                "$eq": ["$_id", {"$toObjectId": "$$group_id"}]
-                            }
-                        }
-                    }
+                    {"$match": {"$expr": _object_id_eq_expr("group_id")}}
                 ],
                 "as": "offer_group"
             }
@@ -163,13 +162,7 @@ def find(
                 "from": "groups",
                 "let": {"creator_group": "$part_request.creatorGroup"},
                 "pipeline": [
-                    {
-                        "$match": {
-                            "$expr": {
-                                "$eq": ["$_id", {"$toObjectId": "$$creator_group"}]
-                            }
-                        }
-                    }
+                    {"$match": {"$expr": _object_id_eq_expr("creator_group")}}
                 ],
                 "as": "request_group"
             }
