@@ -1,5 +1,8 @@
 import logging
 import os
+import threading
+import time
+from datetime import datetime, timezone
 from typing import Any, Dict, Mapping, Optional, Tuple
 
 from fastapi import HTTPException, Request
@@ -8,6 +11,7 @@ from twilio.request_validator import RequestValidator
 from app.repositories import WhatsappInboundRepository as inbound_repo
 from app.services.WhatsappIntakeProcessorService import WhatsappIntakeProcessorService
 from app.services.WhatsappService import WhatsappService
+from app.services.WhatsappClarificationService import extract_whatsapp_message_id
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +96,8 @@ class WhatsappInboundService:
             if form.get(f"MediaUrl{i}")
         ]
 
+        channel_metadata = str(form.get("ChannelMetadata") or "")
+
         return {
             "message_sid": str(form.get("MessageSid") or ""),
             "account_sid": str(form.get("AccountSid") or ""),
@@ -103,6 +109,11 @@ class WhatsappInboundService:
             "profile_name": str(form.get("ProfileName") or ""),
             "wa_id": str(form.get("WaId") or ""),
             "forwarded": str(form.get("Forwarded") or "").lower() == "true",
+            "original_replied_message_sid": str(
+                form.get("OriginalRepliedMessageSid") or ""
+            ),
+            "channel_metadata": channel_metadata,
+            "whatsapp_message_id": extract_whatsapp_message_id(channel_metadata),
             "status": "received",
         }
 
@@ -165,9 +176,35 @@ class WhatsappInboundService:
         if not created or not self.extract_enabled:
             return
         try:
-            self.intake_processor.process_inbound(payload)
+            schedule = self.intake_processor.process_inbound(payload)
+            if schedule and schedule.get("schedule_debounce"):
+                thread = threading.Thread(
+                    target=self.debounced_flush,
+                    args=(
+                        schedule["from_number"],
+                        schedule["generation"],
+                        schedule.get("flush_at"),
+                    ),
+                    daemon=True,
+                )
+                thread.start()
         except Exception as exc:
             logger.exception("WhatsApp intake processing failed: %s", exc)
+
+    def debounced_flush(self, from_number: str, generation: int, flush_at) -> None:
+        if flush_at is not None:
+            if isinstance(flush_at, str):
+                flush_at = datetime.fromisoformat(flush_at.replace("Z", "+00:00"))
+            if isinstance(flush_at, datetime):
+                if flush_at.tzinfo is None:
+                    flush_at = flush_at.replace(tzinfo=timezone.utc)
+                delay = (flush_at - datetime.now(timezone.utc)).total_seconds()
+                if delay > 0:
+                    time.sleep(delay)
+        try:
+            self.intake_processor.flush_if_ready(from_number, generation)
+        except Exception as exc:
+            logger.exception("WhatsApp debounced flush failed for %s: %s", from_number, exc)
 
     def handle_inbound(
         self, request: Request, form: Mapping[str, Any]

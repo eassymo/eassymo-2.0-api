@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Body, status, Request, Header
 from fastapi.responses import JSONResponse
 from app.services import MostradorFolioService as folioService
+from app.services import WhatsappFolioThreadService as whatsappThreadService
 from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response
 from typing import Optional
 
@@ -153,6 +154,18 @@ def tube_options(tube_token: str, data: dict = Body(...)):
             shop_name=(shop or {}).get("name"),
             captured_by_buyer=bool(data.get("captured_by_buyer", False)),
         )
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+    except Exception as e:
+        return JSONResponse(status_code=_err_status(e), content=get_unsuccessful_response(e))
+
+
+@mostradorRouter.get(
+    "/{folio_id}/whatsapp-thread",
+    description="Seller: chronological WhatsApp burst that formed this folio",
+)
+def get_whatsapp_thread(folio_id: str, groupselected: str = Header(None)):
+    try:
+        response = whatsappThreadService.get_whatsapp_thread(folio_id, groupselected)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
         return JSONResponse(status_code=_err_status(e), content=get_unsuccessful_response(e))
