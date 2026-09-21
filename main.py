@@ -1,3 +1,5 @@
+import os
+
 from fastapi import HTTPException
 from app.routers import UserRouter as userRouter
 from app.routers import RolesRouter as rolesRouter
@@ -35,6 +37,9 @@ from app.routers import PendingCartRouter as pendingCartRouter
 from app.routers import DeliveryRouter as deliveryRouter
 from app.routers import AdminRouter as adminRouter
 from app.routers import MostradorFolioRouter as mostradorFolioRouter
+from app.routers import ReviewRouter as reviewRouter
+from app.routers import PushRouter as pushRouter
+from app.routers import NotificationRouter as notificationRouter
 
 
 import app.utils.firebase_admin
@@ -46,7 +51,36 @@ from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from fastapi.encoders import jsonable_encoder
 
-app = FastAPI()
+_IS_PROD = os.getenv("ENVIRONMENT", "").lower() in ("production", "prod") or os.getenv(
+    "RAILWAY_ENVIRONMENT", ""
+).lower() == "production"
+
+app = FastAPI(
+    docs_url=None if _IS_PROD else "/docs",
+    redoc_url=None if _IS_PROD else "/redoc",
+    openapi_url=None if _IS_PROD else "/openapi.json",
+)
+
+
+@app.get("/health", tags=["Health"])
+async def healthcheck():
+    return {"status": "ok"}
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(_request: Request, exc: HTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(_request: Request, exc: Exception):
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
 
 
 @app.exception_handler(RequestValidationError)
@@ -69,20 +103,24 @@ async def part_request_body_validation_handler(
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
-    public_paths = [
-        "/docs",
-        "/redoc",
-        "/openapi.json",
-        "/users/create",
-        "/delivery/guest-orders",
-    ]
+    public_paths = ["/health"]
+    if not _IS_PROD:
+        public_paths.extend(["/docs", "/redoc", "/openapi.json"])
 
     # Prefix-based public paths (delivery invite pages + public/guest mostrador views)
     public_prefixes = [
         "/delivery-invite/",
         "/mostrador/public/",
         "/mostrador/tube/",
+        "/delivery/guest-orders",
     ]
+
+    # Guest delivery flow — X-Guest-Token replaces Firebase auth on these paths
+    guest_token_paths = frozenset({
+        "/order/change-status",
+        "/delivery/confirm-pickup",
+        "/photo/guest",
+    })
 
     path = request.url.path
 
@@ -92,8 +130,7 @@ async def auth_middleware(request: Request, call_next):
     if any(path.startswith(prefix) for prefix in public_prefixes):
         return await call_next(request)
 
-    # Allow guest token auth to pass through for change-status
-    if path == "/order/change-status" and request.headers.get("X-Guest-Token"):
+    if path in guest_token_paths and request.headers.get("X-Guest-Token"):
         return await call_next(request)
 
     try:
@@ -106,15 +143,23 @@ async def auth_middleware(request: Request, call_next):
             content={"detail": str(e.detail)}
         )
 
-origins = [
+CORS_ALLOW_ORIGINS = [
     "https://www.eassymo.mx",
+    "https://eassymo.mx",
+    "https://www.eassymo.com",
+    "https://eassymo.com",
     "https://eassymo-2-0-client.vercel.app",
-    "https://eassymo-2-0-client-nw5q0qylv-fernando-francos-projects-1618c379.vercel.app"
+    "https://eassymo-2-0-client-nw5q0qylv-fernando-francos-projects-1618c379.vercel.app",
 ]
+
+CORS_LOCALHOST_REGEX = r"https?://(localhost|127\.0\.0\.1)(:\d+)?$"
+CORS_EASSYMO_REGEX = r"https://(www\.)?eassymo\.(mx|com)$"
+CORS_ORIGIN_REGEX = rf"({CORS_LOCALHOST_REGEX})|({CORS_EASSYMO_REGEX})"
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ALLOW_ORIGINS,
+    allow_origin_regex=CORS_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -155,4 +200,7 @@ app.include_router(categoriasRouter.categoriasRouter)
 app.include_router(pendingCartRouter.pendingCartRouter)
 app.include_router(deliveryRouter.deliveryRouter)
 app.include_router(adminRouter.adminRouter)
+app.include_router(reviewRouter.reviewRouter)
 app.include_router(mostradorFolioRouter.mostradorRouter)
+app.include_router(pushRouter.pushRouter)
+app.include_router(notificationRouter.notificationRouter)

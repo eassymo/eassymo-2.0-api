@@ -65,6 +65,16 @@ def find(filters: Dict[str, Any]):
     return _col().find(filters).sort("updated_at", -1)
 
 
+def find_by_customer_phone(phone: str, limit: int = 25) -> List[dict]:
+    """Folios shared with a guest/customer phone (E.164 or local variants)."""
+    filters = {
+        "customer.phone": phone,
+        "status": {"$ne": "canceled"},
+        "share_token": {"$exists": True, "$ne": None},
+    }
+    return list(_col().find(filters).sort("updated_at", -1).limit(limit))
+
+
 def find_orphans(group_id: str, limit: int = 20):
     """POS folios owned by the seller with no linked Eassymo buyer business."""
     filters = {
@@ -131,6 +141,30 @@ def set_piece_order(id: str, piece_id: str, order: Optional[dict], updated_at) -
             "pieces.$.order": order,
             "updated_at": updated_at,
         }},
+        return_document=ReturnDocument.AFTER,
+    )
+
+
+def push_activity_log(id: str, entry: dict, updated_at) -> Optional[dict]:
+    return _col().find_one_and_update(
+        {"_id": ObjectId(id)},
+        {"$push": {"activity_log": entry}, "$set": {"updated_at": updated_at}},
+        return_document=ReturnDocument.AFTER,
+    )
+
+
+def mark_activity_entries_migrated(id: str, entry_ids: List[str], updated_at) -> Optional[dict]:
+    if not entry_ids:
+        return find_by_id(id)
+    return _col().find_one_and_update(
+        {"_id": ObjectId(id)},
+        {
+            "$set": {
+                "activity_log.$[e].migrated": True,
+                "updated_at": updated_at,
+            }
+        },
+        array_filters=[{"e.id": {"$in": entry_ids}}],
         return_document=ReturnDocument.AFTER,
     )
 
