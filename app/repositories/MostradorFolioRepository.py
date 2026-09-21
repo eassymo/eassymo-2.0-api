@@ -29,6 +29,34 @@ def find_by_share_token(share_token: str) -> Optional[dict]:
     return _col().find_one({"share_token": share_token})
 
 
+def find_by_clarify_message_sid(message_sid: str) -> Optional[dict]:
+    if not message_sid:
+        return None
+    return _col().find_one(
+        {
+            "whatsapp_pending_questions.asked_message_sid": message_sid,
+            "status": "draft",
+        }
+    )
+
+
+def find_drafts_with_open_questions(
+    *,
+    origin_group_id: str,
+    creator_uid: Optional[str] = None,
+    limit: int = 10,
+) -> List[dict]:
+    query: Dict[str, Any] = {
+        "source": "whatsapp",
+        "status": "draft",
+        "origin_group_id": origin_group_id,
+        "whatsapp_pending_questions": {"$elemMatch": {"status": "open"}},
+    }
+    if creator_uid:
+        query["creator_user"] = creator_uid
+    return list(_col().find(query).sort("updated_at", -1).limit(limit))
+
+
 def find_by_tube_token(tube_token: str) -> Optional[dict]:
     return _col().find_one({"participant_shops.tube_token": tube_token})
 
