@@ -5,6 +5,7 @@ from typing import Optional
 from app.dependencies.super_admin import require_super_admin
 from app.services.AdminMetricsService import AdminMetricsService
 from app.services.AdminWriteService import AdminWriteService
+from app.services.AdminWhatsappInboundService import AdminWhatsappInboundService
 from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response
 
 adminRouter = APIRouter(
@@ -501,5 +502,37 @@ def list_audit_log(
 ):
     try:
         return _ok(AdminWriteService.list_audit_log(page, page_size))
+    except Exception as e:
+        return _err(e)
+
+
+@adminRouter.get("/whatsapp-inbound")
+def list_whatsapp_inbound(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    from_number: Optional[str] = Query(None),
+    extraction_status: Optional[str] = Query(None),
+    processing_status: Optional[str] = Query(None),
+    group_id: Optional[str] = Query(None),
+):
+    try:
+        return _ok(
+            AdminWhatsappInboundService.list_messages(
+                page,
+                page_size,
+                from_number=from_number,
+                extraction_status=extraction_status,
+                processing_status=processing_status,
+                group_id=group_id,
+            )
+        )
+    except Exception as e:
+        return _err(e)
+
+
+@adminRouter.get("/whatsapp-inbound/{message_id}")
+def get_whatsapp_inbound(message_id: str):
+    try:
+        return _ok(AdminWhatsappInboundService.get_message(message_id))
     except Exception as e:
         return _err(e)
