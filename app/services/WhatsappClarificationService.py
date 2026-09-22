@@ -316,6 +316,50 @@ def resolve_position(text: str) -> Optional[str]:
     return None
 
 
+_MATERIAL_ALIASES = {
+    "ceramica": "Cerámicas",
+    "ceramicas": "Cerámicas",
+    "ceramico": "Cerámicas",
+    "ceramicos": "Cerámicas",
+}
+
+
+def resolve_material_note(text: str) -> Optional[str]:
+    """Detect a non-position material note such as cerámicas."""
+    normalized = _normalize_text(text or "")
+    for token in _tokenize(text):
+        alias = _MATERIAL_ALIASES.get(token)
+        if alias:
+            return alias
+    if "ceramica" in normalized:
+        return "Cerámicas"
+    return None
+
+
+def apply_material_note_to_folio(
+    folio: dict,
+    question: dict,
+    answer_text: str,
+) -> Tuple[dict, bool]:
+    """Append a material note to the target piece comments without closing the question."""
+    note = resolve_material_note(answer_text)
+    if not note:
+        return {}, False
+    piece_id = question.get("piece_id")
+    if not piece_id:
+        return {}, False
+    pieces = [dict(p) for p in (folio.get("pieces") or [])]
+    for piece in pieces:
+        if str(piece.get("piece_id")) != str(piece_id):
+            continue
+        existing = (piece.get("comments") or "").strip()
+        if note.lower() in existing.lower():
+            return {"pieces": pieces}, True
+        piece["comments"] = f"{existing} · {note}".strip(" · ") if existing else note
+        return {"pieces": pieces}, True
+    return {}, False
+
+
 def resolve_vehicle_patch(text: str, field_path: str) -> Optional[str]:
     cleaned = (text or "").strip()
     if not cleaned:

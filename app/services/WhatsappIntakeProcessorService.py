@@ -874,9 +874,9 @@ class WhatsappIntakeProcessorService:
         folio: dict,
         message_sids: List[str],
         burst_id: Optional[str],
-        use_fallback_once: bool = True,
+        react_all: bool = False,
     ) -> None:
-        del burst_id, use_fallback_once
+        del burst_id
         folio_code = clarify.folio_code_of(folio) or "—"
         for sid in message_sids:
             if not sid:
@@ -905,7 +905,176 @@ class WhatsappIntakeProcessorService:
                     "evidence_paths": doc.get("evidence_paths") or [],
                 },
             )
-            break
+            if not react_all:
+                break
+
+    def _parts_overlap(self, left: str, right: str) -> bool:
+        left_norm = (left or "").strip().lower()
+        right_norm = (right or "").strip().lower()
+        if not left_norm or not right_norm:
+            return False
+        if left_norm in right_norm or right_norm in left_norm:
+            return True
+        left_tokens = set(_normalize_body_for_token(left_norm).split())
+        right_tokens = set(_normalize_body_for_token(right_norm).split())
+        return bool(left_tokens & right_tokens)
+
+    def _proposal_matches_open_draft(
+        self,
+        proposal: WhatsappExtractionProposal,
+        folio: dict,
+    ) -> bool:
+        vehicle = folio.get("vehicle") or {}
+        extracted = proposal.vehicle
+        if not extracted or not extracted.make or not extracted.model or not extracted.year:
+            return False
+        if str(vehicle.get("maker") or "").strip().lower() != str(extracted.make).strip().lower():
+            return False
+        if str(vehicle.get("model") or "").strip().lower() != str(extracted.model).strip().lower():
+            return False
+        if str(vehicle.get("year") or "").strip() != str(extracted.year).strip():
+            return False
+
+        folio_parts = [
+            clarify.piece_label(piece).lower()
+            for piece in (folio.get("pieces") or [])
+        ]
+        proposal_parts = [
+            (line.part_name or "").strip().lower()
+            for line in (proposal.lines or [])
+            if (line.part_name or "").strip()
+        ]
+        if not folio_parts or not proposal_parts:
+            return False
+        return any(
+            self._parts_overlap(proposal_part, folio_part)
+            for proposal_part in proposal_parts
+            for folio_part in folio_parts
+        )
+
+    def _find_resend_match_folio(
+        self,
+        *,
+        from_number: str,
+        proposal: WhatsappExtractionProposal,
+        group_id: str,
+        creator_uid: Optional[str],
+    ) -> Optional[dict]:
+        drafts = clarify.find_drafts_with_open_questions(
+            origin_group_id=group_id,
+            creator_uid=creator_uid,
+        )
+        if len(drafts) == 1:
+            candidate = drafts[0]
+            if self._proposal_matches_open_draft(proposal, candidate):
+                return candidate
+            return None
+        if len(drafts) > 1:
+            last_token = self._latest_share_token(from_number)
+            if last_token:
+                folio = self._load_folio_by_share_token(last_token)
+                if folio and clarify.open_questions(folio):
+                    if self._proposal_matches_open_draft(proposal, folio):
+                        return folio
+            return None
+        last_token = self._latest_share_token(from_number)
+        if not last_token:
+            return None
+        folio = self._load_folio_by_share_token(last_token)
+        if not folio:
+            return None
+        can_resume, _ = self._can_resume_folio(
+            folio,
+            group_id=group_id,
+            creator_uid=creator_uid,
+        )
+        if not can_resume:
+            return None
+        if self._enum_value(folio.get("source")) != "whatsapp":
+            return None
+        if self._enum_value(folio.get("status")) != "draft":
+            return None
+        if self._proposal_matches_open_draft(proposal, folio):
+            return folio
+        return None
+
+    def _resend_open_clarification(
+        self,
+        *,
+        from_number: str,
+        folio: dict,
+        question: dict,
+        burst_id: Optional[str],
+        folio_id: str,
+    ) -> dict:
+        body = clarify.format_clarify_message(folio, question)
+        sid = self._send_bot_message(
+            from_number,
+            body,
+            burst_id=burst_id,
+            kind="bot_clarify",
+            folio_id=folio_id,
+        )
+        questions = clarify.attach_asked_sid(
+            folio.get("whatsapp_pending_questions") or [],
+            question.get("id"),
+            sid,
+        )
+        return folio_service.update(
+            folio_id, {"whatsapp_pending_questions": questions}
+        )
+
+    def _link_resend_to_existing_draft(
+        self,
+        *,
+        from_number: str,
+        folio: dict,
+        message_sids: List[str],
+        burst_id: Optional[str],
+        group_id: str,
+        creator_uid: Optional[str],
+    ) -> None:
+        can_resume, refuse_message = self._can_resume_folio(
+            folio,
+            group_id=group_id or "",
+            creator_uid=creator_uid,
+        )
+        if not can_resume:
+            self._refuse_resume(
+                from_number, message_sids, refuse_message or "", burst_id=burst_id
+            )
+            return
+
+        folio_id = str(folio.get("_id") or folio.get("id") or "")
+        share_token = str(folio.get("share_token") or "")
+        self._remember_share_token(
+            from_number,
+            share_token,
+            message_sids,
+            folio_id,
+            processing_status="draft_resumed",
+            burst_id=burst_id,
+        )
+        react_sids = self._filter_inbound_reaction_sids(message_sids)
+        self._apply_chain_reactions(
+            from_number=from_number,
+            folio=folio,
+            message_sids=react_sids,
+            burst_id=burst_id,
+            react_all=True,
+        )
+        for sid in message_sids:
+            if not sid:
+                continue
+            inbound_repo.update_fields(
+                sid,
+                {
+                    "folio_id": folio_id,
+                    "processing_status": "draft_resumed",
+                    "extraction_status": "ready",
+                    "burst_id": burst_id,
+                },
+            )
 
     def _stamp_evidence_paths(
         self,
@@ -1111,6 +1280,12 @@ class WhatsappIntakeProcessorService:
             )
             return True
 
+        material_patch, stored_material = clarify.apply_material_note_to_folio(
+            folio, question, answer_text
+        )
+        if stored_material:
+            folio = folio_service.update(folio_id, material_patch)
+
         self._send_bot_message(
             from_number,
             f"Vinculado a {clarify.folio_code_of(folio)}. "
@@ -1119,6 +1294,14 @@ class WhatsappIntakeProcessorService:
             kind="bot_error",
             folio_id=folio_id,
         )
+        if stored_material:
+            self._resend_open_clarification(
+                from_number=from_number,
+                folio=folio,
+                question=question,
+                burst_id=burst_id,
+                folio_id=folio_id,
+            )
         return True
 
     def _send_draft_link_message(
@@ -1518,6 +1701,22 @@ class WhatsappIntakeProcessorService:
             return
 
         if self._is_full_new_request(proposal, extract_bodies):
+            matched = self._find_resend_match_folio(
+                from_number=from_number,
+                proposal=proposal,
+                group_id=group_id or "",
+                creator_uid=creator_uid,
+            )
+            if matched:
+                self._link_resend_to_existing_draft(
+                    from_number=from_number,
+                    folio=matched,
+                    message_sids=message_sids,
+                    burst_id=burst_id,
+                    group_id=group_id or "",
+                    creator_uid=creator_uid,
+                )
+                return
             self._create_draft_from_proposal(
                 from_number=from_number,
                 group_id=group_id,

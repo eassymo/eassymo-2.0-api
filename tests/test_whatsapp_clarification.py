@@ -428,6 +428,341 @@ def test_handle_complement_garbage_keeps_question_open(
 @patch("app.services.WhatsappIntakeProcessorService.inbound_repo")
 @patch("app.services.WhatsappIntakeProcessorService.WhatsappService")
 @patch("app.services.WhatsappIntakeProcessorService.folio_service")
+def test_handle_complement_ceramic_stores_note_and_reasks_position(
+    mock_folio_service,
+    mock_whatsapp_cls,
+    mock_inbound_repo,
+):
+    from app.services.WhatsappIntakeProcessorService import WhatsappIntakeProcessorService
+
+    folio = {
+        "_id": "folio-1",
+        "share_token": "share-abc",
+        "folio_code": "ABC123",
+        "source": "whatsapp",
+        "status": "draft",
+        "origin_group_id": "g1",
+        "creator_user": "uid-1",
+        "vehicle": {"maker": "Nissan", "model": "Versa", "year": "2018"},
+        "pieces": [
+            {
+                "piece_id": "p1",
+                "name": "Balatas",
+                "tipoParteId": "10",
+                "position": "No aplica",
+                "qty": 1,
+            }
+        ],
+        "whatsapp_pending_questions": [
+            {
+                "id": "q1",
+                "path": "piece:p1.position",
+                "piece_id": "p1",
+                "prompt": "¿Son delanteras o traseras?",
+                "status": "open",
+                "asked_message_sid": "SM-CLARIFY",
+            }
+        ],
+    }
+    updated_folio = {
+        **folio,
+        "pieces": [{**folio["pieces"][0], "comments": "Cerámicas"}],
+    }
+    mock_folio_service.update.side_effect = [
+        updated_folio,
+        {
+            **updated_folio,
+            "whatsapp_pending_questions": [
+                {
+                    **folio["whatsapp_pending_questions"][0],
+                    "asked_message_sid": "SM-REASK",
+                }
+            ],
+        },
+    ]
+    mock_folio_service._is_assigned_to_buyer.return_value = False
+    mock_folio_service._has_ordered_pieces.return_value = False
+    mock_inbound_repo.find_by_message_sid.return_value = {"message_sid": "SM2"}
+    mock_whatsapp_cls.return_value.native_reactions_enabled = False
+    mock_whatsapp_cls.return_value.send_text_message.side_effect = [
+        {"message_sid": "SM-ERROR"},
+        {"message_sid": "SM-REASK"},
+    ]
+
+    service = WhatsappIntakeProcessorService()
+    handled = service._handle_complement_or_answer(
+        from_number="+5217779313704",
+        folio=folio,
+        question=folio["whatsapp_pending_questions"][0],
+        answer_text="Y que sean ceramicas",
+        message_sids=["SM2"],
+        burst_id="burst-1",
+        group_id="g1",
+        creator_uid="uid-1",
+    )
+
+    assert handled is True
+    material_update = mock_folio_service.update.call_args_list[0].args[1]
+    assert material_update["pieces"][0]["comments"] == "Cerámicas"
+    sent = [
+        call.args[1]
+        for call in mock_whatsapp_cls.return_value.send_text_message.call_args_list
+    ]
+    assert any("No pude aplicar" in body for body in sent)
+    assert any("delanteras o traseras" in body.lower() for body in sent)
+    assert mock_whatsapp_cls.return_value.send_text_message.call_count == 2
+    reask_update = mock_folio_service.update.call_args_list[1].args[1]
+    assert reask_update["whatsapp_pending_questions"][0]["asked_message_sid"] == "SM-REASK"
+    assert reask_update["whatsapp_pending_questions"][0]["status"] == "open"
+
+
+@patch("app.services.WhatsappIntakeProcessorService.inbound_repo")
+@patch("app.services.WhatsappIntakeProcessorService.WhatsappService")
+def test_apply_chain_reactions_reacts_to_all_when_requested(
+    mock_whatsapp_cls,
+    mock_inbound_repo,
+):
+    from app.services.WhatsappIntakeProcessorService import WhatsappIntakeProcessorService
+
+    mock_inbound_repo.find_by_message_sid.side_effect = lambda sid: {
+        "message_sid": sid,
+        "direction": "inbound",
+        "kind": "content",
+        "whatsapp_message_id": f"wamid.{sid}",
+    }
+    mock_whatsapp_cls.return_value.native_reactions_enabled = True
+    mock_whatsapp_cls.return_value.react_to_message.return_value = {"success": True}
+
+    service = WhatsappIntakeProcessorService()
+    service._apply_chain_reactions(
+        from_number="+5217779313704",
+        folio={"_id": "folio-1", "folio_code": "ABC123"},
+        message_sids=["SM1", "SM2"],
+        burst_id="burst-1",
+        react_all=True,
+    )
+
+    assert mock_whatsapp_cls.return_value.react_to_message.call_count == 2
+    linked_updates = [
+        call.args[1]
+        for call in mock_inbound_repo.update_fields.call_args_list
+        if call.args[1].get("linked_reaction")
+    ]
+    assert len(linked_updates) == 2
+
+
+def test_resolve_material_note_detects_ceramicas():
+    assert clarify.resolve_material_note("Y que sean ceramicas") == "Cerámicas"
+
+
+def test_apply_material_note_appends_to_piece_comments():
+    folio = {
+        "pieces": [
+            {
+                "piece_id": "p1",
+                "name": "Balatas",
+                "comments": None,
+            }
+        ]
+    }
+    question = {"piece_id": "p1", "path": "piece:p1.position"}
+    patch, stored = clarify.apply_material_note_to_folio(
+        folio, question, "Y que sean ceramicas"
+    )
+    assert stored is True
+    assert patch["pieces"][0]["comments"] == "Cerámicas"
+
+
+def _collecting_session(**overrides):
+    session = {
+        "from_number": "+5217779313704",
+        "status": "collecting",
+        "group_id": "g1",
+        "creator_uid": "uid-1",
+        "group_name": "Tienda A",
+        "messages": [],
+        "generation": 1,
+    }
+    session.update(overrides)
+    return session
+
+
+def _open_versa_folio(**overrides):
+    folio = {
+        "_id": "folio-versa",
+        "share_token": "share-versa",
+        "folio_code": "VERSA1",
+        "source": "whatsapp",
+        "status": "draft",
+        "origin_group_id": "g1",
+        "creator_user": "uid-1",
+        "vehicle": {"maker": "Nissan", "model": "Versa", "year": "2018", "engine": "1.6"},
+        "pieces": [
+            {
+                "piece_id": "p1",
+                "name": "Balatas",
+                "tipoParteId": "10",
+                "qty": 1,
+                "position": "No aplica",
+            }
+        ],
+        "whatsapp_pending_questions": [
+            {
+                "id": "q1",
+                "path": "piece:p1.position",
+                "piece_id": "p1",
+                "prompt": "¿Son delanteras o traseras?",
+                "status": "open",
+            }
+        ],
+    }
+    folio.update(overrides)
+    return folio
+
+
+@patch("app.services.WhatsappIntakeProcessorService.pending_repo")
+@patch("app.services.WhatsappIntakeProcessorService.session_repo")
+@patch("app.services.WhatsappIntakeProcessorService.folio_service")
+@patch("app.services.WhatsappIntakeProcessorService.inbound_repo")
+@patch("app.services.WhatsappIntakeProcessorService.WhatsappService")
+@patch("app.services.WhatsappIntakeProcessorService.LlmExtractionService")
+def test_resend_matching_burst_links_both_messages_without_new_draft(
+    mock_llm_cls,
+    mock_whatsapp_cls,
+    mock_inbound_repo,
+    mock_folio_service,
+    mock_session_repo,
+    mock_pending_repo,
+):
+    from app.services.WhatsappIntakeProcessorService import WhatsappIntakeProcessorService
+
+    existing = _open_versa_folio()
+    session = _collecting_session(
+        messages=[
+            {
+                "message_sid": "SM1",
+                "body": "Necesito balatas para Versa 2018 motor 1.6",
+            },
+            {"message_sid": "SM2", "body": "Y que sean ceramicas"},
+        ],
+    )
+    mock_inbound_repo.find_by_message_sid.side_effect = lambda sid: {
+        "message_sid": sid,
+        "direction": "inbound",
+        "kind": "content",
+        "whatsapp_message_id": f"wamid.{sid}",
+    }
+    mock_llm_cls.return_value.extract.return_value = WhatsappExtractionProposal(
+        intent=ExtractionIntent.NEW_REQUEST,
+        lines=[
+            ExtractionLine(
+                local_id="l1",
+                part_name="balatas",
+                quantity=1,
+                raw="Necesito balatas para Versa 2018 motor 1.6",
+            )
+        ],
+        vehicle=ExtractionVehicle(make="Nissan", model="Versa", year="2018", engine="1.6"),
+    )
+    mock_folio_service._is_assigned_to_buyer.return_value = False
+    mock_folio_service._has_ordered_pieces.return_value = False
+    mock_folio_service.get_by_share_token.return_value = existing
+    mock_pending_repo.get_last_share_token.return_value = "share-versa"
+    mock_whatsapp_cls.return_value.native_reactions_enabled = True
+    mock_whatsapp_cls.return_value.react_to_message.return_value = {"success": True}
+
+    with patch(
+        "app.services.WhatsappIntakeProcessorService.clarify.find_drafts_with_open_questions",
+        return_value=[existing],
+    ):
+        service = WhatsappIntakeProcessorService()
+        service.extract_enabled = True
+        service._flush_session("+5217779313704", session)
+
+    mock_folio_service.create.assert_not_called()
+    sent = [
+        call.args[1]
+        for call in mock_whatsapp_cls.return_value.send_text_message.call_args_list
+    ]
+    assert not any("Borrador listo" in body for body in sent)
+    assert not any("delanteras o traseras" in body.lower() for body in sent)
+    assert mock_whatsapp_cls.return_value.react_to_message.call_count == 2
+
+
+@patch("app.services.WhatsappIntakeProcessorService.pending_repo")
+@patch("app.services.WhatsappIntakeProcessorService.session_repo")
+@patch("app.services.WhatsappIntakeProcessorService.folio_service")
+@patch("app.services.WhatsappIntakeProcessorService.MySQLSessionLocal", None)
+@patch("app.services.WhatsappIntakeProcessorService.inbound_repo")
+@patch("app.services.WhatsappIntakeProcessorService.WhatsappService")
+@patch("app.services.WhatsappIntakeProcessorService.LlmExtractionService")
+def test_resend_for_different_vehicle_still_creates_draft(
+    mock_llm_cls,
+    mock_whatsapp_cls,
+    mock_inbound_repo,
+    mock_folio_service,
+    mock_session_repo,
+    mock_pending_repo,
+):
+    from app.services.WhatsappIntakeProcessorService import WhatsappIntakeProcessorService
+
+    existing = _open_versa_folio()
+    session = _collecting_session(
+        messages=[
+            {
+                "message_sid": "SM1",
+                "body": "Necesito balatas para Jetta 2015",
+            }
+        ],
+    )
+    mock_inbound_repo.find_by_message_sid.return_value = {"_id": "mongo-1"}
+    mock_llm_cls.return_value.extract.return_value = WhatsappExtractionProposal(
+        intent=ExtractionIntent.NEW_REQUEST,
+        lines=[ExtractionLine(local_id="l1", part_name="balatas", quantity=1)],
+        vehicle=ExtractionVehicle(make="Volkswagen", model="Jetta", year="2015"),
+    )
+    mock_folio_service.create.return_value = {
+        "_id": "folio-new",
+        "share_token": "share-new",
+        "folio_code": "JETTA1",
+        "updated_at": "2026-01-01T00:00:00+00:00",
+    }
+    mock_folio_service.update.return_value = mock_folio_service.create.return_value
+    mock_folio_service._normalize_vehicle.return_value = {
+        "maker": "Volkswagen",
+        "model": "Jetta",
+        "year": 2015,
+    }
+    mock_folio_service._is_assigned_to_buyer.return_value = False
+    mock_folio_service._has_ordered_pieces.return_value = False
+    mock_folio_service.get_by_share_token.return_value = existing
+    mock_pending_repo.get_last_share_token.return_value = "share-versa"
+    mock_whatsapp_cls.return_value.native_reactions_enabled = False
+    mock_whatsapp_cls.return_value.send_text_message.side_effect = [
+        {"message_sid": "SM-OUT-DRAFT"},
+    ]
+
+    with patch(
+        "app.services.WhatsappIntakeProcessorService.clarify.find_drafts_with_open_questions",
+        return_value=[existing],
+    ):
+        service = WhatsappIntakeProcessorService()
+        service.extract_enabled = True
+        service.client_base_url = "https://www.eassymo.mx"
+        service.whatsapp_public_base_url = "https://www.eassymo.mx"
+        service._flush_session("+5217779313704", session)
+
+    mock_folio_service.create.assert_called_once()
+    sent = [
+        call.args[1]
+        for call in mock_whatsapp_cls.return_value.send_text_message.call_args_list
+    ]
+    assert any("Borrador listo" in body for body in sent)
+
+
+@patch("app.services.WhatsappIntakeProcessorService.inbound_repo")
+@patch("app.services.WhatsappIntakeProcessorService.WhatsappService")
+@patch("app.services.WhatsappIntakeProcessorService.folio_service")
 def test_handle_complement_multiple_open_questions_without_link(
     mock_folio_service,
     mock_whatsapp_cls,
