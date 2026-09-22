@@ -96,6 +96,10 @@ def _collect_burst_message() -> str:
     )
 
 
+def _processing_ack_message() -> str:
+    return "Procesando tu solicitud…"
+
+
 def _resolve_whatsapp_public_base_url() -> str:
     whatsapp_base = (os.getenv("WHATSAPP_PUBLIC_BASE_URL") or "").strip().rstrip("/")
     if whatsapp_base:
@@ -1583,12 +1587,24 @@ class WhatsappIntakeProcessorService:
         group_name: str,
     ) -> Optional[Dict[str, Any]]:
         session = session_repo.get_by_phone(from_number)
+        is_new_burst = (
+            not session
+            or session.get("status") != STATUS_COLLECTING
+            or not session.get("messages")
+        )
         if not session or session.get("status") != STATUS_COLLECTING:
             session = self._ensure_collect_session(
                 from_number,
                 group_id=group_id,
                 creator_uid=creator_uid,
                 group_name=group_name,
+            )
+
+        if is_new_burst and group_id:
+            self._send_bot_message(
+                from_number,
+                _processing_ack_message(),
+                kind="bot_ack",
             )
 
         session, should_auto_flush, schedule_debounce = session_repo.append_message(
