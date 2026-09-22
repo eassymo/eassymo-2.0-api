@@ -862,8 +862,12 @@ def test_store_selection_flushes_messages_buffered_during_pending(
     mock_session_repo.ensure_collecting_session.assert_called_once()
     mock_session_repo.try_acquire_flush.assert_called_once()
     mock_llm_cls.return_value.extract.assert_called_once()
-    sent = mock_whatsapp_cls.return_value.send_text_message.call_args_list[0].args[1]
-    assert "Tienda confirmada: Tienda A" in sent
+    sent = [
+        call.args[1]
+        for call in mock_whatsapp_cls.return_value.send_text_message.call_args_list
+    ]
+    assert "Tienda confirmada: Tienda A" in sent[0]
+    assert sent[1] == "Procesando tu solicitud…"
 
 
 @patch("app.services.WhatsappIntakeProcessorService.session_repo")
@@ -899,10 +903,14 @@ def test_process_inbound_sends_store_confirmation_without_extract(
     )
 
     mock_llm_cls.return_value.extract.assert_not_called()
-    sent = mock_whatsapp_cls.return_value.send_text_message.call_args[0][1]
-    assert "Tienda confirmada: Tienda A" in sent
-    assert "PEDIDO" in sent
-    assert "Si te equivocaste, escribe CAMBIAR, MENU o ATRAS" in sent
+    sent = [
+        call.args[1]
+        for call in mock_whatsapp_cls.return_value.send_text_message.call_args_list
+    ]
+    assert "Tienda confirmada: Tienda A" in sent[0]
+    assert "PEDIDO" in sent[0]
+    assert "Si te equivocaste, escribe CAMBIAR, MENU o ATRAS" in sent[0]
+    assert "Procesando tu solicitud…" not in sent
 
 
 @patch("app.services.WhatsappIntakeProcessorService.session_repo")
