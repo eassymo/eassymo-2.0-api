@@ -644,6 +644,22 @@ def test_draft_preview_link_prefers_whatsapp_public_base_url():
     assert ":" not in link.split("?", 1)[-1]
     assert link.split("?v=", 1)[1].isdigit()
     assert "localhost" not in link
+    image = service._draft_card_image_url(
+        "share-abc",
+        version="2026-09-21T22:04:41.883972Z",
+    )
+    assert image == (
+        "https://wa-preview.example.com/api/og/whatsapp-draft"
+        f"?token=share-abc&v={link.split('?v=', 1)[1]}"
+    )
+
+
+def test_draft_card_image_url_skips_localhost():
+    from app.services.WhatsappIntakeProcessorService import WhatsappIntakeProcessorService
+
+    service = WhatsappIntakeProcessorService()
+    service.whatsapp_public_base_url = "http://localhost:3000"
+    assert service._draft_card_image_url("share-abc", version="1767225600") is None
 
 
 @patch.dict(os.environ, {"WHATSAPP_PUBLIC_BASE_URL": "https://wa-preview.example.com"})

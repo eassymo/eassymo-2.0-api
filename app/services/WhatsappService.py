@@ -133,14 +133,72 @@ class WhatsappService:
                 detail="Unexpected error while sending delivery invite",
             )
 
-    def send_text_message(self, to: str, body: str) -> Dict[str, Any]:
-        """Send a freeform WhatsApp message (requires an open 24h session window)."""
+    def _media_is_ready(self, media_url: str) -> bool:
+        """Fetch the card once so Twilio receives a cached PNG, not an error page."""
         try:
-            response = self._get_client().messages.create(
-                from_=f"whatsapp:{self.from_number}",
-                to=f"whatsapp:{to}",
-                body=body,
+            response = requests.get(
+                media_url,
+                timeout=20,
+                headers={
+                    "Accept": "image/png",
+                    "User-Agent": "EassymoDraftCard/1.0",
+                },
             )
+        except requests.RequestException as exc:
+            logger.warning("Draft card image fetch failed for %s: %s", media_url, exc)
+            return False
+
+        content_type = (response.headers.get("content-type") or "").lower()
+        body = response.content or b""
+        if (
+            response.status_code != 200
+            or not content_type.startswith("image/")
+            or not body.startswith(b"\x89PNG")
+            or len(body) < 500
+        ):
+            logger.warning(
+                "Draft card image not usable status=%s type=%s bytes=%s url=%s",
+                response.status_code,
+                content_type,
+                len(body),
+                media_url,
+            )
+            return False
+        return True
+
+    def send_text_message(
+        self,
+        to: str,
+        body: str,
+        media_url: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Send a freeform WhatsApp message (requires an open 24h session window)."""
+        image_url = media_url if media_url and self._media_is_ready(media_url) else None
+        if media_url and not image_url:
+            logger.warning("Sending draft text without image because the card PNG was not ready")
+        try:
+            return self._create_session_message(to, body, image_url)
+        except HTTPException:
+            if not image_url:
+                raise
+            logger.warning("WhatsApp image send failed for %s; sending the link as text", to)
+            return self._create_session_message(to, body, None)
+
+    def _create_session_message(
+        self,
+        to: str,
+        body: str,
+        media_url: Optional[str],
+    ) -> Dict[str, Any]:
+        kwargs: Dict[str, Any] = {
+            "from_": f"whatsapp:{self.from_number}",
+            "to": f"whatsapp:{to}",
+            "body": body,
+        }
+        if media_url:
+            kwargs["media_url"] = [media_url]
+        try:
+            response = self._get_client().messages.create(**kwargs)
             return {
                 "success": True,
                 "message_sid": response.sid,

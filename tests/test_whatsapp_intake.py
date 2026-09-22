@@ -981,6 +981,7 @@ def test_process_inbound_extracts_after_sticky_store(
     service = WhatsappIntakeProcessorService()
     service.extract_enabled = True
     service.client_base_url = "https://www.eassymo.mx"
+    service.whatsapp_public_base_url = "https://www.eassymo.mx"
     service.process_inbound(payload)
     mock_llm_cls.return_value.extract.assert_not_called()
 
@@ -999,6 +1000,14 @@ def test_process_inbound_extracts_after_sticky_store(
     ]
     assert any("Borrador listo" in body for body in sent)
     assert any("whatsapp-draft/share-abc" in body for body in sent)
+    draft_call = next(
+        call
+        for call in mock_whatsapp_cls.return_value.send_text_message.call_args_list
+        if "Borrador listo" in call.args[1]
+    )
+    assert draft_call.kwargs["media_url"] == (
+        "https://www.eassymo.mx/api/og/whatsapp-draft?token=share-abc&v=1767225600"
+    )
 
 
 @patch("app.services.WhatsappIntakeProcessorService.session_repo")

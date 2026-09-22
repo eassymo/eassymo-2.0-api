@@ -268,6 +268,26 @@ class WhatsappIntakeProcessorService:
             return f"{base}{path}"
         return path
 
+    def _draft_card_image_url(
+        self, share_token: str, *, version: Optional[str] = None
+    ) -> Optional[str]:
+        """Public PNG Twilio can attach. Empty when the host is not public HTTPS."""
+        if not share_token:
+            return None
+        base = self.whatsapp_public_base_url or ""
+        if not isinstance(base, str):
+            return None
+        base = base.rstrip("/")
+        parsed = urlparse(base)
+        host = (parsed.hostname or "").lower()
+        if parsed.scheme != "https" or host in ("localhost", "127.0.0.1"):
+            return None
+        path = f"/api/og/whatsapp-draft?token={share_token}"
+        version_token = _cache_bust_version(version)
+        if version_token:
+            path = f"{path}&v={version_token}"
+        return f"{base}{path}"
+
     def _inbound_doc(self, message_sid: str) -> dict:
         return inbound_repo.find_by_message_sid(message_sid) or {}
 
@@ -500,9 +520,14 @@ class WhatsappIntakeProcessorService:
         burst_id: Optional[str] = None,
         kind: Optional[str] = None,
         folio_id: Optional[str] = None,
+        media_url: Optional[str] = None,
     ) -> str:
         resolved_kind = kind or self._outbound_kind(body)
-        result = self.whatsapp_service.send_text_message(from_number, body)
+        result = self.whatsapp_service.send_text_message(
+            from_number,
+            body,
+            media_url=media_url,
+        )
         message_sid = result.get("message_sid") or f"out-{uuid4().hex}"
         outbound: Dict[str, Any] = {
             "message_sid": message_sid,
@@ -944,6 +969,7 @@ class WhatsappIntakeProcessorService:
             burst_id=burst_id,
             kind="bot_draft",
             folio_id=folio_id,
+            media_url=self._draft_card_image_url(share_token, version=version or None),
         )
         folio = self._send_pending_clarifications(
             from_number=from_number,
@@ -1079,6 +1105,9 @@ class WhatsappIntakeProcessorService:
                 burst_id=burst_id,
                 kind="bot_draft",
                 folio_id=folio_id,
+                media_url=self._draft_card_image_url(
+                    share_token, version=version or None
+                ),
             )
             return True
 
@@ -1102,13 +1131,15 @@ class WhatsappIntakeProcessorService:
     ) -> None:
         folio_id = str(folio.get("_id") or folio.get("id") or "")
         share_token = str(folio.get("share_token") or "")
-        link = self._draft_preview_link(share_token, folio_id)
+        version = str(folio.get("updated_at") or "")
+        link = self._draft_preview_link(share_token, folio_id, version=version or None)
         self._send_bot_message(
             from_number,
             f"{headline}\nRevisa vehículo y piezas aquí:\n{link}",
             burst_id=burst_id,
             kind="bot_draft",
             folio_id=folio_id or None,
+            media_url=self._draft_card_image_url(share_token, version=version or None),
         )
         if share_token:
             try:
