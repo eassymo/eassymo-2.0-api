@@ -2020,3 +2020,115 @@ def test_listo_command_appended_before_flush(
     assert appended["message_sid"] == "SM-LISTO"
     assert appended["body"] == "LISTO"
     mock_session_repo.bump_generation.assert_called_once()
+
+
+@patch("app.services.WhatsappIntakeProcessorService.session_repo")
+@patch("app.services.WhatsappIntakeProcessorService.inbound_repo")
+@patch("app.services.WhatsappIntakeProcessorService.WhatsappService")
+@patch("app.services.WhatsappIntakeProcessorService.WhatsappSellerIdentityService")
+def test_first_content_burst_sends_procesando_ack_once(
+    mock_identity_cls,
+    mock_whatsapp_cls,
+    mock_inbound_repo,
+    mock_session_repo,
+):
+    from app.services.WhatsappIntakeProcessorService import WhatsappIntakeProcessorService
+
+    first_session = _collecting_session(
+        messages=[{"message_sid": "SM1", "body": "Jetta 2015, filtro de aire"}],
+    )
+    continuing_session = _collecting_session(
+        messages=[
+            {"message_sid": "SM1", "body": "Jetta 2015, filtro de aire"},
+            {"message_sid": "SM2", "body": "Y balatas delanteras"},
+        ],
+    )
+
+    mock_inbound_repo.find_by_message_sid.return_value = None
+    mock_identity_cls.return_value.resolve.return_value = MagicMock(
+        status="resolved",
+        group_id="g1",
+        group_name="Tienda A",
+        creator_uid="uid-1",
+        just_selected=False,
+        message=None,
+    )
+    mock_session_repo.get_by_phone.side_effect = [None, continuing_session]
+    mock_session_repo.ensure_collecting_session.return_value = first_session
+    mock_session_repo.append_message.side_effect = [
+        (first_session, False, True),
+        (continuing_session, False, False),
+    ]
+
+    service = WhatsappIntakeProcessorService()
+    service.extract_enabled = True
+
+    service.process_inbound(
+        {
+            "mongo_id": "in-1",
+            "message_sid": "SM1",
+            "from_number": "+5217779313704",
+            "body": "Jetta 2015, filtro de aire",
+        }
+    )
+    service.process_inbound(
+        {
+            "mongo_id": "in-2",
+            "message_sid": "SM2",
+            "from_number": "+5217779313704",
+            "body": "Y balatas delanteras",
+        }
+    )
+
+    sent = [
+        call.args[1]
+        for call in mock_whatsapp_cls.return_value.send_text_message.call_args_list
+    ]
+    assert sent.count("Procesando tu solicitud…") == 1
+
+
+@patch("app.services.WhatsappIntakeProcessorService.session_repo")
+@patch("app.services.WhatsappIntakeProcessorService.inbound_repo")
+@patch("app.services.WhatsappIntakeProcessorService.WhatsappService")
+@patch("app.services.WhatsappIntakeProcessorService.WhatsappSellerIdentityService")
+def test_listo_command_does_not_send_procesando_ack(
+    mock_identity_cls,
+    mock_whatsapp_cls,
+    mock_inbound_repo,
+    mock_session_repo,
+):
+    from app.services.WhatsappIntakeProcessorService import WhatsappIntakeProcessorService
+
+    session = _collecting_session(
+        messages=[{"message_sid": "SM1", "body": "Jetta 2015, filtro de aire"}],
+        generation=1,
+    )
+    mock_inbound_repo.find_by_message_sid.return_value = None
+    mock_identity_cls.return_value.resolve.return_value = MagicMock(
+        status="resolved",
+        group_id="g1",
+        group_name="Tienda A",
+        creator_uid="uid-1",
+        just_selected=False,
+        message=None,
+    )
+    mock_session_repo.get_by_phone.side_effect = [session, {**session, "generation": 2}]
+    mock_session_repo.append_message.return_value = (session, False, False)
+    mock_session_repo.try_acquire_flush.return_value = session
+
+    service = WhatsappIntakeProcessorService()
+    service.extract_enabled = True
+    service.process_inbound(
+        {
+            "mongo_id": "in-listo",
+            "message_sid": "SM-LISTO",
+            "from_number": "+5217779313704",
+            "body": "LISTO",
+        }
+    )
+
+    sent = [
+        call.args[1]
+        for call in mock_whatsapp_cls.return_value.send_text_message.call_args_list
+    ]
+    assert "Procesando tu solicitud…" not in sent
