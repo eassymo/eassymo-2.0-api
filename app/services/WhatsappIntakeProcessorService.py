@@ -1708,6 +1708,11 @@ class WhatsappIntakeProcessorService:
                 _store_confirmation_message(store_name),
             )
             if has_buffered:
+                self._send_bot_message(
+                    from_number,
+                    _processing_ack_message(),
+                    kind="bot_ack",
+                )
                 session = self._ensure_collect_session(
                     from_number,
                     group_id=identity.group_id,
