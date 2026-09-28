@@ -37,7 +37,7 @@ from app.routers import PendingCartRouter as pendingCartRouter
 from app.routers import DeliveryRouter as deliveryRouter
 from app.routers import AdminRouter as adminRouter
 from app.routers import MostradorFolioRouter as mostradorFolioRouter
-from app.routers import ReviewRouter as reviewRouter
+from app.routers import RelationshipRouter as relationshipRouter
 from app.routers import PushRouter as pushRouter
 from app.routers import NotificationRouter as notificationRouter
 
@@ -204,7 +204,7 @@ app.include_router(categoriasRouter.categoriasRouter)
 app.include_router(pendingCartRouter.pendingCartRouter)
 app.include_router(deliveryRouter.deliveryRouter)
 app.include_router(adminRouter.adminRouter)
-app.include_router(reviewRouter.reviewRouter)
+app.include_router(relationshipRouter.relationshipRouter)
 app.include_router(mostradorFolioRouter.mostradorRouter)
 app.include_router(pushRouter.pushRouter)
 app.include_router(notificationRouter.notificationRouter)
