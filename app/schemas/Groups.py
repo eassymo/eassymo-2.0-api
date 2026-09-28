@@ -62,4 +62,5 @@ class GroupSchema(BaseModel):
 
     def toJson(self):
         data = self.dict(by_alias=True)
+        data.pop("reputation", None)
         return data
