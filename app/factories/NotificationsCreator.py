@@ -541,6 +541,22 @@ def create_mostrador_shop_invited_notification(
     )
 
 
+def create_relationship_review_reminder(
+    owner: str,
+    owner_group: str,
+) -> Notification:
+    return Notification(
+        type=NotificationType.RELATIONSHIP_REVIEW_REMINDER,
+        message="¿Cómo van tus relaciones?",
+        owner=owner,
+        ownerGroup=owner_group,
+        visibleRoles=DEFAULT_ROLES,
+        navigateToUrl="/relaciones/inicio",
+        read=False,
+        metaData={"source": "relationship_reminder"},
+    )
+
+
 # Dictionary mapping notification types to their creator functions
 NOTIFICATION_CREATORS = {
     NotificationType.PART_REQUEST_CREATED: create_part_request_notification,
@@ -563,4 +579,5 @@ NOTIFICATION_CREATORS = {
     NotificationType.MOSTRADOR_ORDER_CREATED: create_mostrador_order_created_notification,
     NotificationType.MOSTRADOR_OPTION_ADDED: create_mostrador_option_added_notification,
     NotificationType.MOSTRADOR_SHOP_INVITED: create_mostrador_shop_invited_notification,
+    NotificationType.RELATIONSHIP_REVIEW_REMINDER: create_relationship_review_reminder,
 }
