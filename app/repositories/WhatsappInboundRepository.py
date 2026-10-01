@@ -51,7 +51,7 @@ def _build_list_query(
 def insert_if_new(message: Dict[str, Any]) -> Tuple[Optional[str], bool]:
     """
     Persist an inbound message. Returns (document_id, created).
-    Skips insert when MessageSid already exists (Twilio retry).
+    Skips insert when MessageSid already exists (webhook retry).
     """
     message_sid = message.get("message_sid")
     if not message_sid:

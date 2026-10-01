@@ -10,6 +10,18 @@ from app.utils.armadora_names import (
 from app.utils.regex_sanitize import sanitize_search_term, MAX_SEARCH_LENGTH
 
 
+def _text_expr(field: str) -> dict:
+    """Catalog rows store some names as numbers (Mazda 6, Porsche 911)."""
+    return {
+        "$convert": {
+            "input": f"${field}",
+            "to": "string",
+            "onNull": "",
+            "onError": "",
+        }
+    }
+
+
 def find_distinct_makes() -> List[str]:
     makes = database.db["NonAcesVehicles"].distinct(
         "make",
@@ -56,7 +68,11 @@ def find_non_aces_by_name(search_argument: str, year: int) -> List[StandarizedVe
             return []
 
         search_pattern = {"$regex": safe_search, "$options": "i"}
-        
+        make_text = _text_expr("make")
+        model_text = _text_expr("model")
+        generation_text = _text_expr("generation")
+        trim_text = _text_expr("trim")
+
         pipeline = [
             {
                 "$match": {
@@ -66,8 +82,12 @@ def find_non_aces_by_name(search_argument: str, year: int) -> List[StandarizedVe
             },
             {
                 "$addFields": {
+                    "make": make_text,
+                    "model": model_text,
+                    "generation": generation_text,
+                    "trim": trim_text,
                     "make_model_combined": {
-                        "$concat": ["$make", " ", "$model"]
+                        "$concat": [make_text, " ", model_text]
                     }
                 }
             },

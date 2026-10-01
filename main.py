@@ -127,7 +127,7 @@ async def auth_middleware(request: Request, call_next):
     if path in public_paths:
         return await call_next(request)
 
-    # Twilio posts here with X-Twilio-Signature, not a Firebase bearer token.
+    # Meta verifies this URL with a GET, then posts webhook events. No Firebase token.
     if path.rstrip("/") == "/whatsAppMessage/inbound":
         return await call_next(request)
 
