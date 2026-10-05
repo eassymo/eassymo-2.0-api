@@ -84,7 +84,15 @@ class WhatsappService:
                 response.status_code,
                 response.text[:300],
             )
-            raise HTTPException(status_code=500, detail=failure_detail)
+            detail = failure_detail
+            try:
+                error = (response.json() or {}).get("error") or {}
+                meta = error.get("error_user_msg") or error.get("message")
+                if meta:
+                    detail = f"{failure_detail}: {meta}"
+            except ValueError:
+                pass
+            raise HTTPException(status_code=500, detail=detail)
 
         try:
             data = response.json()

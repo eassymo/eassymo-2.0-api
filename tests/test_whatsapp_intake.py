@@ -554,6 +554,28 @@ def test_start_blocks_third_distinct_phone(mock_whatsapp_service, mock_user_repo
     mock_whatsapp_service.return_value.send_template_message.assert_not_called()
 
 
+@_skip_missing_verify
+@patch("app.services.WhatsappIntakeVerificationService.verify_repo")
+@patch("app.services.WhatsappIntakeVerificationService.userRepository")
+@patch("app.services.WhatsappIntakeVerificationService.WhatsappService")
+def test_start_marks_failed_when_send_raises(mock_whatsapp_service, mock_user_repo, mock_verify_repo):
+    mock_user_repo.find_one.return_value = {"uid": "uid-1", "name": "Ian"}
+    mock_verify_repo.find_open_by_uid.return_value = None
+    mock_verify_repo.count_distinct_phones.return_value = 0
+    mock_whatsapp_service.return_value.send_template_message.side_effect = HTTPException(
+        status_code=500,
+        detail="Failed to send WhatsApp template wp_eassymo_verification_binder",
+    )
+
+    service = WhatsappIntakeVerificationService()
+    service.template_sid = "HXtest"
+    with pytest.raises(HTTPException) as exc:
+        service.start("uid-1", "7779313704")
+    assert exc.value.status_code == 500
+    mock_verify_repo.mark_failed.assert_called_once()
+    mock_verify_repo.supersede_open.assert_called_once()
+
+
 @patch("app.services.WhatsappSellerIdentityService.groupRepository")
 @patch("app.services.WhatsappSellerIdentityService.userRepository")
 @patch("app.services.WhatsappSellerIdentityService.pending_repo")
