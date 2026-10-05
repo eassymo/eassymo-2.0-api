@@ -1,8 +1,10 @@
 from fastapi.responses import JSONResponse
 from fastapi import APIRouter, Body, Request, status, Query, HTTPException
+from pydantic import BaseModel
 from app.schemas.Users import UserSchema
 from app.utils import TypeUtilities as typeUtilities
 from app.services import UserService as userService
+from app.services.WhatsappIntakeVerificationService import WhatsappIntakeVerificationService
 from typing import Optional
 from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response
 from app.dependencies.group_auth import require_authenticated_uid
@@ -10,6 +12,42 @@ from fastapi.encoders import jsonable_encoder
 
 
 userRouter = APIRouter(prefix="/users")
+
+
+class WhatsappIntakeStartRequest(BaseModel):
+    phone: str
+
+
+class WhatsappIntakeConfirmRequest(BaseModel):
+    token: str
+
+
+@userRouter.get("/me/whatsapp-intake/status", tags=["Users"])
+def whatsapp_intake_status(request: Request):
+    uid = require_authenticated_uid(request)
+    result = WhatsappIntakeVerificationService().get_status(uid)
+    return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(result))
+
+
+@userRouter.post("/me/whatsapp-intake/start", tags=["Users"])
+def whatsapp_intake_start(request: Request, payload: WhatsappIntakeStartRequest = Body(...)):
+    uid = require_authenticated_uid(request)
+    result = WhatsappIntakeVerificationService().start(uid, payload.phone)
+    return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(result))
+
+
+@userRouter.get("/me/whatsapp-intake/pending/{token}", tags=["Users"])
+def whatsapp_intake_preview(request: Request, token: str):
+    uid = require_authenticated_uid(request)
+    result = WhatsappIntakeVerificationService().preview(uid, token)
+    return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(result))
+
+
+@userRouter.post("/me/whatsapp-intake/confirm", tags=["Users"])
+def whatsapp_intake_confirm(request: Request, payload: WhatsappIntakeConfirmRequest = Body(...)):
+    uid = require_authenticated_uid(request)
+    result = WhatsappIntakeVerificationService().confirm(uid, payload.token)
+    return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(result))
 
 @userRouter.post("/create", response_description="User creation endpoint", response_model=UserSchema, tags=["Users"])
 def create(request: Request, user: UserSchema = Body(...)):
