@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from typing import Dict, Any
+import os
 
 from fastapi import HTTPException, status
 from pymongo.errors import PyMongoError
@@ -21,6 +22,21 @@ from app.repositories import UserRolesRepository
 from app.schemas.UserRoles import UserRoles
 
 whatsapp_service = WhatsappService()
+
+
+def _team_invite_template_name() -> str:
+    return (
+        os.getenv("WHATSAPP_TEMPLATE_TEAM_INVITE", "eassymo_team_invite").strip()
+        or "eassymo_team_invite"
+    )
+
+
+def _team_invite_template(group_name: str, invite_id: str) -> WhatsappTemplate:
+    return WhatsappTemplate(
+        name=_team_invite_template_name(),
+        language="es_MX",
+        variables=[group_name, invite_id],
+    )
 
 
 def _ensure_utc(dt: datetime) -> datetime:
@@ -89,10 +105,7 @@ def insert(team_member_invite: TeamMemberInvite):
 
                 whatsapp_message = WhatsappMessage(
                     to=existing_invite.contact_method,
-                    template=WhatsappTemplate(
-                        name="HX9c1c720b428fdf6e29ecd203b0762e42",
-                        variables=[sender_group.name, str(invite_oid)]
-                    )
+                    template=_team_invite_template(sender_group.name, str(invite_oid)),
                 )
 
                 whatsapp_message_sent_data: Dict[str, Any]
@@ -118,10 +131,9 @@ def insert(team_member_invite: TeamMemberInvite):
 
             whatsapp_message = WhatsappMessage(
                 to=team_member_invite.contact_method,
-                template=WhatsappTemplate(
-                    name="HX9c1c720b428fdf6e29ecd203b0762e42",
-                    variables=[sender_group.name, str(inserted_invite)]
-                )
+                template=_team_invite_template(
+                    sender_group.name, str(inserted_invite)
+                ),
             )
 
             whatsapp_message_sent_data: Dict[str, Any]

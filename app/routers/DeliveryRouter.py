@@ -55,11 +55,39 @@ def get_my_orders(
 
 @deliveryRouter.get("/delivery/guest-orders", description="Orders assigned to a guest delivery token")
 def get_guest_orders(
-    token: str = Query(..., title="token"),
+    request: Request,
     status_filter: Optional[str] = Query(None, alias="status"),
 ):
     try:
+        token = request.headers.get("X-Guest-Token")
+        if not token:
+            return JSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                content=get_unsuccessful_response(Exception("Missing X-Guest-Token header")),
+            )
         result = DeliveryService.get_guest_orders(token, status_filter)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(result))
+    except Exception as e:
+        status_code = e.status_code if hasattr(e, "status_code") else status.HTTP_500_INTERNAL_SERVER_ERROR
+        return JSONResponse(status_code=status_code, content=get_unsuccessful_response(e))
+
+
+@deliveryRouter.get(
+    "/delivery/guest-orders/{order_id}",
+    description="Single order assigned to a guest delivery token",
+)
+def get_guest_order_by_id(
+    request: Request,
+    order_id: str,
+):
+    try:
+        token = request.headers.get("X-Guest-Token")
+        if not token:
+            return JSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                content=get_unsuccessful_response(Exception("Missing X-Guest-Token header")),
+            )
+        result = DeliveryService.get_guest_order_by_id(token, order_id)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(result))
     except Exception as e:
         status_code = e.status_code if hasattr(e, "status_code") else status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -88,6 +116,36 @@ def get_invite_preview(token: str):
 def accept_invite(token: str):
     try:
         result = DeliveryService.accept_invite(token)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(result))
+    except Exception as e:
+        status_code = e.status_code if hasattr(e, "status_code") else status.HTTP_500_INTERNAL_SERVER_ERROR
+        return JSONResponse(status_code=status_code, content=get_unsuccessful_response(e))
+
+
+# ---------------------------------------------------------------------------
+# GET /delivery/invite/{token}/eligibility  — authenticated role check
+# ---------------------------------------------------------------------------
+
+@deliveryRouter.get("/delivery/invite/{token}/eligibility", description="Check if logged-in user can accept invite orders")
+def get_invite_eligibility(token: str, request: Request):
+    try:
+        requesting_uid = request.state.user.get("uid")
+        result = DeliveryService.get_invite_eligibility(token, requesting_uid)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(result))
+    except Exception as e:
+        status_code = e.status_code if hasattr(e, "status_code") else status.HTTP_500_INTERNAL_SERVER_ERROR
+        return JSONResponse(status_code=status_code, content=get_unsuccessful_response(e))
+
+
+# ---------------------------------------------------------------------------
+# POST /delivery/invite/{token}/link  — link eligible orders to authenticated user
+# ---------------------------------------------------------------------------
+
+@deliveryRouter.post("/delivery/invite/{token}/link", description="Link eligible invite orders to the authenticated delivery person")
+def link_invite(token: str, request: Request):
+    try:
+        requesting_uid = request.state.user.get("uid")
+        result = DeliveryService.link_authenticated_delivery_person(token, requesting_uid)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(result))
     except Exception as e:
         status_code = e.status_code if hasattr(e, "status_code") else status.HTTP_500_INTERNAL_SERVER_ERROR

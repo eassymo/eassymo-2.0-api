@@ -114,10 +114,11 @@ def build_delivery_assignment(
             raise HTTPException(status_code=422, detail="guest_name are required for guest assignment")
 
         if guest_token:
-            # Caller supplied an existing token — use it directly
-            token = guest_token
-        else:
+            token = _ensure_guest_profile(guest_token, guest_name, guest_phone)
+        elif guest_phone:
             token = _upsert_guest_profile(guest_phone, guest_name)
+        else:
+            token = _ensure_guest_profile(str(uuid4()), guest_name, None)
 
         return DeliveryAssignment(
             type=DeliveryAssignmentType.GUEST,
@@ -233,14 +234,61 @@ def get_guest_orders(token: str, status_filter: Optional[str]) -> List[dict]:
     return _fetch_orders_for_delivery(filters)
 
 
+def get_guest_order_by_id(token: str, order_id: str) -> dict:
+    """
+    Returns a single order assigned to a guest token.
+    Accepts Mongo _id or human-readable order_id.
+    """
+    _assert_guest_token_active(token)
+
+    id_filters: List[dict] = [{"order_id": order_id}]
+    try:
+        id_filters.append({"_id": ObjectId(order_id)})
+    except Exception:
+        pass
+
+    filters: dict = {
+        "delivery_assignment.guest_token": token,
+        "status": {"$ne": OrderStatus.CANCELED.value},
+        "$or": id_filters,
+    }
+
+    orders = _fetch_orders_for_delivery(filters)
+    if not orders:
+        raise HTTPException(status_code=404, detail="Order not found for this guest token")
+    return orders[0]
+
+
 # ---------------------------------------------------------------------------
 # GET /delivery-invite/:token
 # ---------------------------------------------------------------------------
 
-def get_invite_preview(token: str) -> dict:
+def _resolve_active_guest_profile(token: str) -> dict:
+    """
+    Returns an active GuestDeliveryProfile for token.
+    Backfills the profile from order delivery_assignment when missing (legacy assignments).
+    """
+    profile_doc = guestProfileRepository.find_by_token(token)
+    if profile_doc and profile_doc.get("status") == GuestDeliveryProfileStatus.ACTIVE:
+        return profile_doc
+
+    orders = _fetch_orders_for_delivery({"delivery_assignment.guest_token": token})
+    if not orders:
+        raise HTTPException(status_code=404, detail="Invite token not found or inactive")
+
+    assignment = orders[0].get("delivery_assignment") or {}
+    guest_name = assignment.get("guest_name") or "Invitado"
+    guest_phone = assignment.get("guest_phone")
+    _ensure_guest_profile(token, guest_name, guest_phone)
+
     profile_doc = guestProfileRepository.find_by_token(token)
     if not profile_doc or profile_doc.get("status") != GuestDeliveryProfileStatus.ACTIVE:
         raise HTTPException(status_code=404, detail="Invite token not found or inactive")
+    return profile_doc
+
+
+def get_invite_preview(token: str) -> dict:
+    profile_doc = _resolve_active_guest_profile(token)
 
     orders = _fetch_orders_for_delivery({"delivery_assignment.guest_token": token})
 
@@ -259,9 +307,7 @@ def get_invite_preview(token: str) -> dict:
 # ---------------------------------------------------------------------------
 
 def accept_invite(token: str) -> dict:
-    profile_doc = guestProfileRepository.find_by_token(token)
-    if not profile_doc or profile_doc.get("status") != GuestDeliveryProfileStatus.ACTIVE:
-        raise HTTPException(status_code=404, detail="Invite token not found or inactive")
+    _resolve_active_guest_profile(token)
 
     now = datetime.now(ZoneInfo('UTC'))
     guestProfileRepository.update(
@@ -278,6 +324,84 @@ def accept_invite(token: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# GET /delivery/invite/{token}/eligibility  — authenticated role check
+# ---------------------------------------------------------------------------
+
+def _user_has_delivery_role_in_group(user_uid: str, group_id: str) -> bool:
+    if not group_id:
+        return False
+    role_records = userRolesRepository.find({
+        "user_uid": user_uid,
+        "role": DELIVERY_PERSON_ROLE_VALUE,
+        "group": str(group_id),
+        "active": True,
+    })
+    return bool(role_records)
+
+
+def get_invite_eligibility(token: str, user_uid: str) -> dict:
+    """
+    Per-order check: does user_uid hold the active DELIVERY_PERSON role
+    in the offer.group_id (seller group) of each order tied to this guest token?
+    Only orders still in WAITING_FOR_COLLECTION are considered linkable.
+    """
+    _resolve_active_guest_profile(token)
+
+    orders = _fetch_orders_for_delivery({
+        "delivery_assignment.guest_token": token,
+        "status": OrderStatus.WAITING_FOR_COLLECTION.value,
+    })
+
+    eligible_orders = [
+        o for o in orders
+        if _user_has_delivery_role_in_group(
+            user_uid,
+            (o.get("offer_group") or {}).get("_id"),
+        )
+    ]
+
+    return {
+        "eligible_orders": eligible_orders,
+        "has_any_eligible_order": bool(eligible_orders),
+    }
+
+
+# ---------------------------------------------------------------------------
+# POST /delivery/invite/{token}/link  — reassign eligible orders to user
+# ---------------------------------------------------------------------------
+
+def link_authenticated_delivery_person(token: str, user_uid: str) -> dict:
+    """Reassigns each eligible order's delivery_assignment from guest_token to this user."""
+    eligibility = get_invite_eligibility(token, user_uid)
+    if not eligibility["has_any_eligible_order"]:
+        raise HTTPException(
+            status_code=403,
+            detail="User does not have the repartidor role for any order in this invite",
+        )
+
+    linked = []
+    now = datetime.now(ZoneInfo('UTC'))
+    for order_json in eligibility["eligible_orders"]:
+        oid = ObjectId(order_json["_id"])
+        order_doc = orderRepository.find_one({"_id": oid})
+        if not order_doc:
+            continue
+
+        order = Order(**order_doc)
+        order.delivery_assignment = DeliveryAssignment(
+            type=DeliveryAssignmentType.GROUP_MEMBER,
+            user_id=user_uid,
+            assigned_at=now,
+        )
+        order_data = order.toJson()
+        order_data.pop("_id", None)
+        updated_doc = orderRepository.edit(oid, order_data)
+        linked.append(Order(**updated_doc).toJson())
+
+    return {"linked_orders": linked}
+
+
+# ---------------------------------------------------------------------------
 # Guest token validation helper (used by change-status endpoint)
 # ---------------------------------------------------------------------------
 
@@ -286,10 +410,7 @@ def validate_guest_token(token: str) -> dict:
     Returns the GuestDeliveryProfile document if the token is active.
     Raises 404 if not found / inactive.
     """
-    profile_doc = guestProfileRepository.find_by_token(token)
-    if not profile_doc or profile_doc.get("status") != GuestDeliveryProfileStatus.ACTIVE:
-        raise HTTPException(status_code=404, detail="Guest token not found or inactive")
-    return profile_doc
+    return _resolve_active_guest_profile(token)
 
 
 # ---------------------------------------------------------------------------
@@ -308,9 +429,7 @@ def confirm_pickup(
     """
     from bson import ObjectId
 
-    profile_doc = guestProfileRepository.find_by_token(guest_token)
-    if not profile_doc or profile_doc.get("status") != GuestDeliveryProfileStatus.ACTIVE:
-        raise HTTPException(status_code=401, detail="Missing or unrecognised X-Guest-Token")
+    _resolve_active_guest_profile(guest_token)
 
     try:
         oid = ObjectId(order_id)
@@ -373,6 +492,50 @@ def _upsert_guest_profile(phone: str, name: str) -> str:
     return token
 
 
+def _ensure_guest_profile(token: str, name: str, phone: Optional[str] = None) -> str:
+    """
+    Ensures an active GuestDeliveryProfile exists for a client-supplied invite token.
+    The assign-delivery UI pre-generates the token so the invite URL is available before submit.
+    """
+    now = datetime.now(ZoneInfo('UTC'))
+    profile_phone = phone or f"guest:{token}"
+
+    existing_by_token = guestProfileRepository.find_by_token(token)
+    if existing_by_token:
+        updates = {"name": name, "updated_at": now, "status": GuestDeliveryProfileStatus.ACTIVE}
+        if phone:
+            updates["phone"] = phone
+        guestProfileRepository.update({"token": token}, updates)
+        return token
+
+    if phone:
+        existing_by_phone = guestProfileRepository.find_by_phone(phone)
+        if existing_by_phone:
+            guestProfileRepository.update(
+                {"phone": phone},
+                {
+                    "token": token,
+                    "name": name,
+                    "updated_at": now,
+                    "status": GuestDeliveryProfileStatus.ACTIVE,
+                },
+            )
+            return token
+
+    profile = GuestDeliveryProfile(
+        phone=profile_phone,
+        name=name,
+        token=token,
+        created_at=now,
+        updated_at=now,
+        status=GuestDeliveryProfileStatus.ACTIVE,
+    )
+    payload = profile.model_dump(by_alias=True)
+    payload.pop("_id", None)
+    guestProfileRepository.insert(payload)
+    return token
+
+
 def _assert_user_in_group(user_uid: str, group_id: str):
     user = userRepository.find_one({"uid": user_uid})
     if not user:
@@ -393,9 +556,7 @@ def _assert_has_delivery_role(user_uid: str):
 
 
 def _assert_guest_token_active(token: str):
-    profile_doc = guestProfileRepository.find_by_token(token)
-    if not profile_doc or profile_doc.get("status") != GuestDeliveryProfileStatus.ACTIVE:
-        raise HTTPException(status_code=404, detail="Guest token not found or inactive")
+    _resolve_active_guest_profile(token)
 
 
 def _fetch_orders_for_delivery(

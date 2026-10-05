@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_, func
 
 from app.config.database import db
+from app.utils.regex_sanitize import MAX_SEARCH_LENGTH
 
 
 class AcesVehiclesRepository:
@@ -23,7 +24,7 @@ class AcesVehiclesRepository:
         # Remove extra spaces and convert to lowercase for better matching
         search_term = search_argument.strip()
 
-        if not search_term:
+        if not search_term or len(search_term) > MAX_SEARCH_LENGTH:
             return []
 
         # Build query with multiple search strategies - year filter is mandatory
@@ -52,12 +53,7 @@ class AcesVehiclesRepository:
         word_match = query.filter(
             *word_filters) if word_filters else query.filter(False)
 
-        # Strategy 4: MySQL REGEXP for pattern matching
-        regex_match = query.filter(
-            Vehiculos.VehiculoDescripcion.op('REGEXP')(search_term)
-        )
-
-        # Combine all strategies with UNION (removes duplicates automatically)
+        # Combine strategies without raw REGEXP (user input is not trusted as a pattern)
         try:
             # Try exact match first
             exact_results = exact_match.limit(50).all()
@@ -74,15 +70,10 @@ class AcesVehiclesRepository:
             if word_results:
                 return word_results
 
-            # Finally try regex (be careful with user input)
-            if len(search_term) > 2:  # Only use regex for longer terms
-                regex_results = regex_match.limit(50).all()
-                return regex_results
-
             return []
 
-        except Exception as e:
-            # Fallback to simple contains search if regex fails
+        except Exception:
+            # Fallback to simple contains search if any strategy fails
             return contains_match.limit(50).all()
 
     @staticmethod

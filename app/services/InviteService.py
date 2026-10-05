@@ -32,6 +32,22 @@ def change_status(census_id: str, new_status: str):
         if new_status == InvitationStatus.ACCEPTED.value and len(inviter_groups) > 0:
             _append_created_group_to_lists(
                 census_id, inviter_groups, invite_data.user)
+            from app.services import notification_fanout
+
+            groups_related = list(groupRepository.find({"censusReference": census_id}))
+            accepted_group_name = ""
+            if groups_related:
+                accepted_group_name = GroupSchema(**groups_related[0]).name or ""
+
+            unique_inviter_groups = sorted({str(gid) for gid in inviter_groups if gid})
+            for group_found in notification_fanout._users_by_group_ids(unique_inviter_groups):
+                group_id = str(group_found.get("_id") or "")
+                for user_id in group_found.get("users") or []:
+                    notification_fanout.fanout_invite_accepted(
+                        owner=str(user_id),
+                        owner_group=group_id,
+                        store_name=accepted_group_name,
+                    )
         return {"modified_count": modified_count, "modified_invites": modified_invites, "inviter_groups": inviter_groups}
     except HTTPException as e:
         raise HTTPException(

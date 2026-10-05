@@ -5,7 +5,7 @@ from app.services import CensusService as censusService
 from fastapi.responses import JSONResponse
 from app.schemas.Census import CensusSchema
 from fastapi_pagination import Params
-from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response
+from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response, error_json_response
 from fastapi.encoders import jsonable_encoder
 
 
@@ -79,7 +79,7 @@ def text_search(request: Request, search_argument: str, parent_request_id: Optio
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
 
     except (HTTPException, Exception) as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)
 
 
 @censusRouter.get("/states", response_description="", response_model=List[str], tags=["Census"])
@@ -103,4 +103,4 @@ def verify_by_similitudes(
 
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except HTTPException as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)

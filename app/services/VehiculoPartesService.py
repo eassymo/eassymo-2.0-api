@@ -4,7 +4,7 @@ from typing import Dict, Any, List
 from sqlalchemy.orm import Session
 
 from app.repositories.VehiculoPartesRepository import VehiculoPartesRepository
-from app.utils.search_partes import prepare_fulltext_variant_groups
+from app.utils.search_partes import build_search_regex, prepare_fulltext_variant_groups
 from app.schemas.VehiculoPartesSearch import (
     SearchPartesPaginatorRequest,
     ParteItemOut,
@@ -46,18 +46,27 @@ def search_partes_paginator(
     mysql_db: Session, payload: SearchPartesPaginatorRequest
 ) -> Dict[str, Any]:
     variant_groups = prepare_fulltext_variant_groups(payload.historicoBusqueda.criterio)
-    if not variant_groups:
-        total = 0
-        partes: List[ParteItemOut] = []
-    else:
+    regex = build_search_regex(payload.historicoBusqueda.criterio)
+    offset = payload.page * payload.itemsPerPage
+
+    total = 0
+    rows: List[Any] = []
+    if variant_groups:
         total = VehiculoPartesRepository.count_by_fulltext_variants(
             mysql_db, variant_groups
         )
-        offset = payload.page * payload.itemsPerPage
-        rows = VehiculoPartesRepository.find_partes_paginated_fulltext_variants(
-            mysql_db, variant_groups, offset, payload.itemsPerPage
+        if total:
+            rows = VehiculoPartesRepository.find_partes_paginated_fulltext_variants(
+                mysql_db, variant_groups, offset, payload.itemsPerPage
+            )
+
+    if not rows and regex:
+        total = VehiculoPartesRepository.count_by_regex(mysql_db, regex)
+        rows = VehiculoPartesRepository.find_partes_paginated(
+            mysql_db, regex, offset, payload.itemsPerPage
         )
-        partes = [_parte_to_item(r) for r in rows]
+
+    partes = [_parte_to_item(r) for r in rows]
 
     pages = math.ceil(total / payload.itemsPerPage) if total else 0
     historico = HistoricoBusquedaOutput(

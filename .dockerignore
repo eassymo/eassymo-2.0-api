@@ -1,0 +1,17 @@
+.venv
+venv
+__pycache__
+*.py[cod]
+.git
+.gitignore
+.env
+.env.*
+*.md
+.pytest_cache
+.coverage
+htmlcov
+.DS_Store
+*firebase-adminsdk*.json
+serviceAccount*.json
+firebase-service-account*.json
+tests

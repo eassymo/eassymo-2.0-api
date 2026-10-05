@@ -126,24 +126,77 @@ def find_offer_by_id(offer_uid: str):
 
 
 def find_with_part_request(filters):
-
     return database.db["Offers"].aggregate([
-        {
-            "$match": filters
-        },
+        {"$match": filters},
         {
             "$lookup": {
                 "from": "PartRequests",
-                "let": {"request_id", {"$toObjectId": "$request_id"}},
+                "let": {"request_id": "$request_id"},
                 "pipeline": [
                     {
-                        "$match": {"$expr": {"$eq": ["$_id", "$$request_id"]}}
-                    }
+                        "$match": {
+                            "$expr": {
+                                "$eq": [
+                                    {"$toString": "$_id"},
+                                    "$$request_id",
+                                ]
+                            }
+                        }
+                    },
+                    {
+                        "$project": {
+                            "_id": 1,
+                            "creatorGroup": 1,
+                            "status": 1,
+                            "part": 1,
+                            "vehicleInformation": 1,
+                            "createdAt": 1,
+                        }
+                    },
                 ],
-                "as": "part_request"
+                "as": "part_request",
             }
-        }
+        },
+        {
+            "$unwind": {
+                "path": "$part_request",
+                "preserveNullAndEmptyArrays": True,
+            }
+        },
+        {
+            "$lookup": {
+                "from": "groups",
+                "let": {"group_id": "$group_id"},
+                "pipeline": [
+                    {
+                        "$match": {
+                            "$expr": {
+                                "$eq": [
+                                    {"$toString": "$_id"},
+                                    "$$group_id",
+                                ]
+                            }
+                        }
+                    },
+                    {"$project": {"_id": 1, "name": 1, "type": 1, "city": 1, "state": 1}},
+                ],
+                "as": "group_info",
+            }
+        },
+        {
+            "$unwind": {
+                "path": "$group_info",
+                "preserveNullAndEmptyArrays": True,
+            }
+        },
+        {"$sort": {"createdAt": -1}},
     ])
+
+
+def find_by_ids_enriched(offer_ids: List[ObjectId]):
+    if not offer_ids:
+        return []
+    return list(find_with_part_request({"_id": {"$in": offer_ids}}))
 
 
 def get_ranked_offers(offer_ids: List[ObjectId], extra_status: Optional[List[Dict[str, Any]]] = None):

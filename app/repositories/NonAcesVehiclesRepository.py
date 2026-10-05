@@ -7,6 +7,19 @@ from app.utils.armadora_names import (
     normalize_armadora_name,
     pick_preferred_armadora_display,
 )
+from app.utils.regex_sanitize import sanitize_search_term, MAX_SEARCH_LENGTH
+
+
+def _text_expr(field: str) -> dict:
+    """Catalog rows store some names as numbers (Mazda 6, Porsche 911)."""
+    return {
+        "$convert": {
+            "input": f"${field}",
+            "to": "string",
+            "onNull": "",
+            "onError": "",
+        }
+    }
 
 
 def find_distinct_makes() -> List[str]:
@@ -50,8 +63,16 @@ def find_non_aces_by_name(search_argument: str, year: int) -> List[StandarizedVe
     try:
         standarized_vehicles: List[StandarizedVehicles] = []
 
-        search_pattern = {"$regex": search_argument, "$options": "i"}
-        
+        safe_search = sanitize_search_term(search_argument)
+        if not safe_search:
+            return []
+
+        search_pattern = {"$regex": safe_search, "$options": "i"}
+        make_text = _text_expr("make")
+        model_text = _text_expr("model")
+        generation_text = _text_expr("generation")
+        trim_text = _text_expr("trim")
+
         pipeline = [
             {
                 "$match": {
@@ -61,8 +82,12 @@ def find_non_aces_by_name(search_argument: str, year: int) -> List[StandarizedVe
             },
             {
                 "$addFields": {
+                    "make": make_text,
+                    "model": model_text,
+                    "generation": generation_text,
+                    "trim": trim_text,
                     "make_model_combined": {
-                        "$concat": ["$make", " ", "$model"]
+                        "$concat": [make_text, " ", model_text]
                     }
                 }
             },
@@ -82,15 +107,15 @@ def find_non_aces_by_name(search_argument: str, year: int) -> List[StandarizedVe
                     "relevance_score": {
                         "$add": [
                             # Exact make match gets highest score
-                            {"$cond": [{"$eq": [{"$toLower": "$make"}, search_argument.lower()]}, 100, 0]},
+                            {"$cond": [{"$eq": [{"$toLower": "$make"}, search_argument.lower()[:MAX_SEARCH_LENGTH]]}, 100, 0]},
                             # Exact model match gets high score
-                            {"$cond": [{"$eq": [{"$toLower": "$model"}, search_argument.lower()]}, 90, 0]},
+                            {"$cond": [{"$eq": [{"$toLower": "$model"}, search_argument.lower()[:MAX_SEARCH_LENGTH]]}, 90, 0]},
                             # Make starts with search gets medium score
-                            {"$cond": [{"$regexMatch": {"input": "$make", "regex": f"^{search_argument}", "options": "i"}}, 50, 0]},
+                            {"$cond": [{"$regexMatch": {"input": "$make", "regex": f"^{safe_search}", "options": "i"}}, 50, 0]},
                             # Model starts with search gets medium score
-                            {"$cond": [{"$regexMatch": {"input": "$model", "regex": f"^{search_argument}", "options": "i"}}, 45, 0]},
+                            {"$cond": [{"$regexMatch": {"input": "$model", "regex": f"^{safe_search}", "options": "i"}}, 45, 0]},
                             # Contains match gets low score
-                            {"$cond": [{"$regexMatch": {"input": "$make_model_combined", "regex": search_argument, "options": "i"}}, 10, 0]}
+                            {"$cond": [{"$regexMatch": {"input": "$make_model_combined", "regex": safe_search, "options": "i"}}, 10, 0]}
                         ]
                     }
                 }

@@ -5,6 +5,7 @@ from app.schemas.Groups import GroupSchema
 from app.schemas.Offer import Offer
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from app.utils.datetime_utils import serialize_datetime
 from typing import Optional
 from bson import ObjectId
 from enum import Enum
@@ -132,6 +133,14 @@ class PartRequest(BaseModel):
         "marketplace", description="marketplace | mostrador")
     mostrador_folio_id: Optional[str] = Field(None)
     mostrador_piece_id: Optional[str] = Field(None)
+    mostrador_delivery_mode: Optional[str] = Field(
+        None,
+        description="tienda|domicilio|pickup, mirrors MostradorPieceOrder.delivery_mode",
+    )
+    recycled_from_request_ids: Optional[List[str]] = Field(
+        default=None,
+        description="Original part request ids recycled by the seller into this batch",
+    )
 
     @root_validator(pre=True)
     def convert_objectId(cls, values):
@@ -168,8 +177,8 @@ class PartRequest(BaseModel):
         if self.offers != None and len(self.offers) > 0:
             data["offers"] = [offer.toJson() for offer in self.offers]
 
-        data["createdAt"] = self.createdAt.isoformat() if self.createdAt else None
-        data["updatedAt"] = self.updatedAt.isoformat() if self.updatedAt else None
+        data["createdAt"] = serialize_datetime(self.createdAt)
+        data["updatedAt"] = serialize_datetime(self.updatedAt)
 
         if data.get("status") is not None:
             status = self.status

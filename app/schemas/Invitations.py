@@ -36,7 +36,9 @@ class InvitationsSchema(BaseModel):
         None, description="Timestamp of when the invite was last sent")
     creator_group: str = Field(
         None, description="The id of the group that generated the invitation")
-    whatsapp_message_data: Optional[Dict[str, Any]] = Field(None, description="The data returned from twilio")
+    whatsapp_message_data: Optional[Dict[str, Any]] = Field(
+        None, description="The data returned from the WhatsApp Cloud API send"
+    )
 
     @root_validator(pre=True)
     def convert_objectId(cls, values):

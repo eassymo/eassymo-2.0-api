@@ -2,8 +2,9 @@ from fastapi.responses import JSONResponse
 from fastapi import APIRouter, Body, status, Query, Request
 from app.schemas.Offer import Offer
 from app.services import OfferService as offerService
-from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response
+from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response, error_json_response
 from fastapi.encoders import jsonable_encoder
+from typing import Optional
 
 offerRouter = APIRouter(prefix="/offer")
 
@@ -19,7 +20,7 @@ def insert(request: Request, payload: Offer = Body(...)):
         response = offerService.insert(payload, user_token)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except Exception as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)
 
 
 @offerRouter.get("/find_by_request_id_and_group", description="Get a specific offer for a request", tags=["Offers"])
@@ -32,7 +33,7 @@ def find_by_id(request: Request, part_request_id: str = Query(None, title="part_
             part_request_id, group_id)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)
 
 
 @offerRouter.get("/build-filters", description="Get the filter options for a specific prop name", tags=["Offers"])
@@ -43,7 +44,7 @@ def build_filters(
         response = offerService.build_filters(prop_name)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)
 
 
 @offerRouter.get("", description="General offer get service", tags=["Offers"])
@@ -55,7 +56,7 @@ def find(
         response = offerService.find_specific(car_models, group_ids)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)
 
 
 @offerRouter.get("/offers-by-groups/{request_id}", description="Get offers by groups", tags=["Offers"])
@@ -64,7 +65,7 @@ def get_offers_by_groups(request_id: str):
         response = offerService.find_request_offers_by_groups(request_id)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)
 
 
 @offerRouter.put("/edit-offer/{offer_uid}", description="Edit an offer", tags=["Offers"])
@@ -74,7 +75,28 @@ def edit_offer(offer_uid: str, payload: Offer = Body(...)):
         serialized_response = jsonable_encoder(response)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(serialized_response))
     except Exception as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)
+
+
+@offerRouter.get("/by-group/{group_id}", description="Aggregated offers for a group (seller + buyer)", tags=["Offers"])
+def find_by_group(
+    group_id: str,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    role: Optional[str] = Query(None, description="buyer or seller"),
+    status: Optional[str] = Query(None),
+):
+    try:
+        response = offerService.find_by_group(
+            group_id,
+            page=page,
+            page_size=page_size,
+            role=role,
+            status=status,
+        )
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+    except Exception as e:
+        return error_json_response(e)
 
 
 @offerRouter.get("/{id}", description="Find an offer by id", tags=["Offers"])
@@ -83,7 +105,7 @@ def find_offer_by_id(id: str):
         response = offerService.find_offer_by_id(id)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)
 
 
 @offerRouter.post("/change-offer-status", tags=["Offers"])
@@ -98,7 +120,7 @@ def change_offer_status(request: Request, payload=Body(...)):
             request_id=payload["request_id"], offer_id=payload["offer_id"], status=payload["status"], user_token=user_token)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)
 
 
 @offerRouter.post("/ranked-offers", tags=["Offers"])
@@ -107,4 +129,4 @@ def ranked_offers(payload=Body(...)):
         response = offerService.get_ranked_offers(payload["request_id"])
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)
