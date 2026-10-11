@@ -874,7 +874,6 @@ class WhatsappIntakeProcessorService:
         folio: dict,
         message_sids: List[str],
         burst_id: Optional[str],
-        react_all: bool = False,
     ) -> None:
         del burst_id
         folio_code = clarify.folio_code_of(folio) or "—"
@@ -905,8 +904,6 @@ class WhatsappIntakeProcessorService:
                     "evidence_paths": doc.get("evidence_paths") or [],
                 },
             )
-            if not react_all:
-                break
 
     def _parts_overlap(self, left: str, right: str) -> bool:
         left_norm = (left or "").strip().lower()
@@ -1061,7 +1058,6 @@ class WhatsappIntakeProcessorService:
             folio=folio,
             message_sids=react_sids,
             burst_id=burst_id,
-            react_all=True,
         )
         for sid in message_sids:
             if not sid:
