@@ -518,7 +518,7 @@ def test_handle_complement_ceramic_stores_note_and_reasks_position(
 
 @patch("app.services.WhatsappIntakeProcessorService.inbound_repo")
 @patch("app.services.WhatsappIntakeProcessorService.WhatsappService")
-def test_apply_chain_reactions_reacts_to_all_when_requested(
+def test_apply_chain_reactions_reacts_to_every_inbound_content_message(
     mock_whatsapp_cls,
     mock_inbound_repo,
 ):
@@ -539,7 +539,6 @@ def test_apply_chain_reactions_reacts_to_all_when_requested(
         folio={"_id": "folio-1", "folio_code": "ABC123"},
         message_sids=["SM1", "SM2"],
         burst_id="burst-1",
-        react_all=True,
     )
 
     assert mock_whatsapp_cls.return_value.react_to_message.call_count == 2
