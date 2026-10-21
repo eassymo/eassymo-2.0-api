@@ -191,6 +191,14 @@ class MostradorFolio(BaseModel):
         description="map of shop_id/tube_token -> list of visible piece_ids (tube scoping)")
     customer: Optional[MostradorCustomer] = Field(None)
     specific_order_uid: Optional[str] = Field(None, description="groups created Orders")
+    sibling_uid: Optional[str] = Field(
+        None,
+        description=(
+            "Groups WhatsApp drafts for different vehicles from one continued request. "
+            "Copied onto PartRequest.specific_order_uid and parent_request_uid so the "
+            "vehicles stay one sibling order."
+        ),
+    )
     order_ids: List[str] = Field(default_factory=list)
     part_request_ids: List[str] = Field(
         default_factory=list, description="real PartRequest ids materialized for buyer group")

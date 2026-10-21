@@ -1382,6 +1382,100 @@ def test_strip_draft_boilerplate_keeps_extra_content():
     assert _strip_draft_boilerplate(bodies) == ["también un filtro de aire"]
 
 
+def test_proposal_names_different_vehicle_keeps_same_car_and_splits_another():
+    from app.schemas.WhatsappExtraction import (
+        ExtractionIntent,
+        ExtractionLine,
+        ExtractionVehicle,
+        WhatsappExtractionProposal,
+    )
+    from app.services.WhatsappIntakeProcessorService import WhatsappIntakeProcessorService
+
+    service = WhatsappIntakeProcessorService()
+    koleos = {"maker": "Renault", "model": "Koleos", "year": "2020"}
+
+    def proposal(**vehicle):
+        return WhatsappExtractionProposal(
+            intent=ExtractionIntent.NEW_REQUEST,
+            vehicle=ExtractionVehicle(**vehicle),
+            lines=[
+                ExtractionLine(
+                    local_id="l1",
+                    part_name="sensor de detonación",
+                    quantity=1,
+                )
+            ],
+        )
+
+    assert service._proposal_names_different_vehicle(
+        koleos, proposal(make="Nissan", model="Tsuru", year="2010")
+    )
+    assert not service._proposal_names_different_vehicle(
+        koleos, proposal(make="Renault", model="koleos", year="2020")
+    )
+    assert not service._proposal_names_different_vehicle(
+        koleos, proposal(year="2021")
+    )
+    assert service._proposal_names_different_vehicle(
+        koleos, proposal(make="Renault", model="Koleos", year="2010")
+    )
+
+
+def test_shared_specific_order_uid_uses_sibling_for_part_requests():
+    from app.services.MostradorFolioService import _shared_specific_order_uid
+
+    assert _shared_specific_order_uid({"sibling_uid": "sib-1"}) == "sib-1"
+    assert (
+        _shared_specific_order_uid(
+            {"specific_order_uid": "order-1", "sibling_uid": "sib-1"}
+        )
+        == "sib-1"
+    )
+    assert _shared_specific_order_uid({"specific_order_uid": "order-1"}) == "order-1"
+
+
+def test_sibling_draft_summaries_keep_each_vehicle():
+    from app.services.MostradorFolioService import sibling_draft_summaries
+
+    with patch(
+        "app.services.MostradorFolioService.folioRepository.find_by_sibling_uid",
+        return_value=[
+            {
+                "_id": "koleos-id",
+                "folio_code": "427F5B",
+                "share_token": "koleos-token",
+                "vehicle": {"maker": "Renault", "model": "Koleos", "year": "2020"},
+                "pieces": [
+                    {"name": "Sensor De Detonación", "qty": 1, "unitOfMeasure": "Pieza"},
+                    {"name": "Balatas", "qty": 1, "unitOfMeasure": "Juego"},
+                ],
+                "whatsapp_pending_questions": [],
+            },
+            {
+                "_id": "tsuru-id",
+                "folio_code": "TSURU1",
+                "share_token": "tsuru-token",
+                "vehicle": {"maker": "Nissan", "model": "Tsuru", "year": "2010"},
+                "pieces": [
+                    {"name": "Sensor De Detonación", "qty": 1, "unitOfMeasure": "Pieza"},
+                ],
+                "whatsapp_pending_questions": [],
+            },
+        ],
+    ):
+        rows = sibling_draft_summaries("sib-1")
+
+    assert [row["vehicle_label"] for row in rows] == [
+        "Renault Koleos 2020",
+        "Nissan Tsuru 2010",
+    ]
+    assert [piece["label"] for piece in rows[0]["piece_rows"]] == [
+        "Sensor De Detonación",
+        "Balatas",
+    ]
+    assert [piece["label"] for piece in rows[1]["piece_rows"]] == ["Sensor De Detonación"]
+
+
 def test_merge_vehicle_fills_missing_without_wiping_model():
     from app.services.WhatsappIntakeProcessorService import WhatsappIntakeProcessorService
 
@@ -1581,6 +1675,162 @@ def test_flush_resumes_draft_with_extra_piece(
     ]
     assert any("Borrador actualizado" in body for body in sent)
     assert any(f"whatsapp-draft/{token}" in body for body in sent)
+
+
+@patch("app.services.WhatsappIntakeProcessorService.session_repo")
+@patch("app.services.WhatsappIntakeProcessorService.folio_service")
+@patch("app.services.WhatsappIntakeProcessorService.MySQLSessionLocal", None)
+@patch("app.services.WhatsappIntakeProcessorService.inbound_repo")
+@patch("app.services.WhatsappIntakeProcessorService.WhatsappService")
+@patch("app.services.WhatsappIntakeProcessorService.LlmExtractionService")
+@patch("app.services.WhatsappIntakeProcessorService.WhatsappSellerIdentityService")
+def test_flush_forgotten_vehicle_creates_sibling_draft(
+    mock_identity_cls,
+    mock_llm_cls,
+    mock_whatsapp_cls,
+    mock_inbound_repo,
+    mock_folio_service,
+    mock_session_repo,
+):
+    from app.schemas.WhatsappExtraction import (
+        ExtractionIntent,
+        ExtractionLine,
+        ExtractionVehicle,
+        WhatsappExtractionProposal,
+    )
+    from app.services.WhatsappIntakeProcessorService import WhatsappIntakeProcessorService
+
+    token = "8c6a2b93a5054056896ff3c1a027c36c"
+    link = f"http://localhost:3000/whatsapp-draft/{token}"
+    forwarded = (
+        "Borrador listo en Eassymo POS.\n"
+        f"Revisa vehículo y piezas aquí:\n{link}"
+    )
+    forgotten = (
+        "Ah sabes que, se me olvidó pedirte igual para un Tsuru 2010 "
+        "un sensor de detonación bro"
+    )
+    session = _collecting_session(
+        messages=[
+            {"message_sid": "SM-koleos-link", "body": forwarded},
+            {"message_sid": "SM-tsuru", "body": forgotten},
+        ],
+    )
+    resume_doc = _resume_folio(share_token=token)
+    created = {
+        "_id": "folio-tsuru",
+        "share_token": "aabbccddeeff00112233445566778899",
+        "folio_code": "TSURU1",
+        "updated_at": "2026-10-21T01:20:18+00:00",
+        "vehicle": {"maker": "Nissan", "model": "Tsuru", "year": "2010"},
+        "pieces": [],
+        "whatsapp_pending_questions": [],
+    }
+
+    def _normalize(info):
+        if not info:
+            return None
+        return {
+            "year": None if info.get("year") is None else str(info.get("year")),
+            "maker": info.get("maker"),
+            "model": info.get("model"),
+            "engine": info.get("engine"),
+            "vin": info.get("vin"),
+        }
+
+    def _update(folio_id, patch):
+        if str(folio_id) == resume_doc["_id"]:
+            return {**resume_doc, **patch}
+        return {**created, **patch, "_id": folio_id}
+
+    mock_inbound_repo.find_by_message_sid.return_value = None
+    mock_identity_cls.return_value.resolve.return_value = MagicMock(
+        status="resolved",
+        group_id="g1",
+        group_name="Tienda A",
+        creator_uid="uid-1",
+        just_selected=False,
+        message=None,
+    )
+    mock_session_repo.get_by_phone.return_value = session
+    mock_session_repo.ensure_collecting_session.return_value = session
+    mock_session_repo.append_message.return_value = (session, False, True)
+    mock_session_repo.try_acquire_flush.return_value = session
+    mock_folio_service.get_by_share_token.return_value = resume_doc
+    mock_folio_service._is_assigned_to_buyer.return_value = False
+    mock_folio_service._has_ordered_pieces.return_value = False
+    mock_folio_service._normalize_vehicle.side_effect = _normalize
+    mock_folio_service.update.side_effect = _update
+    mock_folio_service.create.return_value = created
+    mock_llm_cls.return_value.extract.return_value = WhatsappExtractionProposal(
+        intent=ExtractionIntent.NEW_REQUEST,
+        vehicle=ExtractionVehicle(make="Nissan", model="Tsuru", year="2010"),
+        lines=[
+            ExtractionLine(
+                local_id="line_a",
+                part_name="sensor de detonación",
+                quantity=1,
+                raw="un sensor de detonación",
+            )
+        ],
+    )
+    mock_whatsapp_cls.return_value.native_reactions_enabled = False
+
+    service = WhatsappIntakeProcessorService()
+    service.extract_enabled = True
+    service.client_base_url = "http://localhost:3000"
+    service.catalog_mapper.map_lines = MagicMock(
+        return_value=[
+            MagicMock(
+                tipo_parte_id="5108",
+                tipo_parte_descripcion="Sensor de detonación",
+                categoria_id=9,
+                sub_categoria_id=202,
+                qty=1,
+                unit_of_measure="Pieza",
+                position="No aplica",
+                position_suggested=False,
+                catalog_matched=True,
+            )
+        ]
+    )
+    service.catalog_mapper.map_lines.return_value[0].name = "Sensor de detonación"
+    service.process_inbound(
+        {
+            "mongo_id": "in-tsuru",
+            "message_sid": "SM-tsuru",
+            "from_number": "+5217779313704",
+            "body": forgotten,
+        }
+    )
+    service.flush_if_ready("+5217779313704", 1)
+
+    payload = mock_folio_service.create.call_args.args[0]
+    assert payload["sibling_uid"]
+    assert payload["vehicle"]["model"] == "Tsuru"
+    assert payload["vehicle"]["year"] == "2010"
+    assert [piece["name"] for piece in payload["pieces"]] == ["Sensor de detonación"]
+    assert "filtro de aceite" not in [piece["name"] for piece in payload["pieces"]]
+    sibling_patches = [
+        call.args[1]
+        for call in mock_folio_service.update.call_args_list
+        if "sibling_uid" in call.args[1]
+    ]
+    assert sibling_patches
+    assert sibling_patches[0]["sibling_uid"] == payload["sibling_uid"]
+    assert "pieces" not in sibling_patches[0]
+    assert "vehicle" not in sibling_patches[0]
+    sent = [
+        call.args[1]
+        for call in mock_whatsapp_cls.return_value.send_text_message.call_args_list
+    ]
+    draft_messages = [body for body in sent if "un borrador por cada uno" in body]
+    assert draft_messages, sent
+    assert token in draft_messages[0]
+    assert created["share_token"] in draft_messages[0]
+    assert "2020 Renault Koleos" in draft_messages[0]
+    assert "2010 Nissan Tsuru" in draft_messages[0]
+    assert not any("Borrador actualizado" in body for body in sent)
 
 
 @patch("app.services.WhatsappIntakeProcessorService.session_repo")
