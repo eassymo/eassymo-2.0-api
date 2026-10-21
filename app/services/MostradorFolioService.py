@@ -218,7 +218,75 @@ def get_by_share_token(share_token: str) -> dict:
     folio_id = str(doc["_id"])
     _ensure_mostrador_orders_materialized(folio_id, swallow_errors=True)
     doc = folioRepository.find_by_id(folio_id) or doc
-    return _hydrate(doc)
+    hydrated = _hydrate(doc)
+    summaries = sibling_draft_summaries(hydrated.get("sibling_uid"))
+    if summaries:
+        hydrated["sibling_drafts"] = summaries
+    return hydrated
+
+
+def _public_vehicle_label(vehicle: Optional[dict]) -> str:
+    vehicle = vehicle or {}
+    head = " ".join(
+        str(vehicle.get(key)).strip()
+        for key in ("maker", "model", "year")
+        if vehicle.get(key)
+    )
+    engine = str(vehicle.get("engine") or "").strip()
+    if engine and engine.replace(".", "", 1).isdigit():
+        engine = f"{engine}L"
+    if engine:
+        return f"{head} · {engine}".strip(" ·")
+    return head
+
+
+def _piece_rows(pieces: List[dict]) -> List[dict]:
+    rows = []
+    for piece in pieces or []:
+        label = (piece.get("name") or piece.get("tipoParteDescripcion") or "Pieza").strip()
+        qty = piece.get("qty") or 1
+        unit = piece.get("unitOfMeasure") or "pieza"
+        rows.append({"label": label, "qty_label": f"{qty} {unit}".strip()})
+    return rows
+
+
+def _open_question_prompts(doc: dict) -> List[str]:
+    prompts = []
+    for question in doc.get("whatsapp_pending_questions") or []:
+        if question.get("status") != "open":
+            continue
+        prompt = (question.get("prompt") or "").strip()
+        if prompt:
+            prompts.append(prompt)
+    return prompts
+
+
+def sibling_draft_summaries(sibling_uid: Optional[str]) -> List[dict]:
+    """Compact public cards for drafts that share one continued WhatsApp request."""
+    uid = (sibling_uid or "").strip()
+    if not uid:
+        return []
+    docs = folioRepository.find_by_sibling_uid(uid)
+    if len(docs) < 2:
+        return []
+    summaries = []
+    for doc in docs:
+        summaries.append({
+            "folio_id": str(doc.get("_id")),
+            "folio_code": doc.get("folio_code"),
+            "share_token": doc.get("share_token"),
+            "vehicle_label": _public_vehicle_label(doc.get("vehicle") or {}),
+            "piece_rows": _piece_rows(doc.get("pieces") or []),
+            "pending_clarifications": _open_question_prompts(doc),
+        })
+    return summaries
+
+
+def list_sibling_folios(sibling_uid: str) -> List[dict]:
+    uid = (sibling_uid or "").strip()
+    if not uid:
+        return []
+    return [_hydrate(doc) for doc in folioRepository.find_by_sibling_uid(uid)]
 
 
 def folio_id_by_share_token(share_token: str) -> str:
@@ -267,7 +335,18 @@ def update(folio_id: str, patch: Dict[str, Any]) -> dict:
     if "pieces" in patch:
         _reject_new_pieces_when_ordered(doc, patch["pieces"])
         _reject_ordered_piece_option_changes(doc, patch["pieces"])
-    allowed = {"vehicle", "customer", "status", "source", "pieces", "participant_shops", "visibility", "part_request_ids", "assignment_with_options"}
+    allowed = {
+        "vehicle",
+        "customer",
+        "status",
+        "source",
+        "pieces",
+        "participant_shops",
+        "visibility",
+        "part_request_ids",
+        "assignment_with_options",
+        "sibling_uid",
+    }
     merged = {**doc}
     for key, value in patch.items():
         if key in allowed:
@@ -1827,30 +1906,50 @@ def _relink_order_for_piece(
     orderRepository.edit(ObjectId(order_doc_id), order_data)
 
 
+def _shared_specific_order_uid(folio: dict) -> str:
+    """Sibling drafts share one part-request batch, independent of vehicle."""
+    sibling = str(folio.get("sibling_uid") or "").strip()
+    if sibling:
+        return sibling
+    existing = str(folio.get("specific_order_uid") or "").strip()
+    if existing:
+        return existing
+    return uuid4().hex
+
+
 def _ensure_folio_specific_order_uid(folio_id: str, folio: dict) -> tuple[dict, str]:
     """Ensure folio and in-memory doc share one canonical specific_order_uid."""
-    uid = folio.get("specific_order_uid")
-    if not uid:
-        uid = uuid4().hex
+    uid = _shared_specific_order_uid(folio)
+    if folio.get("specific_order_uid") != uid:
         folioRepository.edit(folio_id, {"specific_order_uid": uid, "updated_at": _now()})
         folio = {**folio, "specific_order_uid": uid}
     return folio, uid
 
 
-def _sync_part_request_specific_order_uid(folio_id: str, specific_order_uid: str) -> None:
+def _sync_part_request_specific_order_uid(
+    folio_id: str,
+    specific_order_uid: str,
+    sibling_uid: str = "",
+) -> None:
     """Align all materialized PartRequests with the folio batch uid."""
     from app.repositories import PartRequestRepository as partRequestRepository
 
     if not specific_order_uid:
         return
+    sibling_uid = (sibling_uid or "").strip()
     now = _now()
     for pr in list(partRequestRepository.find({"mostrador_folio_id": folio_id}, {})):
-        if pr.get("specific_order_uid") == specific_order_uid:
+        same_order = pr.get("specific_order_uid") == specific_order_uid
+        same_parent = not sibling_uid or pr.get("parent_request_uid") == sibling_uid
+        if same_order and same_parent:
             continue
-        partRequestRepository.edit_part_request(str(pr["_id"]), {
+        patch = {
             "specific_order_uid": specific_order_uid,
             "updatedAt": now,
-        })
+        }
+        if sibling_uid:
+            patch["parent_request_uid"] = sibling_uid
+        partRequestRepository.edit_part_request(str(pr["_id"]), patch)
 
 
 def _domicilio_delivery_fields(order_info: dict) -> dict:
@@ -1880,7 +1979,8 @@ def _ensure_part_request_for_piece(
     ))
     seller_group_id = _seller_group_for_piece(folio, piece)
     unit = piece.get("unitOfMeasure") or "Pieza"
-    specific_order_uid = folio.get("specific_order_uid") or uuid4().hex
+    specific_order_uid = _shared_specific_order_uid(folio)
+    sibling_uid = str(folio.get("sibling_uid") or "").strip()
     vehicle = folio.get("vehicle") or {}
     vehicle_id = str(vehicle.get("group_vehicle_id") or "")
     order_info = piece.get("order") or {}
@@ -1906,6 +2006,8 @@ def _ensure_part_request_for_piece(
             "mostrador_delivery_mode": order_info.get("delivery_mode") or "tienda",
             **_domicilio_delivery_fields(order_info),
         }
+        if sibling_uid:
+            patch["parent_request_uid"] = sibling_uid
         partRequestRepository.edit_part_request(pr_id, patch)
         return pr_id
 
@@ -1915,7 +2017,7 @@ def _ensure_part_request_for_piece(
         "vehicleId": vehicle_id,
         "part": part_payload,
         "partList": [],
-        "parent_request_uid": "",
+        "parent_request_uid": sibling_uid,
         "status": pr_status,
         "specific_order_uid": specific_order_uid,
         "subscribedSellers": subscribed,
@@ -2118,7 +2220,11 @@ def sync_assigned_folio(folio_id: str) -> None:
         "part_request_ids": active_pr_ids,
         "updated_at": _now(),
     })
-    _sync_part_request_specific_order_uid(folio_id_str, specific_order_uid)
+    _sync_part_request_specific_order_uid(
+        folio_id_str,
+        specific_order_uid,
+        str(doc.get("sibling_uid") or ""),
+    )
     _ensure_mostrador_orders_materialized(folio_id)
 
 

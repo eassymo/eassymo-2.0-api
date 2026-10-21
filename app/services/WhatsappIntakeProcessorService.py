@@ -169,6 +169,53 @@ class WhatsappIntakeProcessorService:
         ]
         return " ".join(parts) if parts else None
 
+    def _identity(self, value: Any) -> str:
+        return str(value or "").strip().lower()
+
+    def _proposal_vehicle_label(
+        self, proposal: WhatsappExtractionProposal
+    ) -> Optional[str]:
+        vehicle = proposal.vehicle
+        if not vehicle:
+            return None
+        parts = [
+            str(getattr(vehicle, key)).strip()
+            for key in ("year", "make", "model")
+            if getattr(vehicle, key)
+        ]
+        return " ".join(parts) if parts else None
+
+    def _proposal_names_different_vehicle(
+        self,
+        existing: Optional[dict],
+        proposal: WhatsappExtractionProposal,
+    ) -> bool:
+        """True when the message names another car, not a fill-in for this draft.
+
+        "Se me olvidó, también para un Tsuru" is a second vehicle. A year or
+        part with no model stays on the open draft.
+        """
+        extracted = proposal.vehicle
+        if not existing or not extracted:
+            return False
+        new_model = self._identity(extracted.model)
+        if not new_model:
+            return False
+        existing_model = self._identity(existing.get("model"))
+        if existing_model and existing_model != new_model:
+            return True
+        if not existing_model or existing_model != new_model:
+            return False
+        existing_year = self._identity(existing.get("year"))
+        new_year = self._identity(extracted.year)
+        if existing_year and new_year and existing_year != new_year:
+            return True
+        existing_maker = self._identity(existing.get("maker"))
+        new_maker = self._identity(extracted.make)
+        if existing_maker and new_maker and existing_maker != new_maker:
+            return True
+        return False
+
     def _drop_known_vehicle_uncertainties(
         self, proposal: WhatsappExtractionProposal, folio: Optional[dict]
     ) -> WhatsappExtractionProposal:
@@ -783,6 +830,43 @@ class WhatsappIntakeProcessorService:
             )
             return
 
+        if self._proposal_names_different_vehicle(resume_folio.get("vehicle"), proposal):
+            if proposal.lines:
+                self._create_draft_from_proposal(
+                    from_number=from_number,
+                    group_id=group_id,
+                    creator_uid=creator_uid,
+                    store_name=store_name,
+                    proposal=proposal,
+                    message_sids=message_sids,
+                    primary_intake_id=message_sids[0] if message_sids else None,
+                    bodies=extra_bodies,
+                    burst_id=burst_id,
+                    sibling_of=resume_folio,
+                )
+                return
+            current = self._folio_vehicle_label(resume_folio) or "el borrador actual"
+            other = self._proposal_vehicle_label(proposal) or "el otro vehículo"
+            for sid in message_sids:
+                if sid:
+                    inbound_repo.update_fields(
+                        sid,
+                        {
+                            "processing_status": "needs_part",
+                            "extraction_status": "ready",
+                            **({"burst_id": burst_id} if burst_id else {}),
+                        },
+                    )
+            self._send_bot_message(
+                from_number,
+                f"Se queda {current}. {other} es otro vehículo: "
+                "reenvía ese auto con la pieza para abrir su borrador.",
+                burst_id=burst_id,
+                kind="bot_error",
+                folio_id=str(resume_folio.get("_id") or resume_folio.get("id") or ""),
+            )
+            return
+
         self._resume_draft_from_proposal(
             from_number=from_number,
             folio=resume_folio,
@@ -1103,6 +1187,7 @@ class WhatsappIntakeProcessorService:
         processing_status: str,
         headline: str,
         reaction_sids: Optional[List[str]] = None,
+        message_body: Optional[str] = None,
     ) -> None:
         folio = self._persist_pending_questions(folio, proposal, mysql_db=mysql_db)
         folio_id = str(folio.get("_id") or folio.get("id") or "")
@@ -1128,9 +1213,10 @@ class WhatsappIntakeProcessorService:
         )
         version = str(folio.get("updated_at") or "")
         link = self._draft_preview_link(share_token, folio_id, version=version or None)
+        body = message_body or f"{headline}\nRevisa vehículo y piezas aquí:\n{link}"
         self._send_bot_message(
             from_number,
-            f"{headline}\nRevisa vehículo y piezas aquí:\n{link}",
+            body,
             burst_id=burst_id,
             kind="bot_draft",
             folio_id=folio_id,
@@ -1486,6 +1572,47 @@ class WhatsappIntakeProcessorService:
             "flush_at": flush_at,
         }
 
+    def _draft_link_for_folio(self, folio: dict) -> str:
+        folio_id = str(folio.get("_id") or folio.get("id") or "")
+        share_token = str(folio.get("share_token") or "")
+        version = str(folio.get("updated_at") or "")
+        return self._draft_preview_link(share_token, folio_id, version=version or None)
+
+    def _ensure_sibling_uid(self, folio: dict) -> Tuple[dict, str]:
+        current = str(folio.get("sibling_uid") or "").strip()
+        if current:
+            return folio, current
+        sibling_uid = str(folio.get("specific_order_uid") or "").strip() or uuid4().hex
+        folio_id = str(folio.get("_id") or folio.get("id") or "")
+        updated = folio_service.update(folio_id, {"sibling_uid": sibling_uid})
+        return updated, sibling_uid
+
+    def _folios_for_sibling_message(self, anchor: dict, created: dict) -> List[dict]:
+        uid = str(created.get("sibling_uid") or anchor.get("sibling_uid") or "").strip()
+        found = None
+        if uid:
+            try:
+                found = folio_service.list_sibling_folios(uid)
+            except Exception:
+                logger.exception("Failed to list sibling drafts")
+                found = None
+        if isinstance(found, list) and len(found) >= 2:
+            return found
+        return [anchor, created]
+
+    def _sibling_drafts_message(self, folios: List[dict]) -> str:
+        lines = [
+            "Borrador listo en Eassymo POS.",
+            f"Son {len(folios)} vehículos, así que quedó un borrador por cada uno:",
+            "",
+        ]
+        for folio in folios:
+            label = self._folio_vehicle_label(folio) or str(folio.get("folio_code") or "Borrador")
+            lines.append(label)
+            lines.append(self._draft_link_for_folio(folio))
+            lines.append("")
+        return "\n".join(lines).strip()
+
     def _create_draft_from_proposal(
         self,
         *,
@@ -1499,6 +1626,7 @@ class WhatsappIntakeProcessorService:
         bodies: Optional[List[str]] = None,
         burst_id: Optional[str] = None,
         session: Optional[dict] = None,
+        sibling_of: Optional[dict] = None,
     ) -> None:
         mysql_db = None
         if MySQLSessionLocal is not None:
@@ -1518,6 +1646,10 @@ class WhatsappIntakeProcessorService:
                     or not resolved_vehicle.model
                 ]
             vehicle = self._vehicle_from_proposal(proposal)
+            sibling_anchor = None
+            sibling_uid = None
+            if sibling_of is not None:
+                sibling_anchor, sibling_uid = self._ensure_sibling_uid(sibling_of)
             folio_payload: Dict[str, Any] = {
                 "origin_group_id": group_id,
                 "source": "whatsapp",
@@ -1526,11 +1658,19 @@ class WhatsappIntakeProcessorService:
                 "pieces": pieces,
                 "customer": {"type": "guest"},
             }
+            if sibling_uid:
+                folio_payload["sibling_uid"] = sibling_uid
             created = folio_service.create(
                 folio_payload,
                 creator_uid=creator_uid,
                 group_id=group_id,
             )
+            message_body = None
+            if sibling_anchor is not None and sibling_uid:
+                created_with_uid = {**created, "sibling_uid": created.get("sibling_uid") or sibling_uid}
+                message_body = self._sibling_drafts_message(
+                    self._folios_for_sibling_message(sibling_anchor, created_with_uid)
+                )
             self._finalize_linked_draft(
                 from_number=from_number,
                 folio=created,
@@ -1544,6 +1684,7 @@ class WhatsappIntakeProcessorService:
                 bodies=bodies or [],
                 processing_status="draft_created",
                 headline="Borrador listo en Eassymo POS.",
+                message_body=message_body,
             )
         finally:
             if mysql_db is not None:

@@ -29,6 +29,16 @@ def find_by_share_token(share_token: str) -> Optional[dict]:
     return _col().find_one({"share_token": share_token})
 
 
+def find_by_sibling_uid(sibling_uid: str) -> List[dict]:
+    if not sibling_uid:
+        return []
+    return list(
+        _col().find(
+            {"sibling_uid": sibling_uid, "status": {"$ne": "canceled"}}
+        ).sort("created_at", 1)
+    )
+
+
 def find_by_clarify_message_sid(message_sid: str) -> Optional[dict]:
     if not message_sid:
         return None
