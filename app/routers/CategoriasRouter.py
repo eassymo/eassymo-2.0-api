@@ -11,6 +11,7 @@ categoriasRouter = APIRouter(prefix="/categorias", tags=["Categorias"])
 
 
 @categoriasRouter.get("")
+@categoriasRouter.get("/", include_in_schema=False)
 def list_categorias(mysql_db: Session = Depends(get_mysql_db)):
     try:
         result = get_all_categorias(mysql_db)

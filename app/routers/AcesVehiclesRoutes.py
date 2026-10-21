@@ -10,6 +10,7 @@ AcesVehiclesRouter = APIRouter(prefix="/AcesVehicles")
 
 
 @AcesVehiclesRouter.get("", tags=["Aces Vehicles"])
+@AcesVehiclesRouter.get("/", include_in_schema=False)
 def find(
     search_argument: Optional[str] = Query(None, title="search_argument"),
     year: Optional[str] = Query(None, title="year"),

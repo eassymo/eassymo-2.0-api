@@ -10,6 +10,7 @@ callCenterManagementListRouter = APIRouter(prefix="/callCenterManagementList")
 
 
 @callCenterManagementListRouter.post("", tags=["Call Center Management List"])
+@callCenterManagementListRouter.post("/", include_in_schema=False)
 def insert(payload: Any = Body(...)):
     try:
         response = CallCenterManagementListService.insert(payload)
@@ -20,6 +21,7 @@ def insert(payload: Any = Body(...)):
     
 
 @callCenterManagementListRouter.get("", tags=["Call Center Management List"])
+@callCenterManagementListRouter.get("/", include_in_schema=False)
 def find(
     callcenter_id: Optional[str] = Query(None, title="callcenter_id"),
     user_id: Optional[str] = Query(None, title="user_id")

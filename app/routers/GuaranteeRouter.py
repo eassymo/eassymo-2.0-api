@@ -11,6 +11,7 @@ guaranteeRouter = APIRouter(prefix="/guarantee")
 
 
 @guaranteeRouter.post("", description="insert a new guarantee")
+@guaranteeRouter.post("/", include_in_schema=False)
 def insert(payload: Guarantee):
     try:
         response = guaranteeService.insert(payload)
@@ -20,6 +21,7 @@ def insert(payload: Guarantee):
 
 
 @guaranteeRouter.get("", description="search guarantee by label")
+@guaranteeRouter.get("/", include_in_schema=False)
 def find(search_param: Optional[str] = Query(title="search_param")):
     try:
         response = guaranteeService.find_guarantee_by_label(search_param)

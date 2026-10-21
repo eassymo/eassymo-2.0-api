@@ -13,6 +13,7 @@ deliveryRouter = APIRouter(tags=["Delivery"])
 # ---------------------------------------------------------------------------
 
 @deliveryRouter.get("/delivery-persons", description="List active delivery persons for a group")
+@deliveryRouter.get("/delivery-persons/", include_in_schema=False)
 def get_delivery_persons(
     request: Request,
     group_id: str = Query(..., title="group_id"),

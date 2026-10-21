@@ -10,6 +10,7 @@ offerRouter = APIRouter(prefix="/offer")
 
 
 @offerRouter.post("", description="Creation of an offer for a request", tags=["Offers"])
+@offerRouter.post("/", include_in_schema=False)
 def insert(request: Request, payload: Offer = Body(...)):
     try:
         user_token = None
@@ -48,6 +49,7 @@ def build_filters(
 
 
 @offerRouter.get("", description="General offer get service", tags=["Offers"])
+@offerRouter.get("/", include_in_schema=False)
 def find(
     car_models: str = Query(None, title="car_models"),
     group_ids: str = Query(None, title="group_ids")

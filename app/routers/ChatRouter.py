@@ -11,6 +11,7 @@ chatRouter = APIRouter(prefix="/chat")
 
 
 @chatRouter.post("", response_description="", tags=["Chat"])
+@chatRouter.post("/", include_in_schema=False)
 def insert(chat: Chat = Body(...)):
     try:
         response = chatService.insert(chat)

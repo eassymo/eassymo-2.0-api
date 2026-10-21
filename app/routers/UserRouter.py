@@ -61,6 +61,7 @@ def create(request: Request, user: UserSchema = Body(...)):
     return JSONResponse(status_code=status.HTTP_201_CREATED, content=response)
 
 @userRouter.get("", response_description="users found", tags=["Users"])
+@userRouter.get("/", include_in_schema=False)
 def find(search_argument: Optional[str] = Query(None, title="search_argument")):
     try:
         filters = {}

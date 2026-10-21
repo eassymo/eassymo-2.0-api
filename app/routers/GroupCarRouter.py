@@ -12,6 +12,7 @@ groupCarRouter = APIRouter(prefix="/groupVehicle")
 
 
 @groupCarRouter.post("", tags=["GroupVehicle"])
+@groupCarRouter.post("/", include_in_schema=False)
 def insert(
     payload: GroupVehicle = Body(description="")
 ):
@@ -23,6 +24,7 @@ def insert(
 
 
 @groupCarRouter.get("", tags=["GroupVehicle"])
+@groupCarRouter.get("/", include_in_schema=False)
 def find(
     group_id: Optional[str] = Query(None, title="user_id",
                                     description="user that will be added to the group references")

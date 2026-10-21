@@ -13,6 +13,7 @@ orderRouter = APIRouter(prefix="/order")
 
 
 @orderRouter.get("", description="returns the list of orders", tags=["Orders"])
+@orderRouter.get("/", include_in_schema=False)
 def find(
     id: str = Query(None, title="order_id"),
     group_id: str = Query(None, title="group_id"),
