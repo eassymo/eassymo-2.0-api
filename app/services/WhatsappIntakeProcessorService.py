@@ -216,6 +216,67 @@ class WhatsappIntakeProcessorService:
             return True
         return False
 
+    def _split_lines_by_named_vehicle(self, proposal: WhatsappExtractionProposal):
+        vehicle = proposal.vehicle
+        model = self._identity(getattr(vehicle, "model", None))
+        make = self._identity(getattr(vehicle, "make", None))
+        mentioned = []
+        rest = []
+        for line in proposal.lines or []:
+            blob = self._identity(
+                " ".join(part for part in (line.raw, line.part_name) if part)
+            )
+            if (model and model in blob) or (make and make in blob):
+                mentioned.append(line)
+            else:
+                rest.append(line)
+        return mentioned, rest
+
+    def _partition_resume_proposal(
+        self,
+        folio: Optional[dict],
+        proposal: WhatsappExtractionProposal,
+    ) -> Tuple[list, list]:
+        """Split a follow-up into parts for the open draft and other vehicles.
+
+        A burst can add brake lights to the Koleos and rear pads for a Tsuru.
+        Parts that name the new car leave with it. Parts that do not stay here.
+        """
+        existing = (folio or {}).get("vehicle")
+        current_lines = list(proposal.lines or [])
+        siblings: list[WhatsappExtractionProposal] = []
+        for extra in proposal.additional_requests or []:
+            if not extra.lines:
+                continue
+            sibling = WhatsappExtractionProposal(
+                intent=proposal.intent,
+                vehicle=extra.vehicle,
+                lines=list(extra.lines),
+                uncertainties=list(proposal.uncertainties or []),
+                evidence=list(proposal.evidence or []),
+                warnings=list(proposal.warnings or []),
+            )
+            if self._proposal_names_different_vehicle(existing, sibling):
+                siblings.append(sibling)
+            else:
+                current_lines.extend(extra.lines)
+
+        if siblings:
+            return current_lines, siblings
+
+        if not self._proposal_names_different_vehicle(existing, proposal):
+            return current_lines, []
+
+        mentioned, rest = self._split_lines_by_named_vehicle(proposal)
+        if mentioned and rest:
+            sibling = proposal.model_copy(
+                update={"lines": mentioned, "additional_requests": []}
+            )
+            return rest, [sibling]
+        if proposal.lines:
+            return [], [proposal]
+        return [], []
+
     def _drop_known_vehicle_uncertainties(
         self, proposal: WhatsappExtractionProposal, folio: Optional[dict]
     ) -> WhatsappExtractionProposal:
@@ -830,21 +891,39 @@ class WhatsappIntakeProcessorService:
             )
             return
 
+        current_lines, siblings = self._partition_resume_proposal(resume_folio, proposal)
+        if siblings and current_lines:
+            self._resume_with_siblings(
+                from_number=from_number,
+                resume_folio=resume_folio,
+                proposal=proposal,
+                current_lines=current_lines,
+                siblings=siblings,
+                group_id=group_id,
+                creator_uid=creator_uid,
+                store_name=store_name,
+                bodies=extra_bodies,
+                message_sids=message_sids,
+                burst_id=burst_id,
+            )
+            return
+
+        if siblings:
+            self._create_draft_from_proposal(
+                from_number=from_number,
+                group_id=group_id,
+                creator_uid=creator_uid,
+                store_name=store_name,
+                proposal=siblings[0],
+                message_sids=message_sids,
+                primary_intake_id=message_sids[0] if message_sids else None,
+                bodies=extra_bodies,
+                burst_id=burst_id,
+                sibling_of=resume_folio,
+            )
+            return
+
         if self._proposal_names_different_vehicle(resume_folio.get("vehicle"), proposal):
-            if proposal.lines:
-                self._create_draft_from_proposal(
-                    from_number=from_number,
-                    group_id=group_id,
-                    creator_uid=creator_uid,
-                    store_name=store_name,
-                    proposal=proposal,
-                    message_sids=message_sids,
-                    primary_intake_id=message_sids[0] if message_sids else None,
-                    bodies=extra_bodies,
-                    burst_id=burst_id,
-                    sibling_of=resume_folio,
-                )
-                return
             current = self._folio_vehicle_label(resume_folio) or "el borrador actual"
             other = self._proposal_vehicle_label(proposal) or "el otro vehículo"
             for sid in message_sids:
@@ -1188,7 +1267,9 @@ class WhatsappIntakeProcessorService:
         headline: str,
         reaction_sids: Optional[List[str]] = None,
         message_body: Optional[str] = None,
-    ) -> None:
+        send_message: bool = True,
+        apply_reactions: bool = True,
+    ) -> dict:
         folio = self._persist_pending_questions(folio, proposal, mysql_db=mysql_db)
         folio_id = str(folio.get("_id") or folio.get("id") or "")
         share_token = str(folio.get("share_token") or "")
@@ -1205,23 +1286,25 @@ class WhatsappIntakeProcessorService:
         if session and bodies is not None:
             react_targets = self._stamp_evidence_paths(session, proposal, bodies)
         react_targets = self._filter_inbound_reaction_sids(react_targets)
-        self._apply_chain_reactions(
-            from_number=from_number,
-            folio=folio,
-            message_sids=react_targets,
-            burst_id=burst_id,
-        )
+        if apply_reactions:
+            self._apply_chain_reactions(
+                from_number=from_number,
+                folio=folio,
+                message_sids=react_targets,
+                burst_id=burst_id,
+            )
         version = str(folio.get("updated_at") or "")
         link = self._draft_preview_link(share_token, folio_id, version=version or None)
         body = message_body or f"{headline}\nRevisa vehículo y piezas aquí:\n{link}"
-        self._send_bot_message(
-            from_number,
-            body,
-            burst_id=burst_id,
-            kind="bot_draft",
-            folio_id=folio_id,
-            media_url=self._draft_card_image_url(share_token, version=version or None),
-        )
+        if send_message:
+            self._send_bot_message(
+                from_number,
+                body,
+                burst_id=burst_id,
+                kind="bot_draft",
+                folio_id=folio_id,
+                media_url=self._draft_card_image_url(share_token, version=version or None),
+            )
         folio = self._send_pending_clarifications(
             from_number=from_number,
             folio=folio,
@@ -1229,6 +1312,7 @@ class WhatsappIntakeProcessorService:
             group_id=group_id,
             creator_uid=creator_uid,
         )
+        return folio
 
     def _resolve_complement_folio(
         self,
@@ -1414,6 +1498,74 @@ class WhatsappIntakeProcessorService:
             except Exception:
                 logger.exception("Failed to persist last WhatsApp share token")
 
+    def _resume_with_siblings(
+        self,
+        *,
+        from_number: str,
+        resume_folio: dict,
+        proposal: WhatsappExtractionProposal,
+        current_lines: list,
+        siblings: list,
+        group_id: str,
+        creator_uid: Optional[str],
+        store_name: str,
+        bodies: List[str],
+        message_sids: List[str],
+        burst_id: Optional[str] = None,
+    ) -> None:
+        current_proposal = proposal.model_copy(
+            update={
+                "lines": list(current_lines),
+                "vehicle": None,
+                "additional_requests": [],
+            }
+        )
+        current_bodies = [
+            line.raw for line in current_lines if (line.raw or "").strip()
+        ] or bodies
+        updated = self._resume_draft_from_proposal(
+            from_number=from_number,
+            folio=resume_folio,
+            proposal=current_proposal,
+            message_sids=message_sids,
+            bodies=current_bodies,
+            burst_id=burst_id,
+            send_message=False,
+        )
+        created_last = None
+        for sibling in siblings:
+            sibling_bodies = [
+                line.raw for line in sibling.lines if (line.raw or "").strip()
+            ] or bodies
+            created_last = self._create_draft_from_proposal(
+                from_number=from_number,
+                group_id=group_id,
+                creator_uid=creator_uid,
+                store_name=store_name,
+                proposal=sibling,
+                message_sids=message_sids,
+                primary_intake_id=message_sids[0] if message_sids else None,
+                bodies=sibling_bodies,
+                burst_id=burst_id,
+                sibling_of=updated or resume_folio,
+                send_message=False,
+                apply_reactions=False,
+            )
+        anchor = updated or resume_folio
+        created = created_last or anchor
+        share_token = str(created.get("share_token") or "")
+        version = str(created.get("updated_at") or "")
+        self._send_bot_message(
+            from_number,
+            self._sibling_drafts_message(
+                self._folios_for_sibling_message(anchor, created)
+            ),
+            burst_id=burst_id,
+            kind="bot_draft",
+            folio_id=str(created.get("_id") or created.get("id") or ""),
+            media_url=self._draft_card_image_url(share_token, version=version or None),
+        )
+
     def _resume_draft_from_proposal(
         self,
         *,
@@ -1423,7 +1575,8 @@ class WhatsappIntakeProcessorService:
         message_sids: List[str],
         bodies: List[str],
         burst_id: Optional[str] = None,
-    ) -> None:
+        send_message: bool = True,
+    ) -> dict:
         mysql_db = None
         if MySQLSessionLocal is not None:
             mysql_db = MySQLSessionLocal()
@@ -1453,7 +1606,7 @@ class WhatsappIntakeProcessorService:
             if merged_vehicle is not None:
                 patch["vehicle"] = merged_vehicle
             updated = folio_service.update(folio_id, patch)
-            self._finalize_linked_draft(
+            return self._finalize_linked_draft(
                 from_number=from_number,
                 folio=updated,
                 proposal=proposal,
@@ -1466,6 +1619,7 @@ class WhatsappIntakeProcessorService:
                 bodies=bodies,
                 processing_status="draft_resumed",
                 headline="Borrador actualizado en Eassymo POS.",
+                send_message=send_message,
             )
         finally:
             if mysql_db is not None:
@@ -1627,7 +1781,9 @@ class WhatsappIntakeProcessorService:
         burst_id: Optional[str] = None,
         session: Optional[dict] = None,
         sibling_of: Optional[dict] = None,
-    ) -> None:
+        send_message: bool = True,
+        apply_reactions: bool = True,
+    ) -> dict:
         mysql_db = None
         if MySQLSessionLocal is not None:
             mysql_db = MySQLSessionLocal()
@@ -1671,7 +1827,7 @@ class WhatsappIntakeProcessorService:
                 message_body = self._sibling_drafts_message(
                     self._folios_for_sibling_message(sibling_anchor, created_with_uid)
                 )
-            self._finalize_linked_draft(
+            return self._finalize_linked_draft(
                 from_number=from_number,
                 folio=created,
                 proposal=proposal,
@@ -1685,6 +1841,8 @@ class WhatsappIntakeProcessorService:
                 processing_status="draft_created",
                 headline="Borrador listo en Eassymo POS.",
                 message_body=message_body,
+                send_message=send_message,
+                apply_reactions=apply_reactions,
             )
         finally:
             if mysql_db is not None:

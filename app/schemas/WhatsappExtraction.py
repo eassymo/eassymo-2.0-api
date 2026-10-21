@@ -78,6 +78,15 @@ class ExtractionEvidence(BaseModel):
     kind: str = "literal"
 
 
+class ExtractionRequest(BaseModel):
+    """Parts for a second vehicle inside the same seller burst."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    vehicle: Optional[ExtractionVehicle] = None
+    lines: List[ExtractionLine] = Field(default_factory=list)
+
+
 class WhatsappExtractionProposal(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -85,6 +94,14 @@ class WhatsappExtractionProposal(BaseModel):
     intent: ExtractionIntent
     vehicle: Optional[ExtractionVehicle] = None
     lines: List[ExtractionLine] = Field(default_factory=list)
+    additional_requests: List[ExtractionRequest] = Field(default_factory=list)
     uncertainties: List[ExtractionUncertainty] = Field(default_factory=list)
     evidence: List[ExtractionEvidence] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
+
+    @field_validator("additional_requests", mode="before")
+    @classmethod
+    def _null_additional_requests(cls, value: Any) -> Any:
+        if value is None:
+            return []
+        return value

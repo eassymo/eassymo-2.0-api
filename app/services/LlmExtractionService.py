@@ -1,9 +1,10 @@
+import ast
 import json
 import logging
 import os
 import re
 import time
-from typing import Any, Dict, Optional, Sequence, Union
+from typing import Any, Dict, Iterator, Optional, Sequence, Union
 
 import requests
 
@@ -46,8 +47,14 @@ Reglas estrictas:
 - Si el apodo es ambiguo (varios autos posibles), no inventes make/model: deja esos campos null y agrega
   uncertainties[] pidiendo confirmación (pregunta concreta, ej. "¿Es un Volkswagen Jetta 2015?").
 - Si falta información (año, posición, etc.), usa uncertainties[]; no adivines compatibilidad ni posición.
-- Si te indican un vehículo ya capturado en el borrador, las piezas nuevas son para ESE auto:
+- Si te indican un vehículo ya capturado en el borrador, las piezas que no nombran otro auto son para ESE auto:
   no pidas el vehículo, no lo pongas en uncertainties, y deja vehicle null salvo que el mensaje lo corrija.
+- Si el mismo mensaje también pide piezas para otro auto, no las mezcles en lines.
+  Esas piezas van solo en additional_requests, con el vehicle de ese auto.
+  lines se queda con las piezas del auto ya capturado y vehicle null.
+- Si el mensaje es solo para otro auto, usa vehicle + lines de ese auto y additional_requests [].
+- additional_requests es [] cuando no hay un segundo auto.
+- En cada line.raw copia el globo del vendedor que pide esa pieza, incluyendo el auto si lo dijo.
 - Responde SOLO con JSON, sin markdown ni texto extra.
 """
 
@@ -63,6 +70,7 @@ Devuelve JSON con esta forma:
   "intent": "new_request" | "unknown" | "not_commercial",
   "vehicle": {{ "make": null, "model": null, "year": null, "engine": null, "vin": null }},
   "lines": [{{ "local_id": "line_a", "part_name": "...", "quantity": 1, "unit": "pieza", "position": null, "raw": "..." }}],
+  "additional_requests": [],
   "uncertainties": [{{ "path": "vehicle.model", "reason": "¿Es un Volkswagen Jetta 2015?" }}],
   "evidence": [{{ "path": "vehicle.model", "raw": "Jettita", "kind": "inferred" }}],
   "warnings": []
@@ -83,6 +91,73 @@ class LlmExtractionService:
         return bool(self.api_key)
 
     @staticmethod
+    def _loads_object(text: str) -> Optional[Dict[str, Any]]:
+        candidate = (text or "").strip()
+        if not candidate:
+            return None
+        relaxed = re.sub(r",(\s*[}\]])", r"\1", candidate)
+        for blob in (candidate, relaxed):
+            try:
+                value = json.loads(blob)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(value, str):
+                try:
+                    value = json.loads(value)
+                except json.JSONDecodeError:
+                    continue
+            if isinstance(value, dict):
+                return value
+        return None
+
+    @staticmethod
+    def _pythonish_object(text: str) -> Optional[Dict[str, Any]]:
+        candidate = (text or "").strip()
+        if not candidate.startswith("{"):
+            return None
+        try:
+            value = ast.literal_eval(candidate)
+        except (SyntaxError, ValueError, TypeError, MemoryError):
+            value = None
+        if isinstance(value, dict):
+            return value
+        if "'" not in candidate:
+            return None
+        swapped = re.sub(r"(?<!\\)'", '"', candidate)
+        swapped = re.sub(r"\bNone\b", "null", swapped)
+        swapped = re.sub(r"\bTrue\b", "true", swapped)
+        swapped = re.sub(r"\bFalse\b", "false", swapped)
+        return LlmExtractionService._loads_object(swapped)
+
+    @staticmethod
+    def _iter_json_objects(text: str) -> Iterator[str]:
+        for start, char in enumerate(text):
+            if char != "{":
+                continue
+            depth = 0
+            in_string = False
+            escape = False
+            for index in range(start, len(text)):
+                current = text[index]
+                if in_string:
+                    if escape:
+                        escape = False
+                    elif current == "\\":
+                        escape = True
+                    elif current == '"':
+                        in_string = False
+                    continue
+                if current == '"':
+                    in_string = True
+                elif current == "{":
+                    depth += 1
+                elif current == "}":
+                    depth -= 1
+                    if depth == 0:
+                        yield text[start : index + 1]
+                        break
+
+    @staticmethod
     def _extract_json(text: str) -> Dict[str, Any]:
         cleaned = (text or "").strip()
         if not cleaned:
@@ -90,20 +165,45 @@ class LlmExtractionService:
         if cleaned.startswith("```"):
             cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
             cleaned = re.sub(r"\s*```$", "", cleaned)
+            cleaned = cleaned.strip()
+
+        found = LlmExtractionService._loads_object(cleaned)
+        if found is None:
+            found = LlmExtractionService._pythonish_object(cleaned)
+        if found is not None:
+            return found
+
+        if cleaned.startswith("{{") and cleaned.endswith("}}"):
+            inner = cleaned[1:-1].strip()
+            found = LlmExtractionService._loads_object(inner) or LlmExtractionService._pythonish_object(inner)
+            if found is not None:
+                return found
+
+        matches: list[Dict[str, Any]] = []
+        for snippet in LlmExtractionService._iter_json_objects(cleaned):
+            value = LlmExtractionService._loads_object(snippet) or LlmExtractionService._pythonish_object(snippet)
+            if not isinstance(value, dict):
+                continue
+            if any(key in value for key in ("intent", "lines", "schema_version", "additional_requests")):
+                matches.append(value)
+        if matches:
+            return matches[-1]
+
         start = cleaned.find("{")
         end = cleaned.rfind("}")
-        if start >= 0 and end > start:
-            cleaned = cleaned[start : end + 1]
-        return json.loads(cleaned)
+        sliced = cleaned[start : end + 1] if start >= 0 and end > start else cleaned
+        return json.loads(sliced)
 
-    def _call_api(self, store_name: str, body: str, known_vehicle: str = "") -> str:
+    def _call_api(self, store_name: str, body: str, known_vehicle: str = "") -> Dict[str, Any]:
         url = f"{self.base_url}/chat/completions"
         known_vehicle_block = ""
         if (known_vehicle or "").strip():
             known_vehicle_block = (
                 "Vehículo ya capturado en el borrador (NO lo pidas, NO lo pongas en "
-                "uncertainties; las piezas nuevas son para este auto):\n"
-                f"{known_vehicle.strip()}\n\n"
+                "uncertainties; las piezas que no nombran otro auto son para este auto):\n"
+                f"{known_vehicle.strip()}\n"
+                "Si el mensaje también pide piezas para otro auto, pon esas piezas solo en "
+                "additional_requests y deja en lines únicamente las de este auto.\n\n"
             )
         payload = {
             "model": self.model,
@@ -119,23 +219,22 @@ class LlmExtractionService:
                 },
             ],
             "temperature": 0.1,
-            "max_tokens": 2048,
+            # GLM-5.2 thinks at max effort by default. A 2048 cap cuts the answer
+            # off at "{" and json.loads reports column 2. Skip the chain of thought
+            # and leave room for the JSON if the host still thinks.
+            "max_tokens": 8192,
+            "thinking": {"type": "disabled"},
+            "reasoning_effort": "none",
+            "response_format": {"type": "json_object"},
         }
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
 
-        last_rate_limit: Optional[requests.Response] = None
         for attempt in range(self.max_retries):
-            response = requests.post(
-                url,
-                headers=headers,
-                json=payload,
-                timeout=60,
-            )
+            response = self._post_chat(url, headers, payload)
             if response.status_code == 429:
-                last_rate_limit = response
                 if attempt < self.max_retries - 1:
                     wait_seconds = self.retry_base_seconds * (2**attempt)
                     logger.warning(
@@ -156,19 +255,30 @@ class LlmExtractionService:
                 raise LlmExtractionError(str(exc)) from exc
 
             data = response.json()
+            message = ((data.get("choices") or [{}])[0].get("message") or {})
+            finish_reason = ((data.get("choices") or [{}])[0].get("finish_reason"))
+            if isinstance(message, dict):
+                message = dict(message)
+                message["_finish_reason"] = finish_reason
             text = self._message_text(data)
             if not text.strip():
                 logger.warning(
-                    "GLM returned empty content keys=%s",
-                    list(((data.get("choices") or [{}])[0].get("message") or {}).keys()),
+                    "GLM returned empty content keys=%s finish=%s",
+                    list(message.keys()) if isinstance(message, dict) else [],
+                    finish_reason,
                 )
-            return text
+            return message if isinstance(message, dict) else {"content": text, "_finish_reason": finish_reason}
 
-        if last_rate_limit is not None:
-            raise LlmRateLimitError(
-                f"429 Client Error: Too Many Requests for url: {url}"
-            )
-        raise LlmExtractionError(f"GLM request failed for url: {url}")
+    def _post_chat(self, url: str, headers: Dict[str, str], payload: Dict[str, Any]) -> requests.Response:
+        response = requests.post(url, headers=headers, json=payload, timeout=60)
+        if response.status_code != 400:
+            return response
+        optional = ("thinking", "reasoning_effort", "response_format")
+        if not any(key in payload for key in optional):
+            return response
+        logger.warning("GLM rejected request controls: %s", (response.text or "")[:200])
+        reduced = {key: value for key, value in payload.items() if key not in optional}
+        return requests.post(url, headers=headers, json=reduced, timeout=60)
 
     @staticmethod
     def _normalize_messages(body: Union[str, Sequence[str]]) -> list[str]:
@@ -192,13 +302,23 @@ class LlmExtractionService:
             return ""
         if isinstance(content, str):
             return content
+        if isinstance(content, dict):
+            return json.dumps(content, ensure_ascii=False)
         if isinstance(content, list):
             parts: list[str] = []
             for item in content:
                 if isinstance(item, str):
                     parts.append(item)
                 elif isinstance(item, dict):
-                    parts.append(str(item.get("text") or item.get("content") or ""))
+                    text = item.get("text")
+                    if text is None:
+                        text = item.get("content")
+                    if isinstance(text, (dict, list)):
+                        parts.append(json.dumps(text, ensure_ascii=False))
+                    elif text is None:
+                        parts.append("")
+                    else:
+                        parts.append(str(text))
             return "".join(parts)
         return str(content)
 
@@ -215,6 +335,31 @@ class LlmExtractionService:
                 return alt
         return ""
 
+    @classmethod
+    def _candidate_texts(cls, message: Dict[str, Any]) -> list[str]:
+        texts: list[str] = []
+        content = cls._stringify_content(message.get("content"))
+        if content.strip():
+            texts.append(content)
+        for key in ("reasoning_content", "reasoning"):
+            alt = cls._stringify_content(message.get(key))
+            if alt.strip() and alt not in texts:
+                texts.append(alt)
+        return texts
+
+    @classmethod
+    def _proposal_from_message(cls, message: Dict[str, Any]) -> WhatsappExtractionProposal:
+        texts = cls._candidate_texts(message)
+        if not texts:
+            raise ValueError("GLM response was empty")
+        last_error: Optional[Exception] = None
+        for text in texts:
+            try:
+                return WhatsappExtractionProposal.model_validate(cls._extract_json(text))
+            except Exception as exc:
+                last_error = exc
+        raise last_error or ValueError("GLM response was not JSON")
+
     def extract(
         self,
         body: Union[str, Sequence[str]],
@@ -226,16 +371,22 @@ class LlmExtractionService:
         if not self.enabled:
             return WhatsappExtractionProposal(intent=ExtractionIntent.UNKNOWN, warnings=["LLM not configured"])
 
-        raw = self._call_api(store_name, thread, known_vehicle=known_vehicle)
-        if not (raw or "").strip():
+        message = self._call_api(store_name, thread, known_vehicle=known_vehicle)
+        if not self._candidate_texts(message):
             logger.warning("GLM empty response, retrying original thread")
-            raw = self._call_api(store_name, thread, known_vehicle=known_vehicle)
+            message = self._call_api(store_name, thread, known_vehicle=known_vehicle)
 
         try:
-            parsed = self._extract_json(raw)
-            return WhatsappExtractionProposal.model_validate(parsed)
+            return self._proposal_from_message(message)
         except Exception as first_error:
-            logger.warning("GLM JSON parse failed, retrying with original thread: %s", first_error)
+            raw = "\n".join(self._candidate_texts(message))
+            logger.warning(
+                "GLM JSON parse failed, retrying with original thread: %s raw_len=%s finish=%s raw_prefix=%r",
+                first_error,
+                len(raw),
+                message.get("_finish_reason"),
+                raw[:120],
+            )
             repair = self._call_api(
                 store_name,
                 (
@@ -247,5 +398,4 @@ class LlmExtractionService:
                 ),
                 known_vehicle=known_vehicle,
             )
-            parsed = self._extract_json(repair)
-            return WhatsappExtractionProposal.model_validate(parsed)
+            return self._proposal_from_message(repair)

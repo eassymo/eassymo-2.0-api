@@ -159,6 +159,94 @@ def test_llm_extract_json_strips_markdown_fence():
     assert parsed["intent"] == "unknown"
 
 
+def test_llm_extract_json_accepts_single_quotes_and_double_braces():
+    service = LlmExtractionService()
+    single = service._extract_json(
+        "{'schema_version': '1.0', 'intent': 'new_request', 'lines': []}"
+    )
+    doubled = service._extract_json(
+        '{{"schema_version":"1.0","intent":"unknown","lines":[]}}'
+    )
+    embedded = service._extract_json(
+        '{oops {"schema_version":"1.0","intent":"new_request","lines":[]}}'
+    )
+    assert single["intent"] == "new_request"
+    assert doubled["intent"] == "unknown"
+    assert embedded["intent"] == "new_request"
+
+
+@patch("app.services.LlmExtractionService.requests.post")
+def test_llm_extract_uses_reasoning_when_content_is_truncated_brace(mock_post):
+    success = MagicMock()
+    success.status_code = 200
+    success.raise_for_status.return_value = None
+    success.json.return_value = {
+        "choices": [
+            {
+                "finish_reason": "length",
+                "message": {
+                    "content": "{",
+                    "reasoning_content": (
+                        '{"schema_version":"1.0","intent":"new_request",'
+                        '"lines":[{"local_id":"line_a","part_name":"luces de freno","quantity":1}]}'
+                    ),
+                },
+            }
+        ]
+    }
+    mock_post.return_value = success
+
+    service = LlmExtractionService()
+    service.api_key = "test-key"
+    proposal = service.extract(
+        ["Ah y unas luces de freno", "Y también olvidé para un Tsuru 2010 unas balatas traseras please"],
+        store_name="Tienda A",
+        known_vehicle="2020 Renault Koleos",
+    )
+
+    assert proposal.lines[0].part_name == "luces de freno"
+    assert mock_post.call_count == 1
+    payload = mock_post.call_args.kwargs["json"]
+    assert payload["thinking"] == {"type": "disabled"}
+    assert payload["reasoning_effort"] == "none"
+    assert payload["response_format"] == {"type": "json_object"}
+    assert payload["max_tokens"] >= 8192
+
+
+@patch("app.services.LlmExtractionService.requests.post")
+def test_llm_drops_rejected_thinking_controls_and_parses_dict_content(mock_post):
+    rejected = MagicMock()
+    rejected.status_code = 400
+    rejected.text = "thinking.type disabled is not supported"
+    success = MagicMock()
+    success.status_code = 200
+    success.raise_for_status.return_value = None
+    success.json.return_value = {
+        "choices": [
+            {
+                "message": {
+                    "content": {
+                        "schema_version": "1.0",
+                        "intent": "unknown",
+                        "lines": [],
+                    }
+                }
+            }
+        ]
+    }
+    mock_post.side_effect = [rejected, success]
+
+    service = LlmExtractionService()
+    service.api_key = "test-key"
+    proposal = service.extract("hola", store_name="Tienda A")
+
+    assert proposal.intent == ExtractionIntent.UNKNOWN
+    assert mock_post.call_count == 2
+    retry_payload = mock_post.call_args_list[1].kwargs["json"]
+    assert "thinking" not in retry_payload
+    assert "response_format" not in retry_payload
+
+
 def test_llm_format_thread_single_message():
     service = LlmExtractionService()
     assert service._format_thread(["Jetta 2015, filtro"]) == "Jetta 2015, filtro"
@@ -1382,6 +1470,88 @@ def test_strip_draft_boilerplate_keeps_extra_content():
     assert _strip_draft_boilerplate(bodies) == ["también un filtro de aire"]
 
 
+def test_partition_resume_keeps_open_draft_parts_and_splits_named_car():
+    from app.schemas.WhatsappExtraction import (
+        ExtractionIntent,
+        ExtractionLine,
+        ExtractionRequest,
+        ExtractionVehicle,
+        WhatsappExtractionProposal,
+    )
+    from app.services.WhatsappIntakeProcessorService import WhatsappIntakeProcessorService
+
+    service = WhatsappIntakeProcessorService()
+    koleos = {"maker": "Renault", "model": "Koleos", "year": "2020"}
+    mixed = WhatsappExtractionProposal(
+        intent=ExtractionIntent.NEW_REQUEST,
+        vehicle=ExtractionVehicle(make="Nissan", model="Tsuru", year="2010"),
+        lines=[
+            ExtractionLine(
+                local_id="lights",
+                part_name="luces de freno",
+                quantity=1,
+                raw="Ah y unas luces de freno",
+            ),
+            ExtractionLine(
+                local_id="pads",
+                part_name="balatas",
+                quantity=1,
+                position="trasera",
+                raw="Y también olvidé para un Tsuru 2010 unas balatas traseras please",
+            ),
+        ],
+    )
+    current, siblings = service._partition_resume_proposal({"vehicle": koleos}, mixed)
+    assert [line.part_name for line in current] == ["luces de freno"]
+    assert siblings[0].vehicle.model == "Tsuru"
+    assert [line.part_name for line in siblings[0].lines] == ["balatas"]
+
+    only_tsuru = WhatsappExtractionProposal(
+        intent=ExtractionIntent.NEW_REQUEST,
+        vehicle=ExtractionVehicle(make="Nissan", model="Tsuru", year="2010"),
+        lines=[
+            ExtractionLine(
+                local_id="sensor",
+                part_name="sensor de detonación",
+                quantity=1,
+                raw="un sensor de detonación",
+            )
+        ],
+    )
+    current, siblings = service._partition_resume_proposal({"vehicle": koleos}, only_tsuru)
+    assert current == []
+    assert [line.part_name for line in siblings[0].lines] == ["sensor de detonación"]
+
+    explicit = WhatsappExtractionProposal(
+        intent=ExtractionIntent.NEW_REQUEST,
+        lines=[
+            ExtractionLine(
+                local_id="lights",
+                part_name="luces de freno",
+                quantity=1,
+                raw="Ah y unas luces de freno",
+            )
+        ],
+        additional_requests=[
+            ExtractionRequest(
+                vehicle=ExtractionVehicle(make="Nissan", model="Tsuru", year="2010"),
+                lines=[
+                    ExtractionLine(
+                        local_id="pads",
+                        part_name="balatas",
+                        quantity=1,
+                        position="trasera",
+                        raw="para un Tsuru 2010 unas balatas traseras",
+                    )
+                ],
+            )
+        ],
+    )
+    current, siblings = service._partition_resume_proposal({"vehicle": koleos}, explicit)
+    assert [line.part_name for line in current] == ["luces de freno"]
+    assert [line.part_name for line in siblings[0].lines] == ["balatas"]
+
+
 def test_proposal_names_different_vehicle_keeps_same_car_and_splits_another():
     from app.schemas.WhatsappExtraction import (
         ExtractionIntent,
@@ -1830,6 +2000,184 @@ def test_flush_forgotten_vehicle_creates_sibling_draft(
     assert created["share_token"] in draft_messages[0]
     assert "2020 Renault Koleos" in draft_messages[0]
     assert "2010 Nissan Tsuru" in draft_messages[0]
+    assert not any("Borrador actualizado" in body for body in sent)
+
+
+@patch("app.services.WhatsappIntakeProcessorService.session_repo")
+@patch("app.services.WhatsappIntakeProcessorService.folio_service")
+@patch("app.services.WhatsappIntakeProcessorService.MySQLSessionLocal", None)
+@patch("app.services.WhatsappIntakeProcessorService.inbound_repo")
+@patch("app.services.WhatsappIntakeProcessorService.WhatsappService")
+@patch("app.services.WhatsappIntakeProcessorService.LlmExtractionService")
+@patch("app.services.WhatsappIntakeProcessorService.WhatsappSellerIdentityService")
+def test_flush_followup_adds_koleos_part_and_opens_tsuru_sibling(
+    mock_identity_cls,
+    mock_llm_cls,
+    mock_whatsapp_cls,
+    mock_inbound_repo,
+    mock_folio_service,
+    mock_session_repo,
+):
+    from app.schemas.WhatsappExtraction import (
+        ExtractionIntent,
+        ExtractionLine,
+        ExtractionRequest,
+        ExtractionVehicle,
+        WhatsappExtractionProposal,
+    )
+    from app.services.WhatsappIntakeProcessorService import WhatsappIntakeProcessorService
+
+    token = "f6c6e8136a1d4c76a146ee9d69608abf"
+    link = f"https://www.eassymo.mx/whatsapp-draft/{token}"
+    lights = "Ah y unas luces de freno"
+    tsuru = "Y también olvidé para un Tsuru 2010 unas balatas traseras please"
+    forwarded = (
+        "Borrador listo en Eassymo POS.\n"
+        f"Revisa vehículo y piezas aquí:\n{link}"
+    )
+    session = _collecting_session(
+        messages=[
+            {"message_sid": "SM-lights", "body": lights},
+            {"message_sid": "SM-tsuru", "body": tsuru},
+            {"message_sid": "SM-link", "body": forwarded},
+        ],
+    )
+    resume_doc = _resume_folio(
+        share_token=token,
+        vehicle={"maker": "Renault", "model": "Koleos", "year": "2020"},
+    )
+    created = {
+        "_id": "folio-tsuru",
+        "share_token": "aabbccddeeff00112233445566778899",
+        "folio_code": "TSURU1",
+        "updated_at": "2026-10-21T01:50:41+00:00",
+        "vehicle": {"maker": "Nissan", "model": "Tsuru", "year": "2010"},
+        "pieces": [],
+        "whatsapp_pending_questions": [],
+    }
+
+    def _normalize(info):
+        if not info:
+            return None
+        return {
+            "year": None if info.get("year") is None else str(info.get("year")),
+            "maker": info.get("maker"),
+            "model": info.get("model"),
+            "engine": info.get("engine"),
+            "vin": info.get("vin"),
+        }
+
+    def _update(folio_id, patch):
+        if str(folio_id) == resume_doc["_id"]:
+            return {**resume_doc, **patch}
+        return {**created, **patch, "_id": folio_id}
+
+    def _map_lines(_db, lines):
+        mapped = []
+        for line in lines:
+            item = MagicMock(
+                tipo_parte_id=None,
+                tipo_parte_descripcion=line.part_name,
+                categoria_id=None,
+                sub_categoria_id=None,
+                qty=line.quantity,
+                unit_of_measure="Pieza",
+                position=line.position,
+                position_suggested=False,
+                catalog_matched=False,
+            )
+            item.name = line.part_name
+            mapped.append(item)
+        return mapped
+
+    mock_inbound_repo.find_by_message_sid.return_value = None
+    mock_identity_cls.return_value.resolve.return_value = MagicMock(
+        status="resolved",
+        group_id="g1",
+        group_name="Tienda A",
+        creator_uid="uid-1",
+        just_selected=False,
+        message=None,
+    )
+    mock_session_repo.get_by_phone.return_value = session
+    mock_session_repo.ensure_collecting_session.return_value = session
+    mock_session_repo.append_message.return_value = (session, False, True)
+    mock_session_repo.try_acquire_flush.return_value = session
+    mock_folio_service.get_by_share_token.return_value = resume_doc
+    mock_folio_service._is_assigned_to_buyer.return_value = False
+    mock_folio_service._has_ordered_pieces.return_value = False
+    mock_folio_service._normalize_vehicle.side_effect = _normalize
+    mock_folio_service.update.side_effect = _update
+    mock_folio_service.create.return_value = created
+    mock_llm_cls.return_value.extract.return_value = WhatsappExtractionProposal(
+        intent=ExtractionIntent.NEW_REQUEST,
+        lines=[
+            ExtractionLine(
+                local_id="lights",
+                part_name="luces de freno",
+                quantity=1,
+                raw=lights,
+            )
+        ],
+        additional_requests=[
+            ExtractionRequest(
+                vehicle=ExtractionVehicle(make="Nissan", model="Tsuru", year="2010"),
+                lines=[
+                    ExtractionLine(
+                        local_id="pads",
+                        part_name="balatas",
+                        quantity=1,
+                        position="trasera",
+                        raw=tsuru,
+                    )
+                ],
+            )
+        ],
+    )
+    mock_whatsapp_cls.return_value.native_reactions_enabled = False
+
+    service = WhatsappIntakeProcessorService()
+    service.extract_enabled = True
+    service.client_base_url = "https://www.eassymo.mx"
+    service.whatsapp_public_base_url = "https://www.eassymo.mx"
+    service.catalog_mapper.map_lines = _map_lines
+    service.process_inbound(
+        {
+            "mongo_id": "in-followup",
+            "message_sid": "SM-tsuru",
+            "from_number": "+5217779313704",
+            "body": tsuru,
+        }
+    )
+    service.flush_if_ready("+5217779313704", 1)
+
+    piece_updates = [
+        call.args[1]
+        for call in mock_folio_service.update.call_args_list
+        if "pieces" in call.args[1]
+    ]
+    assert piece_updates
+    piece_names = [piece["name"] for piece in piece_updates[0]["pieces"]]
+    assert "luces de freno" in piece_names
+    assert "filtro de aceite" in piece_names
+    assert piece_updates[0]["vehicle"]["model"] == "Koleos"
+    assert piece_updates[0]["vehicle"]["year"] == "2020"
+
+    payload = mock_folio_service.create.call_args.args[0]
+    assert payload["vehicle"]["model"] == "Tsuru"
+    assert payload["vehicle"]["year"] == "2010"
+    assert [piece["name"] for piece in payload["pieces"]] == ["balatas"]
+    assert payload["sibling_uid"]
+
+    sent = [
+        call.args[1]
+        for call in mock_whatsapp_cls.return_value.send_text_message.call_args_list
+    ]
+    draft_messages = [body for body in sent if "un borrador por cada uno" in body]
+    assert draft_messages, sent
+    assert "2020 Renault Koleos" in draft_messages[0]
+    assert "2010 Nissan Tsuru" in draft_messages[0]
+    assert not any("no pudimos interpretarlo" in body for body in sent)
     assert not any("Borrador actualizado" in body for body in sent)
 
 
