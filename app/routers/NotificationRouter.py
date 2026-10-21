@@ -12,6 +12,7 @@ notificationRouter = APIRouter(prefix="/notifications", tags=["Notifications"])
 
 
 @notificationRouter.get("", response_description="List notifications for the authenticated user")
+@notificationRouter.get("/", include_in_schema=False)
 def list_notifications(
     request: Request,
     groupselected: str = Header(None),

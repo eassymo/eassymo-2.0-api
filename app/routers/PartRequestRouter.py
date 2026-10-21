@@ -13,6 +13,7 @@ partRequestRouter = APIRouter(prefix="/partRequest")
 
 
 @partRequestRouter.post("", response_description="Created id of the part request", tags=["PartRequest"])
+@partRequestRouter.post("/", include_in_schema=False)
 def create(request: Request, payload: PartRequest):
     try:
         # Extract user token from Authorization header
@@ -28,6 +29,7 @@ def create(request: Request, payload: PartRequest):
 
 
 @partRequestRouter.get("", response_description="Will return the list of part requests using the user uid and group uid")
+@partRequestRouter.get("/", include_in_schema=False)
 def find(
     user_uid: Optional[str] = Query(
         None, title="user_uid", description="User uid"),
@@ -240,6 +242,7 @@ def find_sibling_requests_with_offers(
 
 
 @partRequestRouter.put("", tags=["PartRequest"])
+@partRequestRouter.put("/", include_in_schema=False)
 def edit_part_request(
     payload: List[PartRequestEdit]
 ):

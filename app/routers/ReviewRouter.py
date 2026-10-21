@@ -20,6 +20,7 @@ def _group_selected(request: Request) -> Optional[str]:
 
 
 @reviewRouter.post("", description="Submit a review for a completed transaction")
+@reviewRouter.post("/", include_in_schema=False)
 def submit_review(request: Request, payload: SubmitReviewRequest = Body(...)):
     try:
         reviewer_group_id = _group_selected(request)

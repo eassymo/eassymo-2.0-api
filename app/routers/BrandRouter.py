@@ -11,6 +11,7 @@ brandRouter = APIRouter(prefix="/brand")
 
 
 @brandRouter.post("", description="insert a new brand")
+@brandRouter.post("/", include_in_schema=False)
 def insert(payload: Brand):
     try:
         response = brandService.insert(payload)
@@ -20,6 +21,7 @@ def insert(payload: Brand):
 
 
 @brandRouter.get("", description="search for a brand by label")
+@brandRouter.get("/", include_in_schema=False)
 def find(search_param: Optional[str] = Query(title="search_param")):
     try:
         response = brandService.find_brand_by_label(search_param)

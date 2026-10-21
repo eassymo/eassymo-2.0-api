@@ -2,4 +2,4 @@
 set -e
 
 PORT="${PORT:-8000}"
-exec uvicorn main:app --host 0.0.0.0 --port "$PORT"
+exec uvicorn main:app --host 0.0.0.0 --port "$PORT" --proxy-headers --forwarded-allow-ips="${FORWARDED_ALLOW_IPS:-*}"

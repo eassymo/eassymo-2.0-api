@@ -14,6 +14,7 @@ pendingCartRouter = APIRouter(prefix="/pending-cart")
     response_description="Upsert pending cart",
     tags=["PendingCart"],
 )
+@pendingCartRouter.put("", include_in_schema=False)
 def save_pending_cart(
     request: Request,
     body: SavePendingCartRequest = Body(...),

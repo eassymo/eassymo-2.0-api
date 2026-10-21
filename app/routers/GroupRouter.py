@@ -17,6 +17,7 @@ groupRouter = APIRouter(prefix="/group")
 
 
 @groupRouter.post("", response_description="", tags=["Groups"])
+@groupRouter.post("/", include_in_schema=False)
 def create(
         user_id: Optional[str] = Query(
             None, title="user_id", description="user that will be added to the group references"),
@@ -75,6 +76,7 @@ def get_by_id(group_id: str):
 
 
 @groupRouter.get("", description="finds groups according to filters", tags=["partRequestInvite"])
+@groupRouter.get("/", include_in_schema=False)
 def find(
     request: Request,
     search_argument: Optional[str] = Query(None, title="search_argument"),

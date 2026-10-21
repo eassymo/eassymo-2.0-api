@@ -9,6 +9,7 @@ partRequestInviteRouter = APIRouter(prefix="/partRequestInvite")
 
 
 @partRequestInviteRouter.post("", description="Insert a new part request invite", tags=["partRequestInvite"])
+@partRequestInviteRouter.post("/", include_in_schema=False)
 def insert(partRequestInvite: RequestInvite):
     try:
         response = partRequestInviteService.insert(partRequestInvite)

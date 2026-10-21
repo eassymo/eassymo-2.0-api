@@ -36,6 +36,7 @@ def _require_group(request: Request) -> str:
 
 
 @relationshipRouter.get("")
+@relationshipRouter.get("/", include_in_schema=False)
 def list_relationships(
     request: Request,
     direction: RelationshipDirection = Query(RelationshipDirection.COMPRANDO),

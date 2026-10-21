@@ -11,12 +11,14 @@ preloadedFiltersRouter = APIRouter(prefix="/preloadedFilters")
 
 
 @preloadedFiltersRouter.post("", response_description="Inserted preloaded filter", response_model=PreloadedFilters)
+@preloadedFiltersRouter.post("/", include_in_schema=False)
 def insert(payload: PreloadedFilters = Body(None)):
     response = preloadedFilterService.insert(payload)
     return JSONResponse(status_code=status.HTTP_200_OK, content=response.toJson())
 
 
 @preloadedFiltersRouter.get("/", response_description="List of preloaded filters", response_model=PreloadedFilters, tags=["Preloaded Filters"])
+@preloadedFiltersRouter.get("", include_in_schema=False)
 def find_by_user_group_type(
     user_uid: Optional[str] = Query(None, title="user_uid"),
     group_id: Optional[str] = Query(None, title="group_id"),

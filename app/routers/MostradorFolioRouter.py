@@ -23,6 +23,7 @@ def _err_status(e: Exception) -> int:
 
 
 @mostradorRouter.post("", description="Create a Mostrador folio (Solicitud + -> Nueva)")
+@mostradorRouter.post("/", include_in_schema=False)
 def create(request: Request, data: dict = Body(...), groupselected: str = Header(None)):
     try:
         uid = (request.state.user or {}).get("uid") if hasattr(request.state, "user") else None
@@ -33,6 +34,7 @@ def create(request: Request, data: dict = Body(...), groupselected: str = Header
 
 
 @mostradorRouter.get("", description="List folios for the selected group")
+@mostradorRouter.get("/", include_in_schema=False)
 def list_folios(request: Request, groupselected: str = Header(None)):
     try:
         caller_uid = require_authenticated_uid(request)

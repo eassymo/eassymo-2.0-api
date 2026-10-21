@@ -16,6 +16,7 @@ photoRouter = APIRouter(prefix="/photo")
 
 
 @photoRouter.post("/", response_description="Upload photo", tags=["Photos"])
+@photoRouter.post("", include_in_schema=False)
 async def upload_photo(
     request: Request,
     files: Annotated[List[UploadFile], Form()],

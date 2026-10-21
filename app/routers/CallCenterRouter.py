@@ -10,6 +10,7 @@ callCenterRouter = APIRouter(prefix="/callCenter")
 
 
 @callCenterRouter.get("", description="Call center requests query", tags=["Call Center"])
+@callCenterRouter.get("/", include_in_schema=False)
 def find(
     request: Request,
     search_term: Optional[str] = Query(None, title="search_term"),

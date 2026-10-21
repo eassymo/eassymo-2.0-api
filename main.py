@@ -46,6 +46,7 @@ import app.utils.firebase_admin
 
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, Request
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from app.middleware.auth_middleware import verify_token
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
@@ -167,6 +168,14 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+
+# Railway terminates TLS and connects over HTTP. Trust X-Forwarded-Proto so
+# slash redirects keep https instead of dropping to http. Added last so it
+# runs before CORS and routing.
+app.add_middleware(
+    ProxyHeadersMiddleware,
+    trusted_hosts=os.getenv("FORWARDED_ALLOW_IPS", "*"),
 )
 
 app.include_router(userRouter.userRouter)

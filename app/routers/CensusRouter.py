@@ -13,6 +13,7 @@ censusRouter = APIRouter(prefix="/census")
 
 
 @censusRouter.get("", response_description="Service for listing the census items", response_model=List[CensusSchema], tags=["Census", "list"])
+@censusRouter.get("/", include_in_schema=False)
 def find(
     request: Request,
     params: Params = Depends(),

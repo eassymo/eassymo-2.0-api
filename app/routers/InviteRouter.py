@@ -10,6 +10,7 @@ inviteRouter = APIRouter(prefix="/invite")
 
 
 @inviteRouter.get("", description="gets the invites according to the filters", tags=["Invites"])
+@inviteRouter.get("/", include_in_schema=False)
 def find(
     user_id: Optional[str] = Query(
         None, title="user_id", description="User creator of the invite"),

@@ -12,6 +12,7 @@ userRolesRouter = APIRouter(prefix="/userRoles")
 
 
 @userRolesRouter.post("", description="Insert a new user role", tags=["User Roles"])
+@userRolesRouter.post("/", include_in_schema=False)
 def insert(request: Request, payload: UserRoles = Body()):
     try:
         authorize_role_mutation(request, payload.user_uid, payload.group)
@@ -22,6 +23,7 @@ def insert(request: Request, payload: UserRoles = Body()):
 
 
 @userRolesRouter.get("", description="find user roles", tags=["User Roles"])
+@userRolesRouter.get("/", include_in_schema=False)
 def find(
     user_id: Optional[str] = Query(None, title="user_uid"),
     role: Optional[str] = Query(None, title="role"),
