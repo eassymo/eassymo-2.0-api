@@ -10,6 +10,22 @@ load_dotenv()
 _API_ROOT = Path(__file__).resolve().parents[2]
 
 
+def _is_production() -> bool:
+    return os.getenv("ENVIRONMENT", "").lower() in ("production", "prod") or os.getenv(
+        "RAILWAY_ENVIRONMENT", ""
+    ).lower() == "production"
+
+
+def _should_use_local_service_account_file() -> bool:
+    allow_local_env = os.getenv("ALLOW_LOCAL_FIREBASE_SERVICE_ACCOUNT_FILE")
+    if allow_local_env is not None and allow_local_env.lower() == "true":
+        return True
+    if allow_local_env is not None and allow_local_env.lower() == "false":
+        return False
+    # Local dev default: use gitignored adminsdk JSON when present (prod never does).
+    return not _is_production()
+
+
 def _find_default_service_account_file():
     """Use downloaded Firebase service account JSON in the API project root."""
     matches = sorted(_API_ROOT.glob("*firebase-adminsdk*.json"))
@@ -39,7 +55,7 @@ def initialize_firebase():
             return
 
         # Option 2: Service account JSON file in project root (local dev only; file must be gitignored)
-        if os.getenv("ALLOW_LOCAL_FIREBASE_SERVICE_ACCOUNT_FILE", "true").lower() == "true":
+        if _should_use_local_service_account_file():
             default_service_account = _find_default_service_account_file()
             if default_service_account:
                 cred = credentials.Certificate(default_service_account)
@@ -105,14 +121,11 @@ def initialize_firebase():
                 print("Invalid JSON in FIREBASE_SERVICE_ACCOUNT_JSON: {}".format(e))
         
         # If we get here, we need proper credentials
-        raise ValueError(
-            "Firebase service account credentials not found or invalid. "
-            "Please set either:\n"
-            "1. FIREBASE_SERVICE_ACCOUNT_PATH (path to service account file)\n"
-            "2. Place *firebase-adminsdk*.json in the API project root\n"
-            "3. FIREBASE_SERVICE_ACCOUNT_JSON (JSON string of service account)\n"
-            "4. Individual environment variables (FIREBASE_PROJECT_ID, FIREBASE_PRIVATE_KEY, etc.)"
+        print(
+            "Firebase credentials not configured; auth and realtime DB features are disabled. "
+            "Set FIREBASE_SERVICE_ACCOUNT_PATH or related env vars to enable them."
         )
+        return
         
     except Exception as e:
         print("Error initializing Firebase: {}".format(e))
@@ -121,6 +134,13 @@ def initialize_firebase():
         print("   - Set FIREBASE_SERVICE_ACCOUNT_PATH or place the JSON in the API root")
         print("   - Verify your service account has Auth admin permissions")
         raise
+
+
+def _ensure_firebase_initialized():
+    if not firebase_admin._apps:
+        raise ValueError(
+            "Firebase is not configured. Set FIREBASE_SERVICE_ACCOUNT_PATH or related env vars."
+        )
 
 
 def validate_service_account_creds(cred_dict):
@@ -150,7 +170,11 @@ def verify_firebase_token(id_token: str):
     Verify Firebase ID token from Authorization header
     """
     try:
-        decoded_token = auth.verify_id_token(id_token)
+        _ensure_firebase_initialized()
+        # clock_skew_seconds: client clocks are often 1–2s ahead of the API.
+        # Fresh tokens right after login have iat=now on the client; without
+        # skew tolerance Firebase rejects them as "Token used too early" (401).
+        decoded_token = auth.verify_id_token(id_token, clock_skew_seconds=60)
         return decoded_token
     except Exception as e:
         print(f"❌ Error verifying Firebase token: {e}")
@@ -179,6 +203,7 @@ def get_database_reference(path: str):
     Get Firebase Realtime Database reference
     """
     try:
+        _ensure_firebase_initialized()
         return db.reference(path)
     except Exception as e:
         print(f"❌ Error getting database reference: {e}")

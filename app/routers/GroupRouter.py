@@ -8,7 +8,7 @@ from app.services import GroupService as groupService
 from fastapi.responses import JSONResponse
 from typing import List, Dict, Any
 from fastapi.encoders import jsonable_encoder
-from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response
+from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response, error_json_response
 from app.dto.group_dto import EditGroupDto
 from pymongo.errors import PyMongoError
 
@@ -17,6 +17,7 @@ groupRouter = APIRouter(prefix="/group")
 
 
 @groupRouter.post("", response_description="", tags=["Groups"])
+@groupRouter.post("/", include_in_schema=False)
 def create(
         user_id: Optional[str] = Query(
             None, title="user_id", description="user that will be added to the group references"),
@@ -75,6 +76,7 @@ def get_by_id(group_id: str):
 
 
 @groupRouter.get("", description="finds groups according to filters", tags=["partRequestInvite"])
+@groupRouter.get("/", include_in_schema=False)
 def find(
     request: Request,
     search_argument: Optional[str] = Query(None, title="search_argument"),
@@ -100,7 +102,7 @@ def find(
 
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(groups_found)))
     except (HTTPException, PyMongoError) as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)
 
 
 @groupRouter.put("/{group_id}", tags=["Groups"])

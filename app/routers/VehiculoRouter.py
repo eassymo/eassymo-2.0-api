@@ -1,6 +1,6 @@
 import os
 
-from fastapi import APIRouter, Body, Depends, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
@@ -14,7 +14,7 @@ from app.services.VehiculoSensibilidadesService import check_sensibilidades
 from app.repositories.VehiculoSensibilidadesRepository import VehiculoSensibilidadesRepository
 from app.services import GroupCarService
 from app.utils import TypeUtilities as typeUtilities
-from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response
+from app.utils.ResponseUtils import get_successful_response, error_json_response
 
 vehiculoRouter = APIRouter(prefix="/vehiculo", tags=["Vehiculo"])
 
@@ -25,15 +25,9 @@ def search_partes_paginator_endpoint(
     mysql_db: Session = Depends(get_mysql_db),
 ):
     if not payload.historicoBusqueda:
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={"success": False, "code": "INVALID_REQUEST"},
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="INVALID_REQUEST")
     if not (payload.historicoBusqueda.criterio or payload.historicoBusqueda.usuario):
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={"success": False, "code": "INVALID_REQUEST"},
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="INVALID_REQUEST")
     result = search_partes_paginator(mysql_db, payload)
     return JSONResponse(status_code=status.HTTP_200_OK, content=result)
 
@@ -44,29 +38,19 @@ def check_sensibilidades_endpoint(
     mysql_db: Session = Depends(get_mysql_db),
 ):
     if not payload.vehiculo:
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={"success": False, "code": "INVALID_REQUEST"},
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="INVALID_REQUEST")
     if not payload.parte:
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={"success": False, "code": "INVALID_REQUEST"},
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="INVALID_REQUEST")
     v = payload.vehiculo
     if not (v.fabricante and v.modelo and v.ano is not None):
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={"success": False, "code": "INVALID_REQUEST"},
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="INVALID_REQUEST")
     try:
         result = check_sensibilidades(mysql_db, payload)
         return JSONResponse(status_code=status.HTTP_200_OK, content=result)
-    except Exception:
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={"success": False, "code": "GENERIC_ERROR"},
-        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        return error_json_response(e)
 
 
 @vehiculoRouter.get("/findAllVersiones")
@@ -86,11 +70,10 @@ def find_all_versiones(
             for r in rows
         ]
         return JSONResponse(status_code=status.HTTP_200_OK, content={"data": data})
-    except Exception:
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={"success": False, "code": "GENERIC_ERROR"},
-        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        return error_json_response(e)
 
 
 @vehiculoRouter.get("/findAllMotorDesc")
@@ -110,11 +93,10 @@ def find_all_motor_desc(
             for r in rows
         ]
         return JSONResponse(status_code=status.HTTP_200_OK, content={"data": data})
-    except Exception:
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={"success": False, "code": "GENERIC_ERROR"},
-        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        return error_json_response(e)
 
 
 @vehiculoRouter.post("/vehicles-by-ids")
@@ -126,8 +108,7 @@ def vehicles_by_ids(payload = Body(...)):
             status_code=status.HTTP_200_OK,
             content=get_successful_response(jsonable_encoder(formatted)),
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        return JSONResponse(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content=get_unsuccessful_response(e),
-        )
+        return error_json_response(e)

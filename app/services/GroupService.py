@@ -143,7 +143,7 @@ def create_group(
         census_json = census_data.dict()
         censusRepository.insert(census_json)
 
-    group_data["_id"] = str(group_data["_id"])
+    group_data["_id"] = created_group_id
 
     return {"message": "ok", "body": group_data}
 
@@ -257,7 +257,7 @@ def edit_group_by_id(user_uid: str, id: str, payload: EditGroupDto):
                 raise HTTPException(
                     status_code=401, detail='Only the owner of the group can edit information')
 
-            edited_group = groupRepository.edit_group(id, payload.model_dump())
+            edited_group = groupRepository.edit_group(id, payload.model_dump(exclude_none=True))
 
             if edited_group != None:
                 group = GroupSchema(**edited_group)

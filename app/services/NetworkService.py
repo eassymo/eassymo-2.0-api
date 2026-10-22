@@ -5,6 +5,7 @@ from app.repositories import ListsRepository as listRepository
 from pymongo.errors import PyMongoError
 from datetime import datetime
 from typing import Dict, Any
+import os
 from app.services.WhatsappService import WhatsappService
 from app.schemas.WhatasppMessage import WhatsappMessage, WhatsappTemplate
 from app.schemas.Invitations import InvitationsSchema, InvitationStatus
@@ -12,6 +13,26 @@ from app.repositories import GroupRepository as groupRepository
 from app.schemas.Groups import GroupSchema
 
 whatsapp_service = WhatsappService()
+
+
+def _network_invite_template_name() -> str:
+    return (
+        os.getenv("WHATSAPP_TEMPLATE_NETWORK_INVITE", "eassymo_provider_invite").strip()
+        or "eassymo_provider_invite"
+    )
+
+
+def _network_invite_template(
+    inviting_group: str,
+    invited_business: str,
+    pending_count: str,
+    census_id: str,
+) -> WhatsappTemplate:
+    return WhatsappTemplate(
+        name=_network_invite_template_name(),
+        language="es_MX",
+        variables=[inviting_group, invited_business, pending_count, census_id],
+    )
 
 
 def sendNetworkInvitationMessage(id: str | None, inviteData: InvitationsSchema):
@@ -33,11 +54,12 @@ def sendNetworkInvitationMessage(id: str | None, inviteData: InvitationsSchema):
 
     whatsapp_message = WhatsappMessage(
         to=inviteData.finalContactInfo,
-        template=WhatsappTemplate(
-            name="HXc28f0ef27e6fc80f1384f29386c5dbe5",
-            variables=[inviteData.censusUser.Entity_Name,
-                       creator_group_data.name, str(len(number_pending_invites) + 1), inviteData.censusId]
-        )
+        template=_network_invite_template(
+            creator_group_data.name,
+            inviteData.censusUser.Entity_Name,
+            str(len(number_pending_invites) + 1),
+            inviteData.censusId,
+        ),
     )
 
     whatsapp_message_sent_data: Dict[str, Any]

@@ -12,6 +12,15 @@ from typing import Dict, Any, List, Optional
 DELIVERY_PROOF_MAX_RECIPIENT_NAME_LEN = 200
 
 
+def _is_mostrador_checkout_handoff(order: Order) -> bool:
+    """Mostrador in-person handoff (tienda/pickup) doesn't need signed proof; domicilio does."""
+    is_mostrador = order.origin == "mostrador" or bool(order.mostrador_folio_id)
+    if not is_mostrador:
+        return False
+    mode = (order.part_request.mostrador_delivery_mode if order.part_request else None) or "tienda"
+    return mode != "domicilio"
+
+
 def _assert_dispatched_to_received_has_proof(order: Order) -> None:
     """Courier/guest completing delivery must submit photo(s), signature image URL, and recipient name."""
     pics = order.delivery_pictures_seller
@@ -126,22 +135,32 @@ def _assert_order_status_transition(
         return
 
     if new_enum == OrderStatus.IN_PERSON_COMPLETED:
-        if current != OrderStatus.IN_PERSON_READY_FOR_PICKUP:
-            raise HTTPException(
-                status_code=400,
-                detail="Can only transition to IN_PERSON_COMPLETED from IN_PERSON_READY_FOR_PICKUP",
-            )
-        buyer_group_id = order.group
-        seller_group_id = order.offer.group_id if order.offer else None
-        if not requesting_user_uid or not (
-            _user_uid_in_group(requesting_user_uid, buyer_group_id)
-            or _user_uid_in_group(requesting_user_uid, seller_group_id)
-        ):
-            raise HTTPException(
-                status_code=403,
-                detail="Only a buyer or seller group member can confirm in-person pickup",
-            )
-        return
+        if current == OrderStatus.IN_PERSON_READY_FOR_PICKUP:
+            buyer_group_id = order.group
+            seller_group_id = order.offer.group_id if order.offer else None
+            if not requesting_user_uid or not (
+                _user_uid_in_group(requesting_user_uid, buyer_group_id)
+                or _user_uid_in_group(requesting_user_uid, seller_group_id)
+            ):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Only a buyer or seller group member can confirm in-person pickup",
+                )
+            return
+        if current == OrderStatus.IN_PERSON_PENDING:
+            seller_group_id = order.offer.group_id if order.offer else None
+            if not requesting_user_uid or not _user_uid_in_group(
+                requesting_user_uid, seller_group_id
+            ):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Only a member of the selling group can complete in-person delivery",
+                )
+            return
+        raise HTTPException(
+            status_code=400,
+            detail="Can only transition to IN_PERSON_COMPLETED from IN_PERSON_READY_FOR_PICKUP or IN_PERSON_PENDING",
+        )
 
     if new_enum == OrderStatus.IN_PERSON_CANCELED:
         if current not in (
@@ -182,8 +201,8 @@ def find(order_id: str, group_id: str | None, current_role: str, search_argument
 
         for order_data in orders:
             order_json = Order(**order_data).toJson()
-            offer_group = GroupSchema(**order_data["offer_group"])
-            request_group = GroupSchema(**order_data["request_group"])
+            offer_group = GroupSchema(**(order_data.get("offer_group") or {}))
+            request_group = GroupSchema(**(order_data.get("request_group") or {}))
             order_json = {**order_json, "offer_group": offer_group.toJson(),
                           "request_group": request_group.toJson()}
 
@@ -232,8 +251,8 @@ def find_by_id(id: str):
 
         order = Order(**order_obj)
 
-        offer_group = GroupSchema(**order_obj["offer_group"])
-        request_group = GroupSchema(**order_obj["request_group"])
+        offer_group = GroupSchema(**(order_obj.get("offer_group") or {}))
+        request_group = GroupSchema(**(order_obj.get("request_group") or {}))
 
         return {**order.toJson(), "offer_group": offer_group.toJson(), "request_group": request_group.toJson()}
     except Exception as e:
@@ -253,6 +272,7 @@ def change_order_status(
     delivery_customer_signature_url: str | None = None,
     delivery_received_by_name: str | None = None,
     to_be_delivered_time: str | None = None,
+    is_delayed: Optional[bool] = None,
     requesting_user_uid: Optional[str] = None,
     enforce_delivery_completion_proof: bool = False,
 ):
@@ -281,6 +301,8 @@ def change_order_status(
         if to_be_delivered_time is not None:
             parsed_time = date_parser.parse(to_be_delivered_time)
             order.to_be_delivered_time = parsed_time
+            if is_delayed:
+                order.current_deliver_promise_delayed = True
 
         _assert_order_status_transition(order, new_status, requesting_user_uid)
 
@@ -296,7 +318,11 @@ def change_order_status(
 
         if (
             OrderStatus[new_status] == OrderStatus.IN_PERSON_COMPLETED
-            and current == OrderStatus.IN_PERSON_READY_FOR_PICKUP
+            and current in (
+                OrderStatus.IN_PERSON_READY_FOR_PICKUP,
+                OrderStatus.IN_PERSON_PENDING,
+            )
+            and not _is_mostrador_checkout_handoff(order)
         ):
             _assert_dispatched_to_received_has_proof(order)
 
@@ -308,7 +334,16 @@ def change_order_status(
 
         edited_order = orderRepository.edit(order_id, order_data)
 
-        return Order(**edited_order).toJson()
+        result = Order(**edited_order).toJson()
+
+        from app.services import notification_fanout
+
+        notification_fanout.fanout_order_status_change(order=result, new_status=new_status)
+
+        if is_delayed:
+            notification_fanout.fanout_order_delayed(order=result)
+
+        return result
 
     except HTTPException:
         raise
@@ -376,6 +411,14 @@ def assign_delivery(
             group_id=offer_group_id,
         )
 
+        if assignment_type == "guest" and guest_phone and guest_name and assignment.guest_token:
+            invite_url = f"https://eassymo.mx/delivery-invite/{assignment.guest_token}"
+            WhatsappService().send_delivery_invite(
+                guest_phone=guest_phone,
+                guest_name=guest_name,
+                invite_url=invite_url,
+            )
+
         order.delivery_assignment = assignment
 
         if assignment_type == "guest":
@@ -391,16 +434,9 @@ def assign_delivery(
         updated_doc = orderRepository.edit(oid, order_data)
         result = Order(**updated_doc).toJson()
 
-        if assignment_type == "guest" and guest_phone and guest_name and assignment.guest_token:
-            invite_url = f"https://eassymo.mx/delivery-invite/{assignment.guest_token}"
-            try:
-                WhatsappService().send_delivery_invite(
-                    guest_phone=guest_phone,
-                    guest_name=guest_name,
-                    invite_url=invite_url,
-                )
-            except Exception:
-                pass
+        from app.services import notification_fanout
+
+        notification_fanout.fanout_order_status_change(order=result, new_status=new_status)
 
         return result
 
@@ -424,7 +460,14 @@ def change_delivery_time(order_id: str | ObjectId, new_delivery_time: datetime, 
 
             edited_order = orderRepository.edit(order_id, order_data)
 
-            return Order(**edited_order).toJson()
+            result = Order(**edited_order).toJson()
+
+            if is_delayed:
+                from app.services import notification_fanout
+
+                notification_fanout.fanout_order_delayed(order=result)
+
+            return result
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f'Error while changing order delivery time {e}')

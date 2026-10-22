@@ -3,7 +3,7 @@ from fastapi import APIRouter, status, Query
 from app.schemas.Guarantee import Guarantee
 from typing import Optional
 from app.services import GuaranteeService as guaranteeService
-from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response
+from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response, error_json_response
 from fastapi.encoders import jsonable_encoder
 
 
@@ -11,18 +11,20 @@ guaranteeRouter = APIRouter(prefix="/guarantee")
 
 
 @guaranteeRouter.post("", description="insert a new guarantee")
+@guaranteeRouter.post("/", include_in_schema=False)
 def insert(payload: Guarantee):
     try:
         response = guaranteeService.insert(payload)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except Exception as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)
 
 
 @guaranteeRouter.get("", description="search guarantee by label")
+@guaranteeRouter.get("/", include_in_schema=False)
 def find(search_param: Optional[str] = Query(title="search_param")):
     try:
         response = guaranteeService.find_guarantee_by_label(search_param)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except Exception as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)

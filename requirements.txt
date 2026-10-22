@@ -73,7 +73,6 @@ sqlacodegen==3.1.1
 SQLAlchemy==2.0.29
 starlette==0.36.3
 tomli==2.2.1
-twilio==9.3.7
 typeguard==4.4.4
 typing_extensions==4.15.0
 tzdata==2024.2
