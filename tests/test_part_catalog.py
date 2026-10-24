@@ -222,6 +222,39 @@ class TestEstandarizadorGlobalLookups:
         assert result["success"] is True
         assert result["lstPosiciones"][0]["posicionNombre"] == "Delantera"
 
+    def test_get_posiciones_by_parte(self, monkeypatch):
+        position = _mock_position()
+        seen = {}
+
+        def _find(db, tipo_parte_id):
+            seen["tipo_parte_id"] = tipo_parte_id
+            return [position]
+
+        monkeypatch.setattr(
+            est_svc.VehiculoSensibilidadesRepository,
+            "find_posiciones_by_tipo_parte",
+            _find,
+        )
+        result = est_svc.get_posiciones_by_parte(MagicMock(), 56328)
+        assert seen["tipo_parte_id"] == 56328
+        assert result["success"] is True
+        assert result["lstPosiciones"] == [
+            {
+                "posicionId": 10,
+                "posicionNombre": "Delantera",
+                "clavei18n": "front",
+            }
+        ]
+
+    def test_get_posiciones_by_parte_empty(self, monkeypatch):
+        monkeypatch.setattr(
+            est_svc.VehiculoSensibilidadesRepository,
+            "find_posiciones_by_tipo_parte",
+            lambda db, tipo_parte_id: [],
+        )
+        result = est_svc.get_posiciones_by_parte(MagicMock(), 5108)
+        assert result == {"success": True, "lstPosiciones": []}
+
 
 class TestPartCatalogRepository:
     def test_create_tag_rejects_duplicate_description(self):

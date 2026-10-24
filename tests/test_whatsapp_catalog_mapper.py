@@ -120,7 +120,46 @@ def test_map_line_maps_balatas_delantera(mock_pick, mock_posiciones, mock_units)
     assert mapped.name == "Balatas"
     assert mapped.position == "Delantera"
     assert mapped.position_suggested is True
+    assert mapped.position_required is True
+    assert mapped.position_standardized is True
+    assert mapped.unit_standardized is True
     assert mapped.catalog_matched is True
+
+
+@patch("app.services.WhatsappCatalogMapper.get_unidades_medida_by_parte")
+@patch("app.services.WhatsappCatalogMapper.VehiculoSensibilidadesRepository.find_posiciones_by_tipo_parte")
+@patch("app.services.WhatsappCatalogMapper._pick_catalog_match")
+def test_map_line_keeps_unlisted_position_and_unit(mock_pick, mock_posiciones, mock_units):
+    mock_pick.return_value = {
+        "tipoParteId": 10,
+        "tipoParteDescripcion": "Balatas",
+        "categoriaId": 1,
+        "subCategoriaId": 2,
+        "tipoParteSensiblePosicion": True,
+    }
+    pos = MagicMock()
+    pos.PosicionNombre = "Delantera"
+    mock_posiciones.return_value = [pos]
+    mock_units.return_value = {
+        "lstUnidadesMedida": [{"etiquetaDefecto": "Pieza"}],
+    }
+
+    mapped = WhatsappCatalogMapper().map_line(
+        MagicMock(),
+        ExtractionLine(
+            local_id="l1",
+            part_name="balatas",
+            quantity=1,
+            unit="juego",
+            position="lado piloto",
+        ),
+    )
+
+    assert mapped.position == "lado piloto"
+    assert mapped.position_standardized is False
+    assert mapped.position_required is True
+    assert mapped.unit_of_measure == "juego"
+    assert mapped.unit_standardized is False
 
 
 @patch("app.config.database.db")

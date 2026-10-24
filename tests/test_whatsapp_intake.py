@@ -207,14 +207,57 @@ def test_llm_extract_uses_reasoning_when_content_is_truncated_brace(mock_post):
     assert proposal.lines[0].part_name == "luces de freno"
     assert mock_post.call_count == 1
     payload = mock_post.call_args.kwargs["json"]
-    assert payload["thinking"] == {"type": "disabled"}
-    assert payload["reasoning_effort"] == "none"
+    assert payload["thinking"] == {"type": "enabled"}
+    assert payload["reasoning_effort"] == "low"
     assert payload["response_format"] == {"type": "json_object"}
-    assert payload["max_tokens"] >= 8192
+    assert payload["max_tokens"] == 1500
+    assert payload["model"] == service.model
+
+
+def test_draft_timing_records_collect_and_stages():
+    import time
+    from datetime import datetime, timedelta, timezone
+
+    from app.services.WhatsappIntakeProcessorService import (
+        _collect_wait_ms,
+        _draft_timing,
+        _record_stage,
+    )
+
+    started = datetime.now(timezone.utc) - timedelta(seconds=3)
+    assert _collect_wait_ms({"started_at": started}) >= 2900
+    assert _collect_wait_ms({}) == 0
+    token = _draft_timing.set({"model_ms": 0, "catalog_ms": 0})
+    try:
+        _record_stage("model_ms", time.perf_counter() - 0.02)
+        _record_stage("catalog_ms", time.perf_counter() - 0.01)
+        state = _draft_timing.get()
+        assert state["model_ms"] >= 20
+        assert state["catalog_ms"] >= 10
+    finally:
+        _draft_timing.reset(token)
+    _record_stage("model_ms", time.perf_counter())
+
+
+@patch("app.services.WhatsappIntakeProcessorService.WhatsappService")
+@patch("app.services.WhatsappIntakeProcessorService.LlmExtractionService")
+@patch("app.services.WhatsappIntakeProcessorService.WhatsappSellerIdentityService")
+def test_quiet_window_defaults_to_three_seconds(
+    _mock_identity, _mock_llm, _mock_whatsapp, monkeypatch
+):
+    from app.services.WhatsappIntakeProcessorService import WhatsappIntakeProcessorService
+
+    monkeypatch.delenv("WHATSAPP_INTAKE_QUIET_SECONDS", raising=False)
+    service = WhatsappIntakeProcessorService()
+    assert service.quiet_seconds == 3
+
+    monkeypatch.setenv("WHATSAPP_INTAKE_QUIET_SECONDS", "8")
+    overridden = WhatsappIntakeProcessorService()
+    assert overridden.quiet_seconds == 8
 
 
 @patch("app.services.LlmExtractionService.requests.post")
-def test_llm_drops_rejected_thinking_controls_and_parses_dict_content(mock_post):
+def test_llm_keeps_low_effort_when_json_mode_is_rejected(mock_post):
     rejected = MagicMock()
     rejected.status_code = 400
     rejected.text = "thinking.type disabled is not supported"
@@ -243,8 +286,10 @@ def test_llm_drops_rejected_thinking_controls_and_parses_dict_content(mock_post)
     assert proposal.intent == ExtractionIntent.UNKNOWN
     assert mock_post.call_count == 2
     retry_payload = mock_post.call_args_list[1].kwargs["json"]
-    assert "thinking" not in retry_payload
+    assert retry_payload["thinking"] == {"type": "enabled"}
+    assert retry_payload["reasoning_effort"] == "low"
     assert "response_format" not in retry_payload
+    assert "_json_mode_dropped" not in retry_payload
 
 
 def test_llm_format_thread_single_message():
@@ -2795,3 +2840,189 @@ def test_listo_command_does_not_send_procesando_ack(
         for call in mock_whatsapp_cls.return_value.send_text_message.call_args_list
     ]
     assert "Procesando tu solicitud…" not in sent
+
+
+def test_default_model_is_glm_53(monkeypatch):
+    monkeypatch.delenv("Z_AI_MODEL", raising=False)
+    service = LlmExtractionService()
+    assert service.model == "glm-5.3"
+
+
+@patch("app.config.database.db")
+def test_reclaim_abandoned_flush_returns_it_to_collecting(mock_db):
+    from app.repositories.WhatsappIntakeSessionRepository import (
+        STATUS_COLLECTING,
+        STATUS_FLUSHING,
+        reclaim_abandoned_flushes,
+    )
+
+    col = MagicMock()
+    mock_db.__getitem__.return_value = col
+    col.update_many.return_value.modified_count = 1
+
+    changed = reclaim_abandoned_flushes(
+        datetime.now(timezone.utc), min_age_seconds=None
+    )
+
+    assert changed == 1
+    query, update = col.update_many.call_args[0]
+    assert query == {"status": STATUS_FLUSHING}
+    assert update["$set"]["status"] == STATUS_COLLECTING
+    assert update["$set"]["flush_token"] is None
+    assert update["$inc"] == {"generation": 1}
+
+
+@patch("app.config.database.db")
+def test_acquire_flush_stores_a_token(mock_db):
+    from app.repositories.WhatsappIntakeSessionRepository import try_acquire_flush
+
+    col = MagicMock()
+    mock_db.__getitem__.return_value = col
+    col.find_one_and_update.return_value = {"status": "flushing"}
+
+    try_acquire_flush("+5217779313704", 1)
+
+    update = col.find_one_and_update.call_args[0][1]
+    assert update["$set"]["status"] == "flushing"
+    assert update["$set"]["flush_token"]
+
+
+@patch("app.services.WhatsappIntakeProcessorService.session_repo")
+@patch("app.services.WhatsappIntakeProcessorService.inbound_repo")
+@patch("app.services.WhatsappIntakeProcessorService.WhatsappService")
+@patch("app.services.WhatsappIntakeProcessorService.LlmExtractionService")
+def test_flush_failure_still_replies_and_clears_session_after(
+    mock_llm_cls, mock_whatsapp_cls, mock_inbound_repo, mock_session_repo
+):
+    """The seller who only saw 'Procesando' must get a follow-up if the flush dies."""
+    from app.services.WhatsappIntakeProcessorService import WhatsappIntakeProcessorService
+
+    order = []
+    session = _collecting_session(
+        messages=[{"message_sid": "SM-balatas", "body": "unas balatas delanteras"}],
+    )
+    mock_session_repo.get_by_phone.return_value = session
+    mock_session_repo.try_acquire_flush.return_value = session
+    mock_session_repo.finish_session.side_effect = lambda *_args, **_kwargs: order.append(
+        "finish"
+    )
+    mock_inbound_repo.find_by_message_sid.side_effect = RuntimeError("worker dropped")
+    mock_whatsapp_cls.return_value.send_text_message.side_effect = (
+        lambda *_args, **_kwargs: order.append("send") or {"message_sid": "out-1"}
+    )
+
+    service = WhatsappIntakeProcessorService()
+    service.flush_if_ready("+5217779313704", 1)
+
+    sent = mock_whatsapp_cls.return_value.send_text_message.call_args[0][1]
+    assert "No pudimos terminar" in sent
+    assert order == ["send", "finish"]
+    mock_llm_cls.return_value.extract.assert_not_called()
+
+
+@patch("app.services.WhatsappIntakeProcessorService.session_repo")
+@patch("app.services.WhatsappIntakeProcessorService.inbound_repo")
+@patch("app.services.WhatsappIntakeProcessorService.WhatsappService")
+@patch("app.services.WhatsappIntakeProcessorService.LlmExtractionService")
+def test_superseded_flush_does_not_reply_or_clear(
+    mock_llm_cls, mock_whatsapp_cls, mock_inbound_repo, mock_session_repo
+):
+    from app.services.WhatsappIntakeProcessorService import WhatsappIntakeProcessorService
+
+    acquired = {
+        **_collecting_session(
+            messages=[{"message_sid": "SM1", "body": "unas balatas delanteras"}],
+        ),
+        "status": "flushing",
+        "flush_token": "token-old",
+    }
+    reclaimed = {
+        **acquired,
+        "status": "collecting",
+        "flush_token": "token-new",
+        "generation": 2,
+    }
+    mock_session_repo.get_by_phone.return_value = reclaimed
+    mock_session_repo.try_acquire_flush.return_value = acquired
+
+    service = WhatsappIntakeProcessorService()
+    service.flush_if_ready("+5217779313704", 2)
+
+    mock_llm_cls.return_value.extract.assert_not_called()
+    mock_whatsapp_cls.return_value.send_text_message.assert_not_called()
+    mock_session_repo.finish_session.assert_not_called()
+
+
+@patch("app.services.WhatsappIntakeProcessorService.session_repo")
+@patch("app.services.WhatsappIntakeProcessorService.inbound_repo")
+@patch("app.services.WhatsappIntakeProcessorService.WhatsappService")
+@patch("app.services.WhatsappIntakeProcessorService.LlmExtractionService")
+def test_recovery_of_due_session_sends_a_follow_up(
+    mock_llm_cls, mock_whatsapp_cls, mock_inbound_repo, mock_session_repo
+):
+    from app.services.WhatsappIntakeProcessorService import WhatsappIntakeProcessorService
+
+    session = _collecting_session(
+        messages=[{"message_sid": "SM-due", "body": "koleos 2020 sensor de detonación"}],
+    )
+    mock_session_repo.reclaim_abandoned_flushes.return_value = 1
+    mock_session_repo.find_due_collecting.return_value = [session]
+    mock_session_repo.get_by_phone.return_value = session
+    mock_session_repo.try_acquire_flush.return_value = session
+    mock_inbound_repo.find_by_message_sid.side_effect = RuntimeError("died during GLM")
+    mock_whatsapp_cls.return_value.send_text_message.return_value = {"message_sid": "out-2"}
+
+    service = WhatsappIntakeProcessorService()
+    service.recover_stuck_sessions(abandon_all_flushing=True)
+
+    assert (
+        mock_session_repo.reclaim_abandoned_flushes.call_args.kwargs["min_age_seconds"]
+        is None
+    )
+    sent = mock_whatsapp_cls.return_value.send_text_message.call_args[0][1]
+    assert "No pudimos terminar" in sent
+    mock_session_repo.finish_session.assert_called_once()
+    mock_llm_cls.return_value.extract.assert_not_called()
+
+
+@patch("app.services.WhatsappIntakeProcessorService.pending_repo")
+@patch("app.services.WhatsappIntakeProcessorService.folio_service.get")
+@patch("app.services.WhatsappIntakeProcessorService.session_repo")
+@patch("app.services.WhatsappIntakeProcessorService.inbound_repo")
+@patch("app.services.WhatsappIntakeProcessorService.WhatsappService")
+@patch("app.services.WhatsappIntakeProcessorService.LlmExtractionService")
+def test_recovery_resends_an_existing_draft_without_a_second_extract(
+    mock_llm_cls,
+    mock_whatsapp_cls,
+    mock_inbound_repo,
+    mock_session_repo,
+    mock_get_folio,
+    _mock_pending,
+):
+    from app.services.WhatsappIntakeProcessorService import WhatsappIntakeProcessorService
+
+    session = _collecting_session(
+        messages=[{"message_sid": "SM-linked", "body": "koleos 2020 balatas"}],
+    )
+    mock_session_repo.get_by_phone.return_value = session
+    mock_session_repo.try_acquire_flush.return_value = session
+    mock_inbound_repo.find_by_message_sid.return_value = {
+        "_id": "mongo-1",
+        "folio_id": "folio-1",
+    }
+    mock_get_folio.return_value = {
+        "_id": "folio-1",
+        "share_token": "a" * 32,
+        "folio_code": "AB12CD",
+        "vehicle": {"maker": "Renault", "model": "Koleos", "year": "2020"},
+        "updated_at": "1",
+    }
+    mock_whatsapp_cls.return_value.send_text_message.return_value = {"message_sid": "out-3"}
+
+    service = WhatsappIntakeProcessorService()
+    service.flush_if_ready("+5217779313704", 1)
+
+    mock_llm_cls.return_value.extract.assert_not_called()
+    sent = mock_whatsapp_cls.return_value.send_text_message.call_args[0][1]
+    assert "whatsapp-draft/" + ("a" * 32) in sent
+    mock_session_repo.finish_session.assert_called_once()

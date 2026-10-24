@@ -8,6 +8,7 @@ from app.services.EstandarizadorService import (
     get_all_ensambladoras,
     get_all_unidades_medida,
     get_all_posiciones,
+    get_posiciones_by_parte,
 )
 from app.utils.ResponseUtils import error_json_response
 
@@ -62,6 +63,22 @@ def find_all_posiciones(
 ):
     try:
         result = get_all_posiciones(mysql_db)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        return error_json_response(e)
+
+
+@estandarizadorRouter.get("/findPosicionesByParte")
+def find_posiciones_by_parte(
+    idTipoParte: int | None = Query(None, description="Part type ID"),
+    mysql_db: Session = Depends(get_mysql_db),
+):
+    if idTipoParte is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="INVALID_REQUEST")
+    try:
+        result = get_posiciones_by_parte(mysql_db, idTipoParte)
         return JSONResponse(status_code=status.HTTP_200_OK, content=result)
     except HTTPException:
         raise

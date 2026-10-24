@@ -47,6 +47,16 @@ def get_all_posiciones(mysql_db: Session) -> Dict[str, Any]:
     }
 
 
+def get_posiciones_by_parte(mysql_db: Session, id_tipo_parte: int) -> Dict[str, Any]:
+    lst = VehiculoSensibilidadesRepository.find_posiciones_by_tipo_parte(
+        mysql_db, id_tipo_parte
+    )
+    return {
+        "success": True,
+        "lstPosiciones": [_position_to_item(p) for p in lst],
+    }
+
+
 def get_unidades_medida_by_parte(
     mysql_db: Session, id_tipo_parte: int
 ) -> Dict[str, Any]:

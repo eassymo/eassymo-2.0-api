@@ -113,6 +113,15 @@ class MostradorPiece(BaseModel):
     position_suggested: bool = Field(
         False, description="WhatsApp mapper suggested this position for seller review"
     )
+    position_required: bool = Field(
+        False, description="Catalog part needs a position before the draft can be shared"
+    )
+    position_standardized: bool = Field(
+        True, description="Position is a catalog name, or no position was written"
+    )
+    unit_standardized: bool = Field(
+        True, description="Unit of measure is a catalog unit"
+    )
     comments: Optional[str] = Field(None)
     note: bool = Field(False)
     sample: bool = Field(False)
@@ -167,6 +176,12 @@ class WhatsappPendingQuestion(BaseModel):
     path: str = Field(..., description="vehicle.engine, piece:{id}.position, etc.")
     piece_id: Optional[str] = Field(None)
     prompt: str = Field(...)
+    copy_text: Optional[str] = Field(
+        None, description="Sentence the seller can paste to the customer"
+    )
+    severity: Optional[str] = Field(
+        None, description="critical, warning, or info"
+    )
     status: str = Field("open", description="open or answered")
     asked_message_sid: Optional[str] = Field(None)
     source: Optional[str] = Field(None, description="llm, catalog_position, vehicle_field")

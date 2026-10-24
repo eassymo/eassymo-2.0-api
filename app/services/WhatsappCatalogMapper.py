@@ -119,6 +119,9 @@ class MappedPieceLine:
     position: str
     position_suggested: bool
     catalog_matched: bool
+    position_required: bool = False
+    position_standardized: bool = True
+    unit_standardized: bool = True
 
 
 def _normalize_text(value: str) -> str:
@@ -287,37 +290,44 @@ def _position_candidates(
     return candidates
 
 
+def _written_position(line: ExtractionLine, leftover_tokens: Sequence[str]) -> str:
+    written = (line.position or "").strip()
+    if written:
+        return written
+    if leftover_tokens:
+        return " ".join(leftover_tokens)
+    return ""
+
+
 def _map_position(
     mysql_db: Session,
     *,
     tipo_parte_id: Optional[int],
     position_sensitive: bool,
     candidates: Sequence[str],
-) -> tuple[str, bool]:
+    written: str = "",
+) -> tuple[str, bool, bool, bool]:
+    """Return position, suggested, required, standardized."""
     official = _load_position_names(mysql_db, tipo_parte_id)
     official_by_norm = {_normalize_text(name): name for name in official if name}
 
     for candidate in candidates:
         for token in _tokenize(candidate):
             alias = POSITION_ALIASES.get(token)
-            if alias and alias in official:
-                return alias, True
+            if alias and (not official or alias in official):
+                return alias, True, position_sensitive, True
             norm = _normalize_text(token)
             if norm in official_by_norm:
-                return official_by_norm[norm], True
+                return official_by_norm[norm], True, position_sensitive, True
 
     if not position_sensitive:
-        return POSITION_NO_APLICA, False
+        return POSITION_NO_APLICA, False, False, True
 
-    for candidate in candidates:
-        norm = _normalize_text(candidate)
-        if norm in official_by_norm:
-            return official_by_norm[norm], True
+    kept = (written or "").strip()
+    if kept and _normalize_text(kept) not in {"", "no aplica", "n a", "na"}:
+        return kept, False, True, False
 
-    if POSITION_NO_APLICA in official:
-        return POSITION_NO_APLICA, False
-
-    return POSITION_NO_APLICA, False
+    return POSITION_NO_APLICA, False, True, True
 
 
 def _map_unit(
@@ -325,20 +335,25 @@ def _map_unit(
     *,
     tipo_parte_id: Optional[int],
     unit_hint: Optional[str],
-) -> str:
-    default = "Pieza"
-    if not unit_hint:
-        return default
+) -> tuple[str, bool]:
+    """Return the unit and whether it is a catalog unit.
 
-    hint_norm = _normalize_text(unit_hint)
+    An empty hint stays Pieza. A hint that is not in the catalog is kept as
+    the customer wrote it instead of being replaced by the first catalog unit.
+    """
+    default = "Pieza"
+    hint = (unit_hint or "").strip()
+    if not hint:
+        return default, True
+
+    hint_norm = _normalize_text(hint)
     alias = UNIT_ALIASES.get(hint_norm)
-    if alias:
-        mapped = alias
-    else:
-        mapped = unit_hint.strip().title() or default
+    mapped = alias or hint
+    if hint_norm in {"pieza", "piezas"} or alias == default:
+        mapped = default
 
     if mysql_db is None or not tipo_parte_id:
-        return mapped
+        return mapped, bool(alias or hint_norm in {"pieza", "piezas"})
 
     units_payload = get_unidades_medida_by_parte(mysql_db, tipo_parte_id)
     labels = [
@@ -347,16 +362,16 @@ def _map_unit(
         if (item.get("etiquetaDefecto") or "").strip()
     ]
     if not labels:
-        return mapped
+        return mapped, bool(alias or hint_norm in {"pieza", "piezas"})
 
     mapped_norm = _normalize_text(mapped)
     for label in labels:
         if _normalize_text(label) == mapped_norm:
-            return label
+            return label, True
     for label in labels:
-        if mapped_norm in _normalize_text(label):
-            return label
-    return labels[0]
+        if mapped_norm and mapped_norm in _normalize_text(label):
+            return label, True
+    return hint, False
 
 
 def _hit_make_model(hit: Any) -> tuple[str, str]:
@@ -432,14 +447,16 @@ class WhatsappCatalogMapper:
         catalog = _pick_catalog_match(mysql_db, search_term)
 
         tipo_parte_id = catalog.get("tipoParteId") if catalog else None
-        position, position_suggested = _map_position(
+        position_sensitive = bool(catalog and catalog.get("tipoParteSensiblePosicion"))
+        position, position_suggested, position_required, position_standardized = _map_position(
             mysql_db,
             tipo_parte_id=int(tipo_parte_id) if tipo_parte_id else None,
-            position_sensitive=bool(catalog and catalog.get("tipoParteSensiblePosicion")),
+            position_sensitive=position_sensitive,
             candidates=_position_candidates(line, position_tokens),
+            written=_written_position(line, position_tokens),
         )
 
-        unit = _map_unit(
+        unit, unit_standardized = _map_unit(
             mysql_db,
             tipo_parte_id=int(tipo_parte_id) if tipo_parte_id else None,
             unit_hint=line.unit,
@@ -460,6 +477,9 @@ class WhatsappCatalogMapper:
             position=position,
             position_suggested=position_suggested and position != POSITION_NO_APLICA,
             catalog_matched=bool(catalog),
+            position_required=position_required,
+            position_standardized=position_standardized,
+            unit_standardized=unit_standardized,
         )
 
     def map_lines(

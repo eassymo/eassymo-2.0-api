@@ -1,4 +1,5 @@
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import HTTPException
 from app.routers import UserRouter as userRouter
@@ -56,10 +57,23 @@ _IS_PROD = os.getenv("ENVIRONMENT", "").lower() in ("production", "prod") or os.
     "RAILWAY_ENVIRONMENT", ""
 ).lower() == "production"
 
+
+@asynccontextmanager
+async def app_lifespan(_app: FastAPI):
+    from app.routers.WhatsappRouter import inbound_service
+
+    inbound_service.start_intake_recovery()
+    try:
+        yield
+    finally:
+        inbound_service.stop_intake_recovery()
+
+
 app = FastAPI(
     docs_url=None if _IS_PROD else "/docs",
     redoc_url=None if _IS_PROD else "/redoc",
     openapi_url=None if _IS_PROD else "/openapi.json",
+    lifespan=app_lifespan,
 )
 
 

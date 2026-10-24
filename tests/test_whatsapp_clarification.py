@@ -26,6 +26,7 @@ def test_derive_position_question_for_catalog_piece_without_position():
                 "name": "Balatas",
                 "tipoParteId": "10",
                 "position": "No aplica",
+                "position_required": True,
                 "qty": 1,
             }
         ],
@@ -40,7 +41,8 @@ def test_derive_position_question_for_catalog_piece_without_position():
     questions = clarify.derive_pending_questions(folio, proposal, mysql_db=None)
     assert len(questions) == 1
     assert questions[0]["path"] == "piece:p1.position"
-    assert "delanteras" in questions[0]["prompt"].lower()
+    assert questions[0]["severity"] == "warning"
+    assert "delanteras" in questions[0]["copy_text"].lower()
     assert all("catálogo" not in q["prompt"].lower() for q in questions)
     assert all("match" not in q["prompt"].lower() for q in questions)
 
@@ -69,9 +71,8 @@ def test_derive_pending_questions_for_position_and_engine():
     questions = clarify.derive_pending_questions(folio, proposal, mysql_db=None)
     paths = {q["path"] for q in questions}
 
-    assert len(questions) == 2
-    assert "piece:p1.position" in paths
-    assert "vehicle.engine" in paths
+    assert "piece:p1.position" not in paths
+    assert "vehicle.engine" not in paths
 
 
 def test_apply_position_answer_updates_piece():
@@ -182,6 +183,7 @@ def test_create_draft_sends_position_clarification_and_link_fallback(
                 "name": "Balatas",
                 "tipoParteId": "10",
                 "position": "No aplica",
+                "position_required": True,
                 "qty": 1,
             }
         ],
@@ -208,10 +210,9 @@ def test_create_draft_sends_position_clarification_and_link_fallback(
     mock_folio_service._resolve_client_base_url.return_value = "http://localhost:3000"
     mock_inbound_repo.find_by_message_sid.return_value = {"message_sid": "SM1"}
     mock_whatsapp_cls.return_value.native_reactions_enabled = False
-    mock_whatsapp_cls.return_value.send_text_message.side_effect = [
-        {"message_sid": "SM-DRAFT"},
-        {"message_sid": "SM-CLARIFY"},
-    ]
+    mock_whatsapp_cls.return_value.send_text_message.return_value = {
+        "message_sid": "SM-DRAFT",
+    }
 
     service = WhatsappIntakeProcessorService()
     service._flush_session("+5217779313704", session)
@@ -221,12 +222,13 @@ def test_create_draft_sends_position_clarification_and_link_fallback(
         for call in mock_whatsapp_cls.return_value.send_text_message.call_args_list
     ]
     mock_folio_service.create.assert_called_once()
-    clarify_bodies = [body for body in bodies if "delanteras o traseras" in body.lower()]
-    assert len(clarify_bodies) == 1
-    assert all("catálogo" not in body.lower() for body in bodies)
+    assert len(bodies) == 1
+    assert "⚠️" in bodies[0]
+    assert "whatsapp-draft" in bodies[0]
+    assert "delanteras o traseras" in bodies[0].lower()
+    assert "varios borradores" not in bodies[0].lower()
     assert all("vinculado" not in body for body in bodies)
     assert "Borrador listo" in bodies[0]
-    assert "delanteras" in bodies[1].lower()
     assert ":" not in bodies[0].split("?", 1)[-1]
     draft_v = bodies[0].split("?v=", 1)[1].split("\n", 1)[0]
     assert draft_v.isdigit()
@@ -1042,3 +1044,339 @@ def test_apply_chain_reactions_skips_outbound_and_bot_messages(
         if call.args[1].get("linked_reaction")
     ]
     assert stamped_sids == ["SM-IN"]
+
+
+def test_forwarded_question_message_plus_reply_is_only_the_answer():
+    folio = {
+        "vehicle": {"maker": "Chevrolet", "model": "Cheyenne", "year": "2020"},
+        "pieces": [{"piece_id": "p1", "name": "Balatas"}],
+        "whatsapp_pending_questions": [
+            {
+                "status": "open",
+                "copy_text": "¿Las balatas del Chevrolet Cheyenne son delanteras o traseras?",
+                "prompt": "¿Las balatas del Chevrolet Cheyenne son delanteras o traseras?",
+            }
+        ],
+    }
+    bodies = [
+        "Borrador listo en Eassymo POS.\n"
+        "Revisa vehículo y piezas aquí:\n"
+        "https://example.test/whatsapp-draft/d2a8b00ed7f74e4d93e71c3f6dc0e9df\n"
+        "⚠️ ¿Las balatas del Chevrolet Cheyenne son delanteras o traseras?",
+        "traseras",
+    ]
+    answer = clarify.forwarded_answer_text(bodies, [folio])
+    assert answer == "traseras"
+    assert clarify.answer_text_is_only_a_reply(answer) is True
+    assert clarify.answer_text_is_only_a_reply(
+        "se me olvido pedirte unas balatas"
+    ) is False
+
+
+def test_fill_open_questions_sets_position_and_year():
+    folio = {
+        "vehicle": {"maker": "Chevrolet", "model": "Cheyenne"},
+        "pieces": [
+            {
+                "piece_id": "p1",
+                "name": "Balatas",
+                "position": "No aplica",
+                "position_required": True,
+            }
+        ],
+        "whatsapp_pending_questions": [
+            {
+                "id": "year",
+                "status": "open",
+                "path": "vehicle.year",
+                "copy_text": "¿De qué año es el Chevrolet Cheyenne?",
+            },
+            {
+                "id": "pads",
+                "status": "open",
+                "path": "piece:p1.position",
+                "piece_id": "p1",
+                "copy_text": "¿Las balatas del Chevrolet Cheyenne son delanteras o traseras?",
+            },
+        ],
+    }
+    filled = clarify.fill_open_questions(folio, "2020 traseras")
+    assert filled is not None
+    patch, details = filled
+    assert patch["vehicle"]["year"] == "2020"
+    assert patch["pieces"][0]["position"] == "Trasera"
+    assert {item["status"] for item in patch["whatsapp_pending_questions"]} == {"answered"}
+    assert "2020" in details
+    assert any("Trasera" in detail for detail in details)
+
+
+@patch("app.services.WhatsappIntakeProcessorService.inbound_repo")
+@patch("app.services.WhatsappIntakeProcessorService.WhatsappService")
+@patch("app.services.WhatsappIntakeProcessorService.folio_service")
+def test_seller_forward_of_questions_and_answer_updates_the_draft(
+    mock_folio_service,
+    mock_whatsapp_cls,
+    mock_inbound_repo,
+):
+    from app.services.WhatsappIntakeProcessorService import WhatsappIntakeProcessorService
+
+    token = "d2a8b00ed7f74e4d93e71c3f6dc0e9df"
+    folio = {
+        "_id": "folio-1",
+        "share_token": token,
+        "folio_code": "DACC0C",
+        "source": "whatsapp",
+        "status": "draft",
+        "origin_group_id": "g1",
+        "creator_user": "uid-1",
+        "updated_at": "2026-10-22T18:59:00+00:00",
+        "vehicle": {"maker": "Chevrolet", "model": "Cheyenne", "year": "2020"},
+        "pieces": [
+            {
+                "piece_id": "p1",
+                "name": "Balatas",
+                "position": "No aplica",
+                "position_required": True,
+            }
+        ],
+        "whatsapp_pending_questions": [
+            {
+                "id": "pads",
+                "status": "open",
+                "severity": "warning",
+                "path": "piece:p1.position",
+                "piece_id": "p1",
+                "copy_text": "¿Las balatas del Chevrolet Cheyenne son delanteras o traseras?",
+                "prompt": "¿Las balatas del Chevrolet Cheyenne son delanteras o traseras?",
+            }
+        ],
+    }
+
+    def _update(_folio_id, patch):
+        return {**folio, **patch, "updated_at": "2026-10-22T19:05:00+00:00"}
+
+    mock_folio_service.get_by_share_token.return_value = folio
+    mock_folio_service.update.side_effect = _update
+    mock_folio_service._is_assigned_to_buyer.return_value = False
+    mock_folio_service._has_ordered_pieces.return_value = False
+    mock_folio_service._resolve_client_base_url.return_value = "http://localhost:3000"
+    mock_whatsapp_cls.return_value.send_text_message.return_value = {"message_sid": "SM-DONE"}
+
+    service = WhatsappIntakeProcessorService()
+    service.client_base_url = "http://localhost:3000"
+    applied = service._try_fill_forwarded_answers(
+        from_number="+5217779313704",
+        bodies=[
+            "Borrador listo en Eassymo POS.\n"
+            "Revisa vehículo y piezas aquí:\n"
+            f"https://example.test/whatsapp-draft/{token}\n"
+            "⚠️ ¿Las balatas del Chevrolet Cheyenne son delanteras o traseras?",
+            "traseras",
+        ],
+        message_sids=["SM-Q", "SM-A"],
+        group_id="g1",
+        creator_uid="uid-1",
+        burst_id="burst-1",
+    )
+
+    assert applied is True
+    saved = mock_folio_service.update.call_args.args[1]
+    assert saved["pieces"][0]["position"] == "Trasera"
+    assert saved["whatsapp_pending_questions"][0]["status"] == "answered"
+    sent = mock_whatsapp_cls.return_value.send_text_message.call_args.args[1]
+    assert "Listo." in sent
+    assert "Balatas · Trasera" in sent
+    assert token in sent
+    assert mock_whatsapp_cls.return_value.send_text_message.call_count == 1
+    assert mock_inbound_repo.update_fields.call_count == 2
+
+
+def test_missing_year_is_critical_even_when_the_model_is_known():
+    folio = {
+        "vehicle": {"maker": "Renault", "model": "Koleos"},
+        "pieces": [],
+    }
+    proposal = WhatsappExtractionProposal(
+        intent=ExtractionIntent.NEW_REQUEST,
+        vehicle=ExtractionVehicle(make="Renault", model="Koleos"),
+        lines=[],
+    )
+    questions = clarify.derive_pending_questions(folio, proposal, mysql_db=None)
+    year = next(item for item in questions if item["path"] == "vehicle.year")
+    assert year["severity"] == "critical"
+    assert year["copy_text"] == "¿De qué año es el Renault Koleos?"
+    assert "vehicle.engine" not in {item["path"] for item in questions}
+    assert clarify.folio_share_ready({"whatsapp_pending_questions": questions}) is False
+
+
+def test_position_warning_only_when_the_part_requires_it():
+    folio = {
+        "vehicle": {"maker": "Nissan", "model": "Versa", "year": "2018"},
+        "pieces": [
+            {
+                "piece_id": "p1",
+                "name": "Filtro de aceite",
+                "tipoParteId": "4",
+                "position": "No aplica",
+                "position_required": False,
+            }
+        ],
+    }
+    proposal = WhatsappExtractionProposal(
+        intent=ExtractionIntent.NEW_REQUEST,
+        vehicle=ExtractionVehicle(make="Nissan", model="Versa", year="2018"),
+        lines=[ExtractionLine(local_id="l1", part_name="filtro", quantity=1)],
+    )
+    questions = clarify.derive_pending_questions(folio, proposal, mysql_db=None)
+    assert all(item["path"] != "piece:p1.position" for item in questions)
+    assert clarify.folio_share_ready({"whatsapp_pending_questions": questions}) is True
+
+
+def test_off_catalog_position_unit_and_miss_are_info():
+    folio = {
+        "vehicle": {"maker": "Nissan", "model": "Tsuru", "year": "2010"},
+        "pieces": [
+            {
+                "piece_id": "p1",
+                "name": "Balatas",
+                "tipoParteId": "10",
+                "position": "lado piloto",
+                "position_required": True,
+                "position_standardized": False,
+                "unitOfMeasure": "juego",
+                "unit_standardized": False,
+            },
+            {
+                "piece_id": "p2",
+                "name": "sensor de detonación",
+                "tipoParteId": None,
+                "position": "No aplica",
+            },
+        ],
+    }
+    proposal = WhatsappExtractionProposal(
+        intent=ExtractionIntent.NEW_REQUEST,
+        vehicle=ExtractionVehicle(make="Nissan", model="Tsuru", year="2010"),
+        lines=[],
+    )
+    questions = clarify.derive_pending_questions(folio, proposal, mysql_db=None)
+    by_path = {item["path"]: item for item in questions}
+    assert by_path["piece:p1.position_text"]["severity"] == "info"
+    assert "lado piloto" in by_path["piece:p1.position_text"]["copy_text"]
+    assert by_path["piece:p1.unit"]["severity"] == "info"
+    assert "juego" in by_path["piece:p1.unit"]["copy_text"]
+    assert by_path["piece:p2.catalog"]["severity"] == "info"
+    assert "sensor de detonación" in by_path["piece:p2.catalog"]["copy_text"]
+    assert "piece:p1.position" not in by_path
+    assert clarify.folio_share_ready({"whatsapp_pending_questions": questions}) is True
+
+
+def test_alert_lines_keep_emoji_sentence_and_can_follow_a_url():
+    folio = {
+        "whatsapp_pending_questions": [
+            {
+                "id": "q1",
+                "status": "open",
+                "severity": "critical",
+                "path": "vehicle.year",
+                "copy_text": "¿De qué año es el Renault Koleos?",
+                "prompt": "¿De qué año es el Renault Koleos?",
+            },
+            {
+                "id": "q2",
+                "status": "open",
+                "severity": "info",
+                "path": "piece:p1.unit",
+                "copy_text": "La unidad «juego» no está en el catálogo.",
+                "prompt": "La unidad «juego» no está en el catálogo.",
+            },
+        ]
+    }
+    body = clarify.append_alert_lines(
+        "Borrador listo en Eassymo POS.\nRevisa vehículo y piezas aquí:\nhttps://example.test/whatsapp-draft/abc",
+        folio,
+    )
+    assert "https://example.test/whatsapp-draft/abc" in body
+    assert "❗ ¿De qué año es el Renault Koleos?" in body
+    assert "ℹ️ La unidad «juego» no está en el catálogo." in body
+    assert body.index("whatsapp-draft/abc") < body.index("❗")
+
+
+def test_old_engine_question_does_not_block_sharing():
+    folio = {
+        "whatsapp_pending_questions": [
+            {
+                "id": "q1",
+                "status": "open",
+                "path": "vehicle.engine",
+                "prompt": "¿Cuál es el motor del vehículo?",
+            }
+        ]
+    }
+    assert clarify.question_severity(folio["whatsapp_pending_questions"][0]) == "info"
+    assert clarify.folio_share_ready(folio) is True
+
+
+@patch("app.services.MostradorFolioService._ensure_mostrador_orders_materialized")
+@patch("app.services.MostradorFolioService._hydrate", side_effect=lambda doc: dict(doc))
+@patch("app.services.MostradorFolioService.folioRepository")
+def test_public_get_returns_404_while_a_warning_is_open(_mock_repo, _mock_hydrate, _mock_orders):
+    from fastapi import HTTPException
+    from app.services.MostradorFolioService import folio_id_by_share_token, get_by_share_token
+
+    doc = {
+        "_id": "folio-1",
+        "share_token": "tok",
+        "origin_group_id": "shop-1",
+        "whatsapp_pending_questions": [
+            {
+                "id": "q1",
+                "status": "open",
+                "severity": "warning",
+                "path": "piece:p1.position",
+                "prompt": "¿Las balatas son delanteras o traseras?",
+                "copy_text": "¿Las balatas son delanteras o traseras?",
+            }
+        ],
+    }
+    _mock_repo.find_by_share_token.return_value = doc
+    _mock_repo.find_by_id.return_value = doc
+    with pytest.raises(HTTPException) as exc:
+        get_by_share_token("tok", require_ready=True)
+    assert exc.value.status_code == 404
+    assert exc.value.detail == "Folio not found"
+    with pytest.raises(HTTPException) as blocked:
+        folio_id_by_share_token("tok")
+    assert blocked.value.status_code == 404
+
+
+@patch("app.dependencies.group_auth.assert_group_membership")
+@patch("app.services.MostradorFolioService._ensure_mostrador_orders_materialized")
+@patch("app.services.MostradorFolioService._hydrate", side_effect=lambda doc: dict(doc))
+@patch("app.services.MostradorFolioService.folioRepository")
+def test_seller_read_returns_a_draft_that_is_not_ready(
+    mock_repo, _mock_hydrate, _mock_orders, mock_membership
+):
+    from app.services.MostradorFolioService import get_for_origin_seller
+
+    doc = {
+        "_id": "folio-1",
+        "share_token": "tok",
+        "origin_group_id": "shop-1",
+        "sibling_uid": "",
+        "whatsapp_pending_questions": [
+            {
+                "id": "q1",
+                "status": "open",
+                "severity": "critical",
+                "path": "vehicle.year",
+                "prompt": "¿De qué año es el Renault Koleos?",
+                "copy_text": "¿De qué año es el Renault Koleos?",
+            }
+        ],
+    }
+    mock_repo.find_by_share_token.return_value = doc
+    mock_repo.find_by_id.return_value = doc
+    loaded = get_for_origin_seller("tok", "seller-1")
+    assert loaded["_id"] == "folio-1"
+    mock_membership.assert_called_once_with("seller-1", "shop-1")
