@@ -20,13 +20,6 @@ from app.services.WhatsappCatalogMapper import (
 )
 
 _WAMID_RE = re.compile(r"wamid\.[A-Za-z0-9+/=_-]+")
-_VEHICLE_FIELD_LABELS = {
-    "vehicle.make": "marca",
-    "vehicle.model": "modelo",
-    "vehicle.year": "año",
-    "vehicle.engine": "motor",
-    "vehicle.vin": "VIN",
-}
 _SKIP_POSITIONS = {"", "no aplica", "n/a", "na"}
 
 
@@ -71,6 +64,62 @@ def open_questions(folio: dict) -> List[dict]:
     ]
 
 
+_BLOCKING_SEVERITIES = {"critical", "warning"}
+_SEVERITY_EMOJI = {
+    "critical": "❗",
+    "warning": "⚠️",
+    "info": "ℹ️",
+}
+_SEVERITY_RANK = {"critical": 0, "warning": 1, "info": 2}
+
+
+def question_severity(question: dict) -> str:
+    """Severity stored on the question, or a safe class for older drafts.
+
+    A missing engine question from before this field existed is info, so it
+    does not hide the draft.
+    """
+    stored = str((question or {}).get("severity") or "").strip().lower()
+    if stored in _SEVERITY_RANK:
+        return stored
+    path = str((question or {}).get("path") or "").strip()
+    if path in {"vehicle.year", "vehicle.make", "vehicle.model"}:
+        return "critical"
+    if ".position" in path:
+        return "warning"
+    return "info"
+
+
+def question_copy_text(question: dict) -> str:
+    return str((question or {}).get("copy_text") or (question or {}).get("prompt") or "").strip()
+
+
+def folio_share_ready(folio: dict) -> bool:
+    return not any(
+        question_severity(question) in _BLOCKING_SEVERITIES
+        for question in open_questions(folio)
+    )
+
+
+def alert_lines(folio: dict) -> List[str]:
+    ranked: List[tuple] = []
+    for question in open_questions(folio):
+        text = question_copy_text(question)
+        if not text:
+            continue
+        severity = question_severity(question)
+        ranked.append((_SEVERITY_RANK[severity], f"{_SEVERITY_EMOJI[severity]} {text}"))
+    ranked.sort(key=lambda item: item[0])
+    return [line for _, line in ranked]
+
+
+def append_alert_lines(body: str, folio: dict) -> str:
+    lines = alert_lines(folio)
+    if not lines:
+        return body
+    return f"{(body or '').rstrip()}\n\n" + "\n".join(lines)
+
+
 def _question_id() -> str:
     return uuid4().hex[:12]
 
@@ -105,86 +154,173 @@ def _vehicle_field_missing(vehicle: Optional[dict], field: str) -> bool:
     return not str(vehicle.get(mapped) or "").strip()
 
 
+def _car_phrase(vehicle: Optional[dict]) -> str:
+    vehicle = vehicle or {}
+    parts = [
+        str(vehicle.get(key)).strip()
+        for key in ("maker", "model")
+        if vehicle.get(key)
+    ]
+    return " ".join(parts)
+
+
+def _identity_copy(vehicle: Optional[dict], field: str, reason: str = "") -> str:
+    if reason and "¿" in reason:
+        return reason.strip()
+    car = _car_phrase(vehicle)
+    if field == "vehicle.year":
+        return f"¿De qué año es el {car}?" if car else "¿De qué año es el vehículo?"
+    if field == "vehicle.make":
+        model = str((vehicle or {}).get("model") or "").strip()
+        return f"¿Cuál es la marca del {model}?" if model else "¿Cuál es la marca del vehículo?"
+    model_of = car or "vehículo"
+    return f"¿Cuál es el modelo del {model_of}?"
+
+
+def _alert(
+    *,
+    path: str,
+    copy_text: str,
+    severity: str,
+    source: str,
+    piece_id: Optional[str] = None,
+) -> dict:
+    text = copy_text.strip()
+    return {
+        "id": _question_id(),
+        "path": path,
+        "piece_id": piece_id,
+        "prompt": text,
+        "copy_text": text,
+        "severity": severity,
+        "status": "open",
+        "asked_message_sid": None,
+        "source": source,
+    }
+
+
 def derive_pending_questions(
     folio: dict,
     proposal: WhatsappExtractionProposal,
     *,
     mysql_db: Optional[Session] = None,
 ) -> List[dict]:
-    """Build new pending questions from extraction + mapped pieces."""
+    """Build critical, warning, and info lines for a WhatsApp draft.
+
+    mysql_db is unused: position and unit flags are stored on the piece when
+    the catalog is mapped.
+    """
+    del mysql_db
     questions: List[dict] = []
     seen_paths: set[str] = set()
     vehicle = folio.get("vehicle") or {}
-    has_vehicle_label = bool(vehicle_short_label(folio))
+    uncertainty_reason = {
+        (item.path or "").strip(): (item.reason or "").strip()
+        for item in (proposal.uncertainties or [])
+        if (item.path or "").strip() and (item.reason or "").strip()
+    }
 
-    for uncertainty in proposal.uncertainties or []:
-        path = (uncertainty.path or "").strip()
-        reason = (uncertainty.reason or "").strip()
-        if not path or not reason or path in seen_paths:
+    def add(question: dict) -> None:
+        path = question["path"]
+        if path in seen_paths:
+            return
+        questions.append(question)
+        seen_paths.add(path)
+
+    for field in ("vehicle.year", "vehicle.make", "vehicle.model"):
+        if not _vehicle_field_missing(vehicle, field):
             continue
-        if has_vehicle_label and path.startswith("vehicle."):
+        add(
+            _alert(
+                path=field,
+                copy_text=_identity_copy(vehicle, field, uncertainty_reason.get(field, "")),
+                severity="critical",
+                source="vehicle_field",
+            )
+        )
+
+    for path, reason in uncertainty_reason.items():
+        if path in seen_paths or not reason:
             continue
         if path.startswith("lines") and ".position" in path:
             continue
-        questions.append(
-            {
-                "id": _question_id(),
-                "path": path,
-                "piece_id": None,
-                "prompt": reason,
-                "status": "open",
-                "asked_message_sid": None,
-                "source": "llm",
-            }
-        )
-        seen_paths.add(path)
+        if path in {"vehicle.engine", "vehicle.vin"}:
+            continue
+        if path.startswith("vehicle.") and not _vehicle_field_missing(vehicle, path):
+            continue
+        if path.startswith("vehicle."):
+            add(
+                _alert(
+                    path=path,
+                    copy_text=reason if "¿" in reason else _identity_copy(vehicle, path, reason),
+                    severity="critical",
+                    source="llm",
+                )
+            )
+            continue
+        add(_alert(path=path, copy_text=reason, severity="info", source="llm"))
 
+    car = _car_phrase(vehicle)
     for piece in folio.get("pieces") or []:
         piece_id = str(piece.get("piece_id") or "")
-        if not piece_id or not _position_missing(piece):
+        if not piece_id:
             continue
+        name = piece_label(piece)
         if not piece.get("tipoParteId"):
-            continue
-        path = f"piece:{piece_id}.position"
-        if path in seen_paths:
-            continue
-        questions.append(
-            {
-                "id": _question_id(),
-                "path": path,
-                "piece_id": piece_id,
-                "prompt": _position_prompt(piece),
-                "status": "open",
-                "asked_message_sid": None,
-                "source": "catalog_position",
-            }
-        )
-        seen_paths.add(path)
-
-    for field, label in _VEHICLE_FIELD_LABELS.items():
-        if has_vehicle_label and field.startswith("vehicle."):
-            if not _vehicle_field_missing(vehicle, field):
-                continue
-            if field in {"vehicle.make", "vehicle.model", "vehicle.year"}:
-                continue
-        path = field
-        if path in seen_paths:
-            continue
-        if field == "vehicle.engine" and not _vehicle_field_missing(vehicle, field):
-            continue
-        if field == "vehicle.engine" and _vehicle_field_missing(vehicle, field):
-            questions.append(
-                {
-                    "id": _question_id(),
-                    "path": path,
-                    "piece_id": None,
-                    "prompt": f"¿Cuál es el {label} del vehículo?",
-                    "status": "open",
-                    "asked_message_sid": None,
-                    "source": "vehicle_field",
-                }
+            add(
+                _alert(
+                    path=f"piece:{piece_id}.catalog",
+                    piece_id=piece_id,
+                    copy_text=f"No encontramos «{name}» en el catálogo.",
+                    severity="info",
+                    source="catalog_miss",
+                )
             )
-            seen_paths.add(path)
+        if piece.get("position_required") and _position_missing(piece):
+            prompt = _position_prompt(piece)
+            if car and "balata" in name.lower():
+                prompt = f"¿Las balatas del {car} son delanteras o traseras?"
+            elif car:
+                prompt = (
+                    f"¿Qué posición necesita {name.lower()} del {car}? "
+                    "Delantera, trasera, izquierda o derecha."
+                )
+            add(
+                _alert(
+                    path=f"piece:{piece_id}.position",
+                    piece_id=piece_id,
+                    copy_text=prompt,
+                    severity="warning",
+                    source="catalog_position",
+                )
+            )
+        raw_position = str(piece.get("position") or "").strip()
+        if (
+            piece.get("position_required")
+            and piece.get("position_standardized") is False
+            and raw_position
+            and raw_position.lower() not in _SKIP_POSITIONS
+        ):
+            add(
+                _alert(
+                    path=f"piece:{piece_id}.position_text",
+                    piece_id=piece_id,
+                    copy_text=f"La posición «{raw_position}» no está en el catálogo.",
+                    severity="info",
+                    source="position_text",
+                )
+            )
+        raw_unit = str(piece.get("unitOfMeasure") or "").strip()
+        if piece.get("unit_standardized") is False and raw_unit:
+            add(
+                _alert(
+                    path=f"piece:{piece_id}.unit",
+                    piece_id=piece_id,
+                    copy_text=f"La unidad «{raw_unit}» no está en el catálogo.",
+                    severity="info",
+                    source="unit_text",
+                )
+            )
 
     return questions
 
@@ -308,6 +444,116 @@ def content_message_sids(
     return sids
 
 
+def forwarded_answer_text(bodies: Sequence[str], folios: Sequence[dict]) -> str:
+    """Text left after the questions message and the draft links are removed."""
+    phrases = []
+    for folio in folios:
+        label = vehicle_short_label(folio)
+        if label:
+            phrases.append(label)
+        for question in folio.get("whatsapp_pending_questions") or []:
+            for key in ("copy_text", "prompt"):
+                text = str(question.get(key) or "").strip()
+                if text:
+                    phrases.append(text)
+        for piece in folio.get("pieces") or []:
+            name = piece_label(piece)
+            if name and name.lower() != "pieza":
+                phrases.append(name)
+        vehicle = folio.get("vehicle") or {}
+        for key in ("maker", "model"):
+            value = str(vehicle.get(key) or "").strip()
+            if value:
+                phrases.append(value)
+    normalized_phrases = sorted(
+        {_normalize_text(phrase) for phrase in phrases if _normalize_text(phrase)},
+        key=len,
+        reverse=True,
+    )
+    kept: List[str] = []
+    for body in bodies:
+        raw = re.sub(r"https?://\S+", " ", body or "", flags=re.IGNORECASE)
+        text = _normalize_text(raw)
+        text = re.sub(r"whatsapp draft\s+[a-f0-9]{32}", " ", text)
+        text = re.sub(r"borrador (?:listo|actualizado|ya existe) en eassymo pos", " ", text)
+        text = re.sub(r"revisa vehiculo y piezas aqui", " ", text)
+        text = re.sub(
+            r"son \d+ vehiculos asi que quedo un borrador por cada uno",
+            " ",
+            text,
+        )
+        for phrase in normalized_phrases:
+            text = text.replace(phrase, " ")
+        text = re.sub(r"\s+", " ", text).strip()
+        if text:
+            kept.append(text)
+    return " ".join(kept).strip()
+
+
+_ANSWER_FILLERS = {
+    "son", "es", "para", "el", "la", "las", "los", "de", "del", "que",
+    "un", "una", "y", "e", "al", "se", "me", "por", "favor", "porfa",
+    "bro", "tambien", "si", "va", "van", "sean", "sea", "ok", "listo",
+}
+
+
+def answer_text_is_only_a_reply(text: str) -> bool:
+    """True when the leftover is just a year, a position, or a unit."""
+    tokens = _tokenize(text)
+    if not tokens:
+        return False
+    for token in tokens:
+        if token in _ANSWER_FILLERS or token in POSITION_ALIASES:
+            continue
+        if re.fullmatch(r"(?:19|20)\d{2}", token):
+            continue
+        if token in {"par", "pares", "juego", "juegos", "pieza", "piezas"}:
+            continue
+        return False
+    return True
+
+
+def fill_open_questions(folio: dict, answer_text: str) -> Optional[Tuple[dict, List[str]]]:
+    """Apply one client reply to every open question it actually answers."""
+    questions = [dict(item) for item in (folio.get("whatsapp_pending_questions") or [])]
+    pieces = [dict(piece) for piece in (folio.get("pieces") or [])]
+    vehicle = dict(folio.get("vehicle") or {})
+    details: List[str] = []
+    filled = False
+    for question in questions:
+        if question.get("status") != "open":
+            continue
+        if str(question.get("path") or "").endswith(".catalog"):
+            continue
+        trial = {
+            **folio,
+            "pieces": pieces,
+            "vehicle": vehicle,
+            "whatsapp_pending_questions": questions,
+        }
+        patch, ok, detail = apply_answer_to_folio(trial, question, answer_text)
+        if not ok:
+            continue
+        if "pieces" in patch:
+            pieces = patch["pieces"]
+        if "vehicle" in patch:
+            vehicle = patch["vehicle"]
+        question["status"] = "answered"
+        if detail:
+            details.append(detail)
+        filled = True
+    if not filled:
+        return None
+    return (
+        {
+            "pieces": pieces,
+            "vehicle": vehicle,
+            "whatsapp_pending_questions": questions,
+        },
+        details,
+    )
+
+
 def resolve_position(text: str) -> Optional[str]:
     for token in _tokenize(text):
         alias = POSITION_ALIASES.get(token)
@@ -394,6 +640,7 @@ def apply_answer_to_folio(
             if str(piece.get("piece_id")) == str(question.get("piece_id")):
                 piece["position"] = position
                 piece["position_suggested"] = False
+                piece["position_standardized"] = True
                 detail = f"{piece_label(piece)} · {position}"
                 break
         else:
@@ -444,6 +691,7 @@ def apply_answer_to_folio(
             if str(piece.get("piece_id")) == str(question.get("piece_id")):
                 piece["position"] = position
                 piece["position_suggested"] = False
+                piece["position_standardized"] = True
                 detail = f"{piece_label(piece)} · {position}"
                 return {"pieces": pieces}, True, detail
 

@@ -105,7 +105,22 @@ def redirect_info(folio_id: str):
 @mostradorRouter.get("/public/{share_token}", description="Public/customer folio view by share token")
 def get_public(share_token: str):
     try:
-        response = folioService.get_by_share_token(share_token)
+        # Open questions stay visible on the draft. Hiding the link here made
+        # the seller's own WhatsApp URL return 404.
+        response = folioService.get_by_share_token(share_token, require_ready=False)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+    except Exception as e:
+        return JSONResponse(status_code=_err_status(e), content=get_unsuccessful_response(e))
+
+
+@mostradorRouter.get(
+    "/seller-share/{share_token}",
+    description="Selling shop: open a draft by share token even when it is not ready",
+)
+def get_seller_share(share_token: str, request: Request):
+    try:
+        caller_uid = require_authenticated_uid(request)
+        response = folioService.get_for_origin_seller(share_token, caller_uid)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
         return JSONResponse(status_code=_err_status(e), content=get_unsuccessful_response(e))
@@ -546,6 +561,21 @@ def invite_shop(folio_id: str, request: Request, data: dict = Body(...)):
             visible_piece_ids=data.get("visible_piece_ids"),
             client_origin=folioService._client_origin_from_request(request),
             captured_by_buyer=bool(data.get("captured_by_buyer", False)),
+        )
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+    except Exception as e:
+        return JSONResponse(status_code=_err_status(e), content=get_unsuccessful_response(e))
+
+
+@mostradorRouter.post(
+    "/{folio_id}/customer-name",
+    description="Seller: store a client name on this draft and its sibling vehicles",
+)
+def customer_name(folio_id: str, request: Request, data: dict = Body(...)):
+    try:
+        caller_uid = require_authenticated_uid(request)
+        response = folioService.label_customer_on_folio(
+            folio_id, data.get("name"), caller_uid
         )
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:

@@ -1,3 +1,4 @@
+import contextvars
 import logging
 import os
 import re
@@ -14,7 +15,10 @@ from app.repositories import GroupRepository as groupRepository
 from app.repositories import WhatsappInboundRepository as inbound_repo
 from app.repositories import WhatsappIntakeSessionRepository as session_repo
 from app.repositories import WhatsappPendingAssociationRepository as pending_repo
-from app.repositories.WhatsappIntakeSessionRepository import STATUS_COLLECTING
+from app.repositories.WhatsappIntakeSessionRepository import (
+    STATUS_COLLECTING,
+    STATUS_FLUSHING,
+)
 from app.schemas.WhatsappExtraction import WhatsappExtractionProposal
 from app.services import MostradorFolioService as folio_service
 from app.services.LlmExtractionService import LlmExtractionService, LlmRateLimitError
@@ -36,6 +40,44 @@ from app.utils.phone_normalize import normalize_phone_e164
 
 logger = logging.getLogger(__name__)
 
+# A live model call should finish well under this. Older flushing sessions
+# belong to a worker that died after the "Procesando" ack.
+STALE_FLUSH_SECONDS = 180
+_FLUSH_FAILURE_MESSAGE = (
+    "No pudimos terminar tu solicitud. Reenvía auto y piezas en un mensaje."
+)
+_flush_reply_state: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar(
+    "whatsapp_flush_reply",
+    default=None,
+)
+_draft_timing: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar(
+    "whatsapp_draft_timing",
+    default=None,
+)
+
+
+def _collect_wait_ms(session: dict) -> int:
+    """Milliseconds from the first buffered bubble until this flush starts."""
+    started = (session or {}).get("started_at")
+    if not isinstance(started, datetime):
+        return 0
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=timezone.utc)
+    elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+    return max(0, int(elapsed * 1000))
+
+
+def _record_stage(stage: str, started: float) -> None:
+    state = _draft_timing.get()
+    if state is None:
+        return
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
+    state[stage] = int(state.get(stage) or 0) + max(0, elapsed_ms)
+
+
+class _FlushSuperseded(Exception):
+    """Another worker took this flush. Do not send or delete the session."""
+
 _ZW_CHARS = dict.fromkeys(map(ord, "\u200b\u200c\u200d\ufeff\u00ad"), None)
 _DRAFT_TOKEN_RE = re.compile(
     r"whatsapp-draft[\s/]+(?P<token>[a-f0-9]{32})",
@@ -50,6 +92,16 @@ _BORRADOR_BOILERPLATE_RE = re.compile(
 
 def _normalize_body_for_token(text: str) -> str:
     return (text or "").translate(_ZW_CHARS).replace("\r", " ").replace("\n", " ")
+
+
+def _extract_draft_tokens(bodies: List[str]) -> List[str]:
+    tokens: List[str] = []
+    for body in bodies:
+        for match in _DRAFT_TOKEN_RE.finditer(_normalize_body_for_token(body)):
+            token = match.group("token").lower()
+            if token not in tokens:
+                tokens.append(token)
+    return tokens
 
 
 def _extract_draft_token(bodies: List[str]) -> Optional[str]:
@@ -138,7 +190,7 @@ class WhatsappIntakeProcessorService:
             "WHATSAPP_INTAKE_EXTRACT", "true"
         ).lower() in ("1", "true", "yes")
         self.quiet_seconds = max(
-            1, int(os.getenv("WHATSAPP_INTAKE_QUIET_SECONDS", "8"))
+            1, int(os.getenv("WHATSAPP_INTAKE_QUIET_SECONDS", "3"))
         )
         self.max_collect_seconds = max(
             self.quiet_seconds,
@@ -289,6 +341,13 @@ class WhatsappIntakeProcessorService:
         ]
         return proposal
 
+    def _map_catalog_vehicle(self, mysql_db, proposal, bodies):
+        catalog_started = time.perf_counter()
+        try:
+            return self.catalog_mapper.map_vehicle(mysql_db, proposal, bodies)
+        finally:
+            _record_stage("catalog_ms", catalog_started)
+
     def _lines_to_pieces(
         self,
         mysql_db,
@@ -303,7 +362,11 @@ class WhatsappIntakeProcessorService:
             for u in (proposal.uncertainties or [])
             if not (has_known_vehicle and (u.path or "").startswith("vehicle"))
         ]
-        mapped_lines = self.catalog_mapper.map_lines(mysql_db, proposal.lines)
+        catalog_started = time.perf_counter()
+        try:
+            mapped_lines = self.catalog_mapper.map_lines(mysql_db, proposal.lines)
+        finally:
+            _record_stage("catalog_ms", catalog_started)
         for line, mapped in zip(proposal.lines, mapped_lines):
             comments_parts: List[str] = []
             if line.raw:
@@ -324,6 +387,9 @@ class WhatsappIntakeProcessorService:
                 "unitOfMeasure": mapped.unit_of_measure,
                 "position": mapped.position,
                 "position_suggested": mapped.position_suggested,
+                "position_required": mapped.position_required,
+                "position_standardized": mapped.position_standardized,
+                "unit_standardized": mapped.unit_standardized,
                 "comments": " · ".join(comments_parts) if comments_parts else None,
                 "status": "pendiente",
                 "options": [],
@@ -547,6 +613,13 @@ class WhatsappIntakeProcessorService:
                     matched["position"] = new_piece["position"]
                 if new_piece.get("position_suggested") is not None:
                     matched["position_suggested"] = new_piece["position_suggested"]
+                for flag in (
+                    "position_required",
+                    "position_standardized",
+                    "unit_standardized",
+                ):
+                    if flag in new_piece:
+                        matched[flag] = new_piece[flag]
                 if new_piece.get("comments"):
                     old_comments = (matched.get("comments") or "").strip()
                     new_comment = new_piece["comments"].strip()
@@ -630,12 +703,20 @@ class WhatsappIntakeProcessorService:
         folio_id: Optional[str] = None,
         media_url: Optional[str] = None,
     ) -> str:
+        state = _flush_reply_state.get()
+        if state is not None and state.get("token"):
+            if not self._flush_still_owned(from_number, str(state["token"])):
+                raise _FlushSuperseded()
         resolved_kind = kind or self._outbound_kind(body)
-        result = self.whatsapp_service.send_text_message(
-            from_number,
-            body,
-            media_url=media_url,
-        )
+        send_started = time.perf_counter()
+        try:
+            result = self.whatsapp_service.send_text_message(
+                from_number,
+                body,
+                media_url=media_url,
+            )
+        finally:
+            _record_stage("send_ms", send_started)
         message_sid = result.get("message_sid") or f"out-{uuid4().hex}"
         outbound: Dict[str, Any] = {
             "message_sid": message_sid,
@@ -649,6 +730,8 @@ class WhatsappIntakeProcessorService:
         if folio_id:
             outbound["folio_id"] = folio_id
         inbound_repo.insert_outbound(outbound)
+        if state is not None:
+            state["replied"] = True
         return message_sid
 
     def _remember_share_token(
@@ -758,10 +841,14 @@ class WhatsappIntakeProcessorService:
         known_vehicle: str = "",
         burst_id: Optional[str] = None,
     ) -> Optional[WhatsappExtractionProposal]:
+        model_started = time.perf_counter()
         try:
-            return self.llm_service.extract(
-                bodies, store_name=store_name, known_vehicle=known_vehicle
-            )
+            try:
+                return self.llm_service.extract(
+                    bodies, store_name=store_name, known_vehicle=known_vehicle
+                )
+            finally:
+                _record_stage("model_ms", model_started)
         except LlmRateLimitError as exc:
             logger.error("GLM rate limited during flush for %s: %s", from_number, exc)
             self._send_extraction_failure(
@@ -833,6 +920,81 @@ class WhatsappIntakeProcessorService:
             creator_uid=creator_uid,
         )
 
+    def _try_fill_forwarded_answers(
+        self,
+        *,
+        from_number: str,
+        bodies: List[str],
+        message_sids: List[str],
+        group_id: str,
+        creator_uid: Optional[str],
+        burst_id: Optional[str],
+    ) -> bool:
+        """Fill open questions when the seller forwards the questions message and the reply."""
+        tokens = _extract_draft_tokens(bodies)
+        if not tokens:
+            return False
+        folios = []
+        for token in tokens:
+            folio = self._load_folio_by_share_token(token)
+            if not folio:
+                continue
+            allowed, _reason = self._can_resume_folio(
+                folio, group_id=group_id, creator_uid=creator_uid
+            )
+            if allowed:
+                folios.append(folio)
+        if not folios:
+            return False
+        answer = clarify.forwarded_answer_text(bodies, folios)
+        if not clarify.answer_text_is_only_a_reply(answer):
+            return False
+        updated: List[Tuple[dict, List[str]]] = []
+        for folio in folios:
+            filled = clarify.fill_open_questions(folio, answer)
+            if not filled:
+                continue
+            patch, details = filled
+            folio_id = str(folio.get("_id") or folio.get("id") or "")
+            saved = folio_service.update(folio_id, patch)
+            updated.append((saved, details))
+        if not updated:
+            return False
+        saved_by_id = {
+            str(folio.get("_id") or folio.get("id") or ""): (folio, details)
+            for folio, details in updated
+        }
+        lines = ["Listo."]
+        for folio in folios:
+            folio_id = str(folio.get("_id") or folio.get("id") or "")
+            current, details = saved_by_id.get(folio_id, (folio, []))
+            if folio_id not in saved_by_id and len(folios) > 1:
+                continue
+            label = self._folio_vehicle_label(current) or str(current.get("folio_code") or "Borrador")
+            lines.append("")
+            lines.append(label)
+            lines.extend(details)
+            lines.append(self._draft_link_for_folio(current))
+            lines.extend(clarify.alert_lines(current))
+        self._send_bot_message(
+            from_number,
+            "\n".join(lines).strip(),
+            burst_id=burst_id,
+            kind="bot_draft",
+            folio_id=str(updated[0][0].get("_id") or updated[0][0].get("id") or ""),
+        )
+        for sid in message_sids:
+            if sid:
+                inbound_repo.update_fields(
+                    sid,
+                    {
+                        "processing_status": "draft_resumed",
+                        "extraction_status": "ready",
+                        **({"burst_id": burst_id} if burst_id else {}),
+                    },
+                )
+        return True
+
     def _handle_resume(
         self,
         *,
@@ -874,6 +1036,7 @@ class WhatsappIntakeProcessorService:
         )
         if proposal is None:
             return
+        self._ensure_flush_owner(from_number)
 
         if not self._proposal_has_content(proposal):
             if self._try_complement_before_resume(
@@ -997,38 +1160,10 @@ class WhatsappIntakeProcessorService:
         group_id: str,
         creator_uid: Optional[str],
     ) -> dict:
-        open_items = [
-            item
-            for item in clarify.open_questions(folio)
-            if not item.get("asked_message_sid")
-        ]
-        if not open_items:
-            return folio
-
-        other_drafts = clarify.find_drafts_with_open_questions(
-            origin_group_id=group_id,
-            creator_uid=creator_uid,
-        )
-        multi_hint = len(other_drafts) > 1
-        folio_id = str(folio.get("_id") or folio.get("id") or "")
-        questions = list(folio.get("whatsapp_pending_questions") or [])
-
-        for question in open_items:
-            body = clarify.format_clarify_message(
-                folio, question, multi_draft_hint=multi_hint
-            )
-            sid = self._send_bot_message(
-                from_number,
-                body,
-                burst_id=burst_id,
-                kind="bot_clarify",
-                folio_id=folio_id,
-            )
-            questions = clarify.attach_asked_sid(questions, question.get("id"), sid)
-
-        return folio_service.update(
-            folio_id, {"whatsapp_pending_questions": questions}
-        )
+        del from_number, burst_id, group_id, creator_uid
+        # Questions stay on the draft message under each URL. A separate
+        # WhatsApp bubble per question is another paid message.
+        return folio
 
     def _apply_chain_reactions(
         self,
@@ -1194,6 +1329,7 @@ class WhatsappIntakeProcessorService:
         group_id: str,
         creator_uid: Optional[str],
     ) -> None:
+        self._ensure_flush_owner(from_number)
         can_resume, refuse_message = self._can_resume_folio(
             folio,
             group_id=group_id or "",
@@ -1295,7 +1431,19 @@ class WhatsappIntakeProcessorService:
             )
         version = str(folio.get("updated_at") or "")
         link = self._draft_preview_link(share_token, folio_id, version=version or None)
-        body = message_body or f"{headline}\nRevisa vehículo y piezas aquí:\n{link}"
+        sibling_uid = str(folio.get("sibling_uid") or "").strip()
+        sibling_folios = None
+        if message_body and sibling_uid:
+            try:
+                sibling_folios = folio_service.list_sibling_folios(sibling_uid)
+            except Exception:
+                logger.exception("Failed to reload sibling drafts for alert lines")
+                sibling_folios = None
+        if isinstance(sibling_folios, list) and sibling_folios:
+            body = self._sibling_drafts_message(sibling_folios)
+        else:
+            base = message_body or f"{headline}\nRevisa vehículo y piezas aquí:\n{link}"
+            body = clarify.append_alert_lines(base, folio)
         if send_message:
             self._send_bot_message(
                 from_number,
@@ -1484,7 +1632,10 @@ class WhatsappIntakeProcessorService:
         link = self._draft_preview_link(share_token, folio_id, version=version or None)
         self._send_bot_message(
             from_number,
-            f"{headline}\nRevisa vehículo y piezas aquí:\n{link}",
+            clarify.append_alert_lines(
+                f"{headline}\nRevisa vehículo y piezas aquí:\n{link}",
+                folio,
+            ),
             burst_id=burst_id,
             kind="bot_draft",
             folio_id=folio_id or None,
@@ -1577,6 +1728,7 @@ class WhatsappIntakeProcessorService:
         burst_id: Optional[str] = None,
         send_message: bool = True,
     ) -> dict:
+        self._ensure_flush_owner(from_number)
         mysql_db = None
         if MySQLSessionLocal is not None:
             mysql_db = MySQLSessionLocal()
@@ -1585,7 +1737,7 @@ class WhatsappIntakeProcessorService:
             new_pieces = self._lines_to_pieces(
                 mysql_db, proposal, known_vehicle=folio.get("vehicle")
             )
-            resolved_vehicle = self.catalog_mapper.map_vehicle(
+            resolved_vehicle = self._map_catalog_vehicle(
                 mysql_db, proposal, bodies
             )
             if resolved_vehicle:
@@ -1624,6 +1776,36 @@ class WhatsappIntakeProcessorService:
         finally:
             if mysql_db is not None:
                 mysql_db.close()
+
+    def _replay_linked_draft(
+        self,
+        from_number: str,
+        message_sids: List[str],
+        burst_id: str,
+    ) -> bool:
+        """If this burst already created a draft, send that link again.
+
+        A flush can die after the folio exists and before WhatsApp gets the
+        link. Recovery must not open a second draft.
+        """
+        for sid in message_sids:
+            if not sid:
+                continue
+            doc = inbound_repo.find_by_message_sid(sid) or {}
+            if not isinstance(doc, dict):
+                continue
+            folio_id = str(doc.get("folio_id") or "").strip()
+            if not folio_id:
+                continue
+            folio = folio_service.get(folio_id)
+            self._send_existing_draft_link(
+                from_number,
+                folio,
+                message_sids,
+                burst_id=burst_id,
+            )
+            return True
+        return False
 
     def _send_existing_draft_link(
         self,
@@ -1716,6 +1898,61 @@ class WhatsappIntakeProcessorService:
             group_name=group_name,
         )
 
+    def _flush_still_owned(self, from_number: str, flush_token: str) -> bool:
+        if not flush_token:
+            return True
+        current = session_repo.get_by_phone(from_number)
+        return bool(
+            current
+            and current.get("status") == STATUS_FLUSHING
+            and str(current.get("flush_token") or "") == flush_token
+        )
+
+    def _ensure_flush_owner(self, from_number: str) -> None:
+        state = _flush_reply_state.get()
+        if not state or not state.get("token"):
+            return
+        if not self._flush_still_owned(from_number, str(state["token"])):
+            raise _FlushSuperseded()
+
+    def _finish_flush_if_owned(
+        self, from_number: str, flush_token: str, state: dict
+    ) -> None:
+        if not self._flush_still_owned(from_number, flush_token):
+            return
+        if not state.get("replied"):
+            try:
+                self._send_bot_message(
+                    from_number,
+                    _FLUSH_FAILURE_MESSAGE,
+                    kind="bot_error",
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to send flush failure notice to %s", from_number
+                )
+                return
+        try:
+            session_repo.finish_session(from_number)
+        except Exception:
+            logger.exception("Failed to clear intake session for %s", from_number)
+
+    def recover_stuck_sessions(self, *, abandon_all_flushing: bool = False) -> None:
+        """Finish bursts whose debounce thread died after the processing ack."""
+        now = datetime.now(timezone.utc)
+        session_repo.reclaim_abandoned_flushes(
+            now,
+            min_age_seconds=None if abandon_all_flushing else STALE_FLUSH_SECONDS,
+        )
+        for session in session_repo.find_due_collecting(now):
+            phone = session.get("from_number")
+            if not phone:
+                continue
+            try:
+                self.flush_if_ready(phone, int(session.get("generation") or 0))
+            except Exception:
+                logger.exception("Recovery flush failed for %s", phone)
+
     def _schedule_debounce_result(
         self, from_number: str, generation: int, flush_at
     ) -> Dict[str, Any]:
@@ -1764,6 +2001,7 @@ class WhatsappIntakeProcessorService:
             label = self._folio_vehicle_label(folio) or str(folio.get("folio_code") or "Borrador")
             lines.append(label)
             lines.append(self._draft_link_for_folio(folio))
+            lines.extend(clarify.alert_lines(folio))
             lines.append("")
         return "\n".join(lines).strip()
 
@@ -1784,12 +2022,13 @@ class WhatsappIntakeProcessorService:
         send_message: bool = True,
         apply_reactions: bool = True,
     ) -> dict:
+        self._ensure_flush_owner(from_number)
         mysql_db = None
         if MySQLSessionLocal is not None:
             mysql_db = MySQLSessionLocal()
         try:
             pieces = self._lines_to_pieces(mysql_db, proposal)
-            resolved_vehicle = self.catalog_mapper.map_vehicle(
+            resolved_vehicle = self._map_catalog_vehicle(
                 mysql_db, proposal, bodies or []
             )
             if resolved_vehicle:
@@ -1872,6 +2111,38 @@ class WhatsappIntakeProcessorService:
         )
 
     def _flush_session(self, from_number: str, session: dict) -> None:
+        token = str(session.get("flush_token") or "")
+        state = {"replied": False, "token": token}
+        timing = {
+            "collect_ms": _collect_wait_ms(session),
+            "model_ms": 0,
+            "catalog_ms": 0,
+            "send_ms": 0,
+        }
+        ctx = _flush_reply_state.set(state)
+        timing_ctx = _draft_timing.set(timing)
+        try:
+            self._flush_session_body(from_number, session)
+        except _FlushSuperseded:
+            logger.info("WhatsApp flush superseded for %s", from_number)
+        except Exception:
+            logger.exception("WhatsApp flush failed for %s", from_number)
+        finally:
+            _flush_reply_state.reset(ctx)
+            try:
+                self._finish_flush_if_owned(from_number, token, state)
+            finally:
+                logger.info(
+                    "WhatsApp draft timing from=%s collect_ms=%s model_ms=%s catalog_ms=%s send_ms=%s",
+                    from_number,
+                    timing["collect_ms"],
+                    timing["model_ms"],
+                    timing["catalog_ms"],
+                    timing["send_ms"],
+                )
+                _draft_timing.reset(timing_ctx)
+
+    def _flush_session_body(self, from_number: str, session: dict) -> None:
         burst_id = uuid4().hex
         self._stamp_burst_messages(session, burst_id=burst_id, from_number=from_number)
         message_sids = [
@@ -1894,10 +2165,9 @@ class WhatsappIntakeProcessorService:
                 else:
                     primary_intake_id = first_sid
 
-        try:
-            session_repo.finish_session(from_number)
-        except Exception:
-            logger.exception("Failed to clear intake session for %s", from_number)
+        self._ensure_flush_owner(from_number)
+        if self._replay_linked_draft(from_number, message_sids, burst_id):
+            return
 
         if not bodies:
             self._send_bot_message(
@@ -1913,6 +2183,15 @@ class WhatsappIntakeProcessorService:
             bodies, from_number, allow_last_draft=False
         )
         if draft_token or _has_draft_pointer(bodies):
+            if self._try_fill_forwarded_answers(
+                from_number=from_number,
+                bodies=bodies,
+                message_sids=message_sids,
+                group_id=group_id or "",
+                creator_uid=creator_uid,
+                burst_id=burst_id,
+            ):
+                return
             token = draft_token or self._latest_share_token(from_number)
             resume_folio = self._load_folio_by_share_token(token) if token else None
             if not resume_folio:
@@ -1957,6 +2236,7 @@ class WhatsappIntakeProcessorService:
         )
         if proposal is None:
             return
+        self._ensure_flush_owner(from_number)
 
         if not self._proposal_has_content(proposal):
             if self._try_complement_before_resume(

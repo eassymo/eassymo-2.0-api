@@ -211,18 +211,41 @@ def get(folio_id: str) -> dict:
     return _hydrate(doc)
 
 
-def get_by_share_token(share_token: str) -> dict:
+def get_by_share_token(share_token: str, *, require_ready: bool = False) -> dict:
     doc = folioRepository.find_by_share_token(share_token)
     if not doc:
         raise HTTPException(status_code=404, detail="Folio not found")
     folio_id = str(doc["_id"])
     _ensure_mostrador_orders_materialized(folio_id, swallow_errors=True)
     doc = folioRepository.find_by_id(folio_id) or doc
+    if require_ready and not _folio_share_ready(doc):
+        raise HTTPException(status_code=404, detail="Folio not found")
     hydrated = _hydrate(doc)
-    summaries = sibling_draft_summaries(hydrated.get("sibling_uid"))
+    summaries = sibling_draft_summaries(
+        hydrated.get("sibling_uid"),
+        include_blocked=not require_ready,
+    )
     if summaries:
         hydrated["sibling_drafts"] = summaries
     return hydrated
+
+
+def get_for_origin_seller(share_token: str, caller_uid: str) -> dict:
+    """Return a draft to the selling shop even when it is not ready to share."""
+    from app.dependencies.group_auth import assert_group_membership
+
+    doc = folioRepository.find_by_share_token(share_token)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Folio not found")
+    origin_group_id = str(doc.get("origin_group_id") or "")
+    assert_group_membership(caller_uid, origin_group_id)
+    return get_by_share_token(share_token, require_ready=False)
+
+
+def _folio_share_ready(doc: dict) -> bool:
+    from app.services.WhatsappClarificationService import folio_share_ready
+
+    return folio_share_ready(doc)
 
 
 def _public_vehicle_label(vehicle: Optional[dict]) -> str:
@@ -251,17 +274,43 @@ def _piece_rows(pieces: List[dict]) -> List[dict]:
 
 
 def _open_question_prompts(doc: dict) -> List[str]:
+    from app.services.WhatsappClarificationService import question_copy_text
+
     prompts = []
     for question in doc.get("whatsapp_pending_questions") or []:
         if question.get("status") != "open":
             continue
-        prompt = (question.get("prompt") or "").strip()
+        prompt = question_copy_text(question)
         if prompt:
             prompts.append(prompt)
     return prompts
 
 
-def sibling_draft_summaries(sibling_uid: Optional[str]) -> List[dict]:
+def _alert_payloads(doc: dict) -> List[dict]:
+    from app.services.WhatsappClarificationService import (
+        open_questions,
+        question_copy_text,
+        question_severity,
+    )
+
+    payloads = []
+    for question in open_questions(doc):
+        text = question_copy_text(question)
+        if not text:
+            continue
+        payloads.append(
+            {
+                "id": question.get("id"),
+                "severity": question_severity(question),
+                "copy_text": text,
+            }
+        )
+    return payloads
+
+
+def sibling_draft_summaries(
+    sibling_uid: Optional[str], *, include_blocked: bool = True
+) -> List[dict]:
     """Compact public cards for drafts that share one continued WhatsApp request."""
     uid = (sibling_uid or "").strip()
     if not uid:
@@ -271,6 +320,9 @@ def sibling_draft_summaries(sibling_uid: Optional[str]) -> List[dict]:
         return []
     summaries = []
     for doc in docs:
+        customer = doc.get("customer") or {}
+        if not include_blocked and not _folio_share_ready(doc):
+            continue
         summaries.append({
             "folio_id": str(doc.get("_id")),
             "folio_code": doc.get("folio_code"),
@@ -278,8 +330,73 @@ def sibling_draft_summaries(sibling_uid: Optional[str]) -> List[dict]:
             "vehicle_label": _public_vehicle_label(doc.get("vehicle") or {}),
             "piece_rows": _piece_rows(doc.get("pieces") or []),
             "pending_clarifications": _open_question_prompts(doc),
+            "alerts": _alert_payloads(doc),
+            "customer_name": (customer.get("name") or "").strip() or None,
+            "assigned": _is_assigned_to_buyer(doc),
         })
     return summaries
+
+
+def _customer_with_display_name(existing: Optional[dict], name: str) -> dict:
+    current = dict(existing or {})
+    customer_type = current.get("type") or "guest"
+    if hasattr(customer_type, "value"):
+        customer_type = customer_type.value
+    current["type"] = customer_type
+    current["name"] = name
+    return current
+
+
+def label_customer_on_folio(folio_id: str, name: Optional[str], caller_uid: str) -> dict:
+    """Store a seller-facing client name on a draft and its sibling vehicles.
+
+    Only a member of the selling shop can do this. Does not assign a buyer
+    business and does not change folio status.
+    """
+    from app.dependencies.group_auth import assert_group_membership
+
+    doc = folioRepository.find_by_id(folio_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Folio not found")
+    origin_group_id = str(doc.get("origin_group_id") or "")
+    assert_group_membership(caller_uid, origin_group_id)
+    if _is_assigned_to_buyer(doc):
+        raise HTTPException(
+            status_code=409,
+            detail="Este borrador ya está asignado a un negocio",
+        )
+
+    cleaned = " ".join((name or "").split())
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="Escribe el nombre del cliente")
+    if len(cleaned) > 80:
+        raise HTTPException(status_code=400, detail="El nombre es demasiado largo")
+
+    targets = [doc]
+    sibling_uid = (doc.get("sibling_uid") or "").strip()
+    if sibling_uid:
+        siblings = folioRepository.find_by_sibling_uid(sibling_uid)
+        if siblings:
+            targets = siblings
+
+    now = _now()
+    for folio in targets:
+        if _is_assigned_to_buyer(folio):
+            continue
+        sibling_origin = str(folio.get("origin_group_id") or "")
+        if sibling_origin and sibling_origin != origin_group_id:
+            continue
+        folioRepository.edit(
+            str(folio.get("_id")),
+            {
+                "customer": _customer_with_display_name(folio.get("customer"), cleaned),
+                "updated_at": now,
+            },
+        )
+    share_token = str(doc.get("share_token") or "")
+    if share_token:
+        return get_by_share_token(share_token)
+    return get(folio_id)
 
 
 def list_sibling_folios(sibling_uid: str) -> List[dict]:
@@ -292,6 +409,8 @@ def list_sibling_folios(sibling_uid: str) -> List[dict]:
 def folio_id_by_share_token(share_token: str) -> str:
     doc = folioRepository.find_by_share_token(share_token)
     if not doc:
+        raise HTTPException(status_code=404, detail="Folio not found")
+    if not _folio_share_ready(doc):
         raise HTTPException(status_code=404, detail="Folio not found")
     return str(doc["_id"])
 
@@ -346,6 +465,7 @@ def update(folio_id: str, patch: Dict[str, Any]) -> dict:
         "part_request_ids",
         "assignment_with_options",
         "sibling_uid",
+        "whatsapp_pending_questions",
     }
     merged = {**doc}
     for key, value in patch.items():
@@ -1301,6 +1421,8 @@ def _link_folio_to_customer(
     name: Optional[str],
     phone: Optional[str],
     group_id: str,
+    *,
+    include_siblings: bool = True,
 ) -> dict:
     """Full buyer folio assignment: customer record, orders, sync, materialize, notifications."""
     customer = {
@@ -1316,6 +1438,19 @@ def _link_folio_to_customer(
     _ensure_mostrador_orders_materialized(folio_id)
     notifications = _migrate_guest_notifications(folio_id, uid, group_id)
     refreshed = folioRepository.find_by_id(folio_id)
+    if include_siblings:
+        for sibling in _other_sibling_docs(doc):
+            if _is_assigned_to_buyer(sibling):
+                continue
+            _link_folio_to_customer(
+                str(sibling.get("_id")),
+                sibling,
+                uid,
+                name,
+                phone,
+                group_id,
+                include_siblings=False,
+            )
     from app.services import UserService as userService
     return _dispatch_notifications({
         "folio": _hydrate(refreshed or updated),
@@ -1395,6 +1530,8 @@ def share(
         patch["customer"] = existing_customer
 
     updated = folioRepository.edit(folio_id, patch)
+    if patch.get("customer") and not existing_group_id:
+        _copy_customer_to_open_siblings(doc, patch["customer"])
 
     share_path = f"/folio/{share_token}"
     base_url = _resolve_client_base_url(client_origin)
@@ -1747,6 +1884,61 @@ def _is_assigned_to_buyer(doc: dict) -> bool:
     if customer.get("group_id"):
         return True
     return bool(doc.get("part_request_ids"))
+
+
+def _other_sibling_docs(doc: dict) -> List[dict]:
+    sibling_uid = str(doc.get("sibling_uid") or "").strip()
+    if not sibling_uid:
+        return []
+    current_id = str(doc.get("_id"))
+    return [
+        sibling
+        for sibling in folioRepository.find_by_sibling_uid(sibling_uid)
+        if str(sibling.get("_id")) != current_id
+    ]
+
+
+def _assign_same_client_to_siblings(
+    doc: dict,
+    group_id: str,
+    with_options: bool,
+    customer: dict,
+) -> None:
+    """One buyer assignment covers every sibling vehicle that is still open."""
+    for sibling in _other_sibling_docs(doc):
+        sibling_id = str(sibling.get("_id"))
+        sibling_group = str((sibling.get("customer") or {}).get("group_id") or "")
+        if sibling_group and sibling_group != str(group_id):
+            continue
+        if sibling_group == str(group_id) and _is_assigned_to_buyer(sibling):
+            continue
+        try:
+            assign_to_group(
+                sibling_id,
+                group_id,
+                with_options,
+                include_siblings=False,
+            )
+        except HTTPException:
+            if not _is_assigned_to_buyer(sibling):
+                folioRepository.edit(
+                    sibling_id,
+                    {"customer": customer, "updated_at": _now()},
+                )
+
+
+def _copy_customer_to_open_siblings(doc: dict, customer: dict) -> None:
+    """Guest or display client on one sibling draft is the client for the whole set."""
+    if not customer:
+        return
+    now = _now()
+    for sibling in _other_sibling_docs(doc):
+        if _is_assigned_to_buyer(sibling):
+            continue
+        folioRepository.edit(
+            str(sibling.get("_id")),
+            {"customer": customer, "updated_at": now},
+        )
 
 
 def _require_seller_folio_editable(doc: dict) -> None:
@@ -2256,7 +2448,13 @@ def _materialize_part_requests_for_folio(
     return created_ids
 
 
-def assign_to_group(folio_id: str, group_id: str, with_options: bool = True) -> dict:
+def assign_to_group(
+    folio_id: str,
+    group_id: str,
+    with_options: bool = True,
+    *,
+    include_siblings: bool = True,
+) -> dict:
     """Assign a POS folio to a buyer business group and materialize PartRequests."""
     from app.repositories import GroupRepository as groupRepository
 
@@ -2356,6 +2554,9 @@ def assign_to_group(folio_id: str, group_id: str, with_options: bool = True) -> 
         if hasattr(notif_dict.get("type"), "value"):
             notif_dict["type"] = notif_dict["type"].value
         notification = notif_dict
+
+    if include_siblings:
+        _assign_same_client_to_siblings(doc, group_id, with_options, customer)
 
     return _dispatch_notifications({"folio": _hydrate(refreshed), "part_request_ids": pr_ids, "notification": notification})
 

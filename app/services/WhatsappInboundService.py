@@ -35,6 +35,36 @@ class WhatsappInboundService:
         ).lower() in ("1", "true", "yes")
         self.whatsapp_service = WhatsappService()
         self.intake_processor = WhatsappIntakeProcessorService()
+        self._recovery_stop = threading.Event()
+        self._recovery_thread: Optional[threading.Thread] = None
+
+    def start_intake_recovery(self) -> None:
+        """Retry bursts left on 'Procesando' when the flush thread died."""
+        if self._recovery_thread and self._recovery_thread.is_alive():
+            return
+        self._recovery_stop = threading.Event()
+
+        def loop() -> None:
+            first = True
+            while not self._recovery_stop.is_set():
+                try:
+                    self.intake_processor.recover_stuck_sessions(
+                        abandon_all_flushing=first
+                    )
+                except Exception:
+                    logger.exception("WhatsApp intake recovery failed")
+                first = False
+                self._recovery_stop.wait(5)
+
+        self._recovery_thread = threading.Thread(
+            target=loop,
+            name="whatsapp-intake-recovery",
+            daemon=True,
+        )
+        self._recovery_thread.start()
+
+    def stop_intake_recovery(self) -> None:
+        self._recovery_stop.set()
 
     def validate_signature(self, request: Request, raw_body: bytes) -> None:
         if self.skip_signature:

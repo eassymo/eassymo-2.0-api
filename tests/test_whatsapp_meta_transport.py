@@ -280,6 +280,24 @@ def test_send_text_message_builds_graph_json(mock_post, monkeypatch):
     assert payload["text"]["preview_url"] is True
 
 
+@patch("app.services.WhatsappService.requests.get")
+@patch("app.services.WhatsappService.requests.post")
+def test_send_text_message_does_not_wait_for_draft_card(mock_post, mock_get, monkeypatch):
+    mock_post.return_value = _graph_ok("wamid.TXT")
+    service = _cloud_service(monkeypatch)
+    result = service.send_text_message(
+        "+5217779313704",
+        "Borrador listo en Eassymo POS.\nhttps://www.eassymo.mx/whatsapp-draft/abc",
+        media_url="https://www.eassymo.mx/api/og/whatsapp-draft?token=abc",
+    )
+    mock_get.assert_not_called()
+    assert result["message_sid"] == "wamid.TXT"
+    payload = mock_post.call_args.kwargs["json"]
+    assert payload["type"] == "text"
+    assert payload["text"]["body"].startswith("Borrador listo")
+    assert "whatsapp-draft/abc" in payload["text"]["body"]
+
+
 @patch("app.services.WhatsappService.requests.post")
 def test_send_team_invite_template_variable_order(mock_post, monkeypatch):
     mock_post.return_value = _graph_ok("wamid.TEAM")

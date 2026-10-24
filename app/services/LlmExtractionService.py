@@ -23,6 +23,10 @@ class LlmRateLimitError(Exception):
 class LlmExtractionError(Exception):
     """Raised for other GLM HTTP/API failures."""
 
+
+# Completion cap for one extraction. Thinking tokens count against this.
+EXTRACTION_MAX_TOKENS = 1500
+
 SYSTEM_PROMPT = """Eres un extractor de solicitudes de refacciones para Eassymo POS.
 Tu única tarea es leer el mensaje del vendedor y devolver JSON válido según el esquema.
 Reglas estrictas:
@@ -82,7 +86,7 @@ class LlmExtractionService:
     def __init__(self) -> None:
         self.api_key = os.getenv("Z_AI_API_KEY", "").strip()
         self.base_url = os.getenv("Z_AI_BASE_URL", "https://api.z.ai/api/paas/v4/").rstrip("/")
-        self.model = os.getenv("Z_AI_MODEL", "glm-5.2")
+        self.model = os.getenv("Z_AI_MODEL", "glm-5.3")
         self.max_retries = max(1, int(os.getenv("Z_AI_MAX_RETRIES", "3")))
         self.retry_base_seconds = max(1, int(os.getenv("Z_AI_RETRY_BASE_SECONDS", "2")))
 
@@ -219,12 +223,14 @@ class LlmExtractionService:
                 },
             ],
             "temperature": 0.1,
-            # GLM-5.2 thinks at max effort by default. A 2048 cap cuts the answer
-            # off at "{" and json.loads reports column 2. Skip the chain of thought
-            # and leave room for the JSON if the host still thinks.
-            "max_tokens": 8192,
-            "thinking": {"type": "disabled"},
-            "reasoning_effort": "none",
+            # GLM-5.3 always thinks, and the default effort is max. This call is
+            # structured extraction, so low is the lightweight setting. max writes
+            # a long chain of thought and the JSON often misses the reply.
+            # The JSON itself is small. A high cap lets that chain run out the
+            # clock before the draft is sent.
+            "max_tokens": EXTRACTION_MAX_TOKENS,
+            "thinking": {"type": "enabled"},
+            "reasoning_effort": "low",
             "response_format": {"type": "json_object"},
         }
         headers = {
@@ -271,14 +277,21 @@ class LlmExtractionService:
 
     def _post_chat(self, url: str, headers: Dict[str, str], payload: Dict[str, Any]) -> requests.Response:
         response = requests.post(url, headers=headers, json=payload, timeout=60)
-        if response.status_code != 400:
+        if response.status_code != 400 or payload.get("_json_mode_dropped"):
             return response
-        optional = ("thinking", "reasoning_effort", "response_format")
-        if not any(key in payload for key in optional):
-            return response
+        # Dropping reasoning_effort makes GLM-5.3 run at max. Keep low effort
+        # and only retry without JSON mode, which is the control some hosts reject.
         logger.warning("GLM rejected request controls: %s", (response.text or "")[:200])
-        reduced = {key: value for key, value in payload.items() if key not in optional}
-        return requests.post(url, headers=headers, json=reduced, timeout=60)
+        reduced = {
+            key: value
+            for key, value in payload.items()
+            if key not in ("response_format", "_json_mode_dropped")
+        }
+        reduced["thinking"] = {"type": "enabled"}
+        reduced["reasoning_effort"] = "low"
+        reduced["_json_mode_dropped"] = True
+        wire = {key: value for key, value in reduced.items() if key != "_json_mode_dropped"}
+        return requests.post(url, headers=headers, json=wire, timeout=60)
 
     @staticmethod
     def _normalize_messages(body: Union[str, Sequence[str]]) -> list[str]:

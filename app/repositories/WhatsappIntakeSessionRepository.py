@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
+from uuid import uuid4
 
 from pymongo import ReturnDocument
 
@@ -122,7 +123,7 @@ def append_message(
     from_number: str,
     message: Dict[str, Any],
     *,
-    quiet_seconds: int = 8,
+    quiet_seconds: int = 3,
 ) -> tuple[Optional[dict], bool, bool]:
     """
     Append a buffered message without bumping generation.
@@ -183,9 +184,56 @@ def try_acquire_flush(from_number: str, generation: int) -> Optional[dict]:
             "status": STATUS_COLLECTING,
             "generation": generation,
         },
-        {"$set": {"status": STATUS_FLUSHING, "updated_at": now}},
+        {
+            "$set": {
+                "status": STATUS_FLUSHING,
+                "flush_token": uuid4().hex,
+                "updated_at": now,
+            }
+        },
         return_document=ReturnDocument.AFTER,
     )
+
+
+def find_due_collecting(now: datetime) -> List[dict]:
+    """Collecting sessions whose quiet window has passed and a store is known."""
+    return list(
+        _col().find(
+            {
+                "status": STATUS_COLLECTING,
+                "flush_at": {"$ne": None, "$lte": now},
+                "group_id": {"$nin": [None, ""]},
+            }
+        )
+    )
+
+
+def reclaim_abandoned_flushes(
+    now: datetime, *, min_age_seconds: Optional[int]
+) -> int:
+    """Return flushing sessions to collecting so a dead worker can be retried.
+
+    min_age_seconds None reclaims every flush. A running process uses an age
+    so it does not steal a flush that is still inside the model call.
+    """
+    query: Dict[str, Any] = {"status": STATUS_FLUSHING}
+    if min_age_seconds is not None:
+        query["updated_at"] = {
+            "$lt": now - timedelta(seconds=max(0, min_age_seconds))
+        }
+    result = _col().update_many(
+        query,
+        {
+            "$set": {
+                "status": STATUS_COLLECTING,
+                "flush_token": None,
+                "flush_at": now,
+                "updated_at": now,
+            },
+            "$inc": {"generation": 1},
+        },
+    )
+    return int(result.modified_count)
 
 
 def delete_session(from_number: str) -> None:
