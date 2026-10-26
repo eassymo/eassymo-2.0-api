@@ -185,6 +185,10 @@ class WhatsappPendingQuestion(BaseModel):
     status: str = Field("open", description="open or answered")
     asked_message_sid: Optional[str] = Field(None)
     source: Optional[str] = Field(None, description="llm, catalog_position, vehicle_field")
+    acknowledged_at: Optional[datetime] = Field(
+        None,
+        description="Seller accepted this warning/info when enabling the draft for the buyer",
+    )
 
 
 class MostradorFolio(BaseModel):
@@ -223,6 +227,19 @@ class MostradorFolio(BaseModel):
     whatsapp_pending_questions: List[WhatsappPendingQuestion] = Field(
         default_factory=list,
         description="Non-blocking clarifications asked over WhatsApp",
+    )
+    customer_ready: bool = Field(
+        False,
+        description="Seller marked the list ready for the customer to look at",
+    )
+    customer_ready_at: Optional[datetime] = Field(None)
+    customer_editions: List[dict] = Field(
+        default_factory=list,
+        description="Seller edits made after the list was shown to the customer",
+    )
+    customer_visible_baseline: Optional[dict] = Field(
+        None,
+        description="Pieces and vehicle last shown to the customer",
     )
     origin_group: Optional[MostradorOriginGroup] = Field(
         None, description="hydrated seller group info for public views")

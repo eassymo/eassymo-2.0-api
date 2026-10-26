@@ -3026,3 +3026,92 @@ def test_recovery_resends_an_existing_draft_without_a_second_extract(
     sent = mock_whatsapp_cls.return_value.send_text_message.call_args[0][1]
     assert "whatsapp-draft/" + ("a" * 32) in sent
     mock_session_repo.finish_session.assert_called_once()
+
+
+@patch("app.services.WhatsappIntakeProcessorService.session_repo")
+@patch("app.services.WhatsappIntakeProcessorService.pending_repo")
+@patch("app.services.WhatsappIntakeProcessorService.folio_service")
+@patch("app.services.WhatsappIntakeProcessorService.MySQLSessionLocal", None)
+@patch("app.services.WhatsappIntakeProcessorService.inbound_repo")
+@patch("app.services.WhatsappIntakeProcessorService.WhatsappService")
+@patch("app.services.WhatsappIntakeProcessorService.LlmExtractionService")
+@patch("app.services.WhatsappIntakeProcessorService.WhatsappSellerIdentityService")
+def test_flush_resend_of_open_draft_replies_with_existing_link(
+    mock_identity_cls,
+    mock_llm_cls,
+    mock_whatsapp_cls,
+    mock_inbound_repo,
+    mock_folio_service,
+    mock_pending_repo,
+    mock_session_repo,
+):
+    from app.schemas.WhatsappExtraction import (
+        ExtractionIntent,
+        ExtractionLine,
+        ExtractionVehicle,
+        WhatsappExtractionProposal,
+    )
+    from app.services.WhatsappIntakeProcessorService import WhatsappIntakeProcessorService
+
+    token = "9eda4e80e9e44c928eabc5397c36e4dd"
+    body = "Te encargo para un versa 2015 un pistón"
+    session = _collecting_session(
+        messages=[{"message_sid": "SM-resend", "body": body}],
+    )
+    existing = _resume_folio(
+        share_token=token,
+        vehicle={"maker": "Nissan", "model": "Versa", "year": "2015"},
+        pieces=[{"piece_id": "p1", "name": "pistón", "qty": 1, "status": "pendiente"}],
+    )
+
+    mock_inbound_repo.find_by_message_sid.return_value = None
+    mock_inbound_repo.find_latest_share_token.return_value = token
+    mock_pending_repo.get_last_share_token.return_value = token
+    mock_identity_cls.return_value.resolve.return_value = MagicMock(
+        status="resolved",
+        group_id="g1",
+        group_name="Tienda A",
+        creator_uid="uid-1",
+        just_selected=False,
+        message=None,
+    )
+    mock_session_repo.get_by_phone.return_value = session
+    mock_session_repo.ensure_collecting_session.return_value = session
+    mock_session_repo.append_message.return_value = (session, False, True)
+    mock_session_repo.try_acquire_flush.return_value = session
+    mock_folio_service.get_by_share_token.return_value = existing
+    mock_folio_service._is_assigned_to_buyer.return_value = False
+    mock_folio_service._has_ordered_pieces.return_value = False
+    mock_llm_cls.return_value.extract.return_value = WhatsappExtractionProposal(
+        intent=ExtractionIntent.NEW_REQUEST,
+        vehicle=ExtractionVehicle(make="Nissan", model="Versa", year="2015"),
+        lines=[ExtractionLine(local_id="l1", part_name="pistón", quantity=1)],
+    )
+
+    service = WhatsappIntakeProcessorService()
+    service.extract_enabled = True
+    service.client_base_url = "http://localhost:3000"
+    with patch(
+        "app.services.WhatsappIntakeProcessorService.clarify.find_drafts_with_open_questions",
+        return_value=[],
+    ):
+        service.process_inbound(
+            {
+                "mongo_id": "in-resend",
+                "message_sid": "SM-resend",
+                "from_number": "+5217779313704",
+                "body": body,
+            }
+        )
+        service.flush_if_ready("+5217779313704", 1)
+
+    mock_folio_service.create.assert_not_called()
+    sent = [
+        call[0][1]
+        for call in mock_whatsapp_cls.return_value.send_text_message.call_args_list
+    ]
+    assert not any("No pudimos terminar" in text for text in sent)
+    assert any(
+        "Ya tienes este borrador" in text and f"whatsapp-draft/{token}" in text
+        for text in sent
+    )

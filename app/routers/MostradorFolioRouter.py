@@ -107,7 +107,9 @@ def get_public(share_token: str):
     try:
         # Open questions stay visible on the draft. Hiding the link here made
         # the seller's own WhatsApp URL return 404.
-        response = folioService.get_by_share_token(share_token, require_ready=False)
+        response = folioService.get_by_share_token(
+            share_token, require_ready=False, for_customer=True
+        )
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
         return JSONResponse(status_code=_err_status(e), content=get_unsuccessful_response(e))
@@ -140,7 +142,7 @@ def get_tube(tube_token: str):
 @mostradorRouter.post("/public/{share_token}/order", description="Guest: order a piece via share token")
 def public_order(share_token: str, data: dict = Body(...)):
     try:
-        folio_id = folioService.folio_id_by_share_token(share_token)
+        folio_id = folioService.folio_id_for_customer_change(share_token)
         response = folioService.order_piece(
             folio_id,
             piece_id=data.get("piece_id"),
@@ -158,7 +160,7 @@ def public_order(share_token: str, data: dict = Body(...)):
 @mostradorRouter.delete("/public/{share_token}/order/{piece_id}", description="Guest: remove a piece order via share token")
 def public_unorder(share_token: str, piece_id: str):
     try:
-        folio_id = folioService.folio_id_by_share_token(share_token)
+        folio_id = folioService.folio_id_for_customer_change(share_token)
         response = folioService.unorder_piece(folio_id, piece_id, allow_when_assigned=True)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
@@ -175,7 +177,7 @@ def public_search_parts(
     mysql_db: Session = Depends(get_mysql_db),
 ):
     try:
-        folioService.folio_id_by_share_token(share_token)
+        folioService.folio_id_for_customer_change(share_token)
         historico = data.get("historicoBusqueda") or {}
         criterio = (historico.get("criterio") or data.get("criterio") or "").strip()
         if not criterio:
@@ -200,7 +202,7 @@ def public_search_parts(
 )
 def public_search_brands(share_token: str, search_param: Optional[str] = None):
     try:
-        folioService.folio_id_by_share_token(share_token)
+        folioService.folio_id_for_customer_change(share_token)
         response = brandService.find_brand_by_label(search_param)
         return JSONResponse(
             status_code=status.HTTP_200_OK,
@@ -216,7 +218,7 @@ def public_search_brands(share_token: str, search_param: Optional[str] = None):
 )
 def public_search_guarantees(share_token: str, search_param: Optional[str] = None):
     try:
-        folioService.folio_id_by_share_token(share_token)
+        folioService.folio_id_for_customer_change(share_token)
         response = guaranteeService.find_guarantee_by_label(search_param)
         return JSONResponse(
             status_code=status.HTTP_200_OK,
@@ -229,7 +231,7 @@ def public_search_guarantees(share_token: str, search_param: Optional[str] = Non
 @mostradorRouter.post("/public/{share_token}/pieces", description="Guest: add a new piece to the folio")
 def public_add_piece(share_token: str, data: dict = Body(...)):
     try:
-        folio_id = folioService.folio_id_by_share_token(share_token)
+        folio_id = folioService.folio_id_for_customer_change(share_token)
         response = folioService.add_piece_by_guest(folio_id, data)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
@@ -239,7 +241,7 @@ def public_add_piece(share_token: str, data: dict = Body(...)):
 @mostradorRouter.delete("/public/{share_token}/pieces/{piece_id}", description="Guest: remove a piece they added")
 def public_remove_piece(share_token: str, piece_id: str):
     try:
-        folio_id = folioService.folio_id_by_share_token(share_token)
+        folio_id = folioService.folio_id_for_customer_change(share_token)
         response = folioService.remove_guest_piece(folio_id, piece_id)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
@@ -252,7 +254,7 @@ def public_remove_piece(share_token: str, piece_id: str):
 )
 def public_submit_piece_options(share_token: str, piece_id: str, data: dict = Body(...)):
     try:
-        folio_id = folioService.folio_id_by_share_token(share_token)
+        folio_id = folioService.folio_id_for_customer_change(share_token)
         response = folioService.submit_guest_piece_options(
             folio_id,
             piece_id,
@@ -268,7 +270,7 @@ def public_submit_piece_options(share_token: str, piece_id: str, data: dict = Bo
 @mostradorRouter.post("/public/{share_token}/confirm", description="Guest: confirm ordered pieces via share token")
 def public_confirm(share_token: str):
     try:
-        folio_id = folioService.folio_id_by_share_token(share_token)
+        folio_id = folioService.folio_id_for_customer_change(share_token)
         response = folioService.confirm(folio_id, allow_when_assigned=True)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
@@ -278,7 +280,7 @@ def public_confirm(share_token: str):
 @mostradorRouter.post("/public/{share_token}/invite-shop", description="Guest: fan out folio to another shop via share token")
 def public_invite_shop(share_token: str, request: Request, data: dict = Body(...)):
     try:
-        folio_id = folioService.folio_id_by_share_token(share_token)
+        folio_id = folioService.folio_id_for_customer_change(share_token)
         response = folioService.invite_shop(
             folio_id,
             group_id=data.get("group_id"),
@@ -299,7 +301,7 @@ def public_invite_shop(share_token: str, request: Request, data: dict = Body(...
 )
 def public_claim_guest(share_token: str, data: dict = Body(...)):
     try:
-        folio_id = folioService.folio_id_by_share_token(share_token)
+        folio_id = folioService.folio_id_for_customer_change(share_token)
         response = folioService.claim_guest(
             folio_id,
             guest_device_id=data.get("guest_device_id"),
@@ -312,7 +314,7 @@ def public_claim_guest(share_token: str, data: dict = Body(...)):
 @mostradorRouter.post("/public/{share_token}/claim-account", description="Guest: provision an Eassymo account via share token")
 def public_claim_account(share_token: str, request: Request, data: dict = Body(...)):
     try:
-        folio_id = folioService.folio_id_by_share_token(share_token)
+        folio_id = folioService.folio_id_for_customer_change(share_token)
         uid = data.get("uid")
         if not uid and hasattr(request.state, "user"):
             uid = (request.state.user or {}).get("uid")
@@ -331,7 +333,7 @@ def public_claim_account(share_token: str, request: Request, data: dict = Body(.
 @mostradorRouter.post("/public/{share_token}/create-taller-account", description="Guest: create seller shop account without folio reassignment")
 def public_create_taller_account(share_token: str, request: Request, data: dict = Body(...)):
     try:
-        folio_id = folioService.folio_id_by_share_token(share_token)
+        folio_id = folioService.folio_id_for_customer_change(share_token)
         uid = data.get("uid")
         if not uid and hasattr(request.state, "user"):
             uid = (request.state.user or {}).get("uid")
@@ -350,7 +352,7 @@ def public_create_taller_account(share_token: str, request: Request, data: dict 
 @mostradorRouter.post("/public/{share_token}/finish-claim", description="Guest: finish folio claim after shop-creator-v3 group creation")
 def public_finish_claim(share_token: str, request: Request, data: dict = Body(...)):
     try:
-        folio_id = folioService.folio_id_by_share_token(share_token)
+        folio_id = folioService.folio_id_for_customer_change(share_token)
         uid = data.get("uid")
         if not uid and hasattr(request.state, "user"):
             uid = (request.state.user or {}).get("uid")
@@ -576,6 +578,38 @@ def customer_name(folio_id: str, request: Request, data: dict = Body(...)):
         caller_uid = require_authenticated_uid(request)
         response = folioService.label_customer_on_folio(
             folio_id, data.get("name"), caller_uid
+        )
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+    except Exception as e:
+        return JSONResponse(status_code=_err_status(e), content=get_unsuccessful_response(e))
+
+
+@mostradorRouter.post(
+    "/{folio_id}/customer-ready",
+    description="Seller: let the customer look at this list. Does not open ordering.",
+)
+def mark_customer_ready(folio_id: str):
+    try:
+        response = folioService.mark_customer_ready(folio_id)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+    except Exception as e:
+        return JSONResponse(status_code=_err_status(e), content=get_unsuccessful_response(e))
+
+
+@mostradorRouter.post(
+    "/enable-for-buyer",
+    description=(
+        "Seller: enable one or more drafts for the buyer. Warnings and info need "
+        "acknowledged=true; critical questions block the draft."
+    ),
+)
+def enable_for_buyer(request: Request, data: dict = Body(...)):
+    try:
+        caller_uid = require_authenticated_uid(request)
+        response = folioService.enable_for_buyer(
+            data.get("folio_ids") or [],
+            bool(data.get("acknowledged")),
+            caller_uid,
         )
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
