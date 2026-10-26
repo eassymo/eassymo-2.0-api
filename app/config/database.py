@@ -62,7 +62,15 @@ try:
     connect_args = {}
     if MYSQL_SSL_CA:
         connect_args["ssl"] = {"ca": MYSQL_SSL_CA}
-    mysql_engine = create_engine(DATABASE_URL, echo=False, connect_args=connect_args)
+    # pool_pre_ping drops sockets MySQL already closed (error 2006 / broken pipe).
+    # pool_recycle stays under common RDS wait_timeout values.
+    mysql_engine = create_engine(
+        DATABASE_URL,
+        echo=False,
+        pool_pre_ping=True,
+        pool_recycle=280,
+        connect_args=connect_args,
+    )
     MySQLSessionLocal = sessionmaker(
         autocommit=False, autoflush=False, bind=mysql_engine)
     print("MySQL RDS connected successfully")

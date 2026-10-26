@@ -57,3 +57,64 @@ def test_search_partes_falls_back_to_regex_when_fulltext_is_empty(monkeypatch):
     ]
     assert result["count"] == 1
     assert "Balatas" in descriptions
+
+
+def test_fulltext_retries_after_mysql_gone_away():
+    from sqlalchemy.exc import OperationalError
+
+    from app.repositories.VehiculoPartesRepository import VehiculoPartesRepository
+
+    session = MagicMock()
+    boom = OperationalError(
+        "SELECT",
+        {},
+        Exception("MySQL server has gone away (BrokenPipeError(32, 'Broken pipe'))"),
+    )
+    ok = MagicMock()
+    ok.all.return_value = [(7, 182, 13664)]
+    session.execute.side_effect = [boom, ok, ok]
+
+    keys = VehiculoPartesRepository._part_keys_for_boolean_query(session, "sensor")
+
+    session.rollback.assert_called()
+    assert (7, 182, 13664) in keys
+    assert session.execute.call_count == 3
+
+
+def test_fulltext_failure_rolls_back_before_regex_fallback():
+    from app.repositories.VehiculoPartesRepository import VehiculoPartesRepository
+
+    session = MagicMock()
+    session.execute.side_effect = Exception("Can't find FULLTEXT index")
+
+    keys = VehiculoPartesRepository._part_keys_for_boolean_query(session, "sensor")
+
+    assert keys == set()
+    session.rollback.assert_called_once()
+    assert session.execute.call_count == 1
+
+
+def test_regex_count_retries_after_pending_rollback():
+    from sqlalchemy.exc import PendingRollbackError
+
+    from app.repositories.VehiculoPartesRepository import VehiculoPartesRepository
+
+    session = MagicMock()
+    query = MagicMock()
+    query.count.side_effect = [
+        PendingRollbackError(
+            "Can't reconnect until invalid transaction is rolled back"
+        ),
+        2,
+    ]
+    original = VehiculoPartesRepository._base_filter_query
+    VehiculoPartesRepository._base_filter_query = staticmethod(
+        lambda *_args, **_kwargs: query
+    )
+    try:
+        total = VehiculoPartesRepository.count_by_regex(session, "sensor")
+    finally:
+        VehiculoPartesRepository._base_filter_query = original
+
+    assert total == 2
+    session.rollback.assert_called_once()
