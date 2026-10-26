@@ -58,12 +58,21 @@ def get_posiciones_by_parte(mysql_db: Session, id_tipo_parte: int) -> Dict[str, 
 
 
 def get_unidades_medida_by_parte(
-    mysql_db: Session, id_tipo_parte: int
+    mysql_db: Session,
+    id_tipo_parte: int,
+    *,
+    fallback_to_all: bool = True,
 ) -> Dict[str, Any]:
+    """Units linked to this part type.
+
+    The HTTP endpoint keeps the historical fallback to every unit when a part
+    has none linked. Callers that must stay on the part's own list pass
+    fallback_to_all=False.
+    """
     lst = EstandarizadorRepository.find_unidades_medida_by_tipo_parte(
         mysql_db, id_tipo_parte
     )
-    if not lst:
+    if not lst and fallback_to_all:
         lst = EstandarizadorRepository.find_all_unidades_medida(mysql_db)
     lst_unidades: List[Dict[str, Any]] = [_unidad_to_item(u) for u in lst]
     return {"success": True, "lstUnidadesMedida": lst_unidades}
