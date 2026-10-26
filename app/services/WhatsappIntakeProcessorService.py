@@ -1370,6 +1370,18 @@ class WhatsappIntakeProcessorService:
                     "burst_id": burst_id,
                 },
             )
+        # Linking alone only adds a reaction; without a reply the flush
+        # fallback tells the seller the request failed. The open questions
+        # already sit on the original draft message, so only the link goes out.
+        version = str(folio.get("updated_at") or "")
+        link = self._draft_preview_link(share_token, folio_id, version=version or None)
+        self._send_bot_message(
+            from_number,
+            f"Ya tienes este borrador en Eassymo POS.\nRevisa vehículo y piezas aquí:\n{link}",
+            burst_id=burst_id,
+            kind="bot_draft",
+            folio_id=folio_id or None,
+        )
 
     def _stamp_evidence_paths(
         self,

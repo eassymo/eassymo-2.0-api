@@ -3,9 +3,14 @@ from app.schemas.MostradorFolio import MostradorFolio, FolioStatus, FolioSource
 from fastapi import HTTPException
 from bson import ObjectId
 from datetime import datetime
+from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 from uuid import uuid4
-from typing import Any, Dict, List, Optional
+from app.services.mostrador_customer_ready import (
+    customer_can_view,
+    customer_view_only,
+    edition_update,
+)
 
 
 def _now():
@@ -28,7 +33,10 @@ def _generate_folio_code() -> str:
 def _hydrate(doc: dict) -> dict:
     enriched = dict(doc)
     enriched["origin_group"] = _group_public_info(doc.get("origin_group_id"))
-    return MostradorFolio(**enriched).toJson()
+    data = MostradorFolio(**enriched).toJson()
+    data["customer_view_only"] = customer_view_only(doc)
+    data["preparing"] = not customer_can_view(doc)
+    return data
 
 
 def create(payload: dict, creator_uid: Optional[str], group_id: Optional[str]) -> dict:
@@ -211,7 +219,12 @@ def get(folio_id: str) -> dict:
     return _hydrate(doc)
 
 
-def get_by_share_token(share_token: str, *, require_ready: bool = False) -> dict:
+def get_by_share_token(
+    share_token: str,
+    *,
+    require_ready: bool = False,
+    for_customer: bool = False,
+) -> dict:
     doc = folioRepository.find_by_share_token(share_token)
     if not doc:
         raise HTTPException(status_code=404, detail="Folio not found")
@@ -227,6 +240,9 @@ def get_by_share_token(share_token: str, *, require_ready: bool = False) -> dict
     )
     if summaries:
         hydrated["sibling_drafts"] = summaries
+    if for_customer and hydrated.get("preparing"):
+        hydrated["pieces"] = []
+        hydrated["customer_editions"] = []
     return hydrated
 
 
@@ -289,6 +305,7 @@ def _open_question_prompts(doc: dict) -> List[str]:
 def _alert_payloads(doc: dict) -> List[dict]:
     from app.services.WhatsappClarificationService import (
         open_questions,
+        question_acknowledged,
         question_copy_text,
         question_severity,
     )
@@ -303,6 +320,7 @@ def _alert_payloads(doc: dict) -> List[dict]:
                 "id": question.get("id"),
                 "severity": question_severity(question),
                 "copy_text": text,
+                "acknowledged": question_acknowledged(question),
             }
         )
     return payloads
@@ -333,6 +351,7 @@ def sibling_draft_summaries(
             "alerts": _alert_payloads(doc),
             "customer_name": (customer.get("name") or "").strip() or None,
             "assigned": _is_assigned_to_buyer(doc),
+            "customer_ready": customer_can_view(doc),
         })
     return summaries
 
@@ -406,6 +425,23 @@ def list_sibling_folios(sibling_uid: str) -> List[dict]:
     return [_hydrate(doc) for doc in folioRepository.find_by_sibling_uid(uid)]
 
 
+def folio_id_for_customer_change(share_token: str) -> str:
+    """Public mutations stay closed while the list is hidden or view-only."""
+    doc = folioRepository.find_by_share_token(share_token)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Folio not found")
+    if not _folio_share_ready(doc):
+        raise HTTPException(status_code=404, detail="Folio not found")
+    if not customer_can_view(doc):
+        raise HTTPException(
+            status_code=409,
+            detail="El mostrador todavía está preparando esta lista",
+        )
+    if customer_view_only(doc):
+        raise HTTPException(status_code=409, detail="Esta lista es solo de consulta")
+    return str(doc["_id"])
+
+
 def folio_id_by_share_token(share_token: str) -> str:
     doc = folioRepository.find_by_share_token(share_token)
     if not doc:
@@ -438,7 +474,10 @@ def update_pieces(folio_id: str, pieces: List[dict]) -> dict:
     merged = {**doc, "pieces": pieces, "updated_at": _now()}
     validated = MostradorFolio(**merged)
     normalized = [p.model_dump() for p in validated.pieces]
+    edition = edition_update(doc, normalized, doc.get("vehicle"), now=_now())
     updated = folioRepository.set_pieces(folio_id, normalized, _now())
+    if edition:
+        folioRepository.edit(folio_id, edition)
     sync_assigned_folio(folio_id)
     refreshed = folioRepository.find_by_id(folio_id)
     return _hydrate(refreshed)
@@ -471,12 +510,134 @@ def update(folio_id: str, patch: Dict[str, Any]) -> dict:
     for key, value in patch.items():
         if key in allowed:
             merged[key] = value
+    edition = edition_update(
+        doc,
+        merged.get("pieces") or [],
+        merged.get("vehicle"),
+        now=_now(),
+    )
+    if edition:
+        merged.update(edition)
     merged["updated_at"] = _now()
     validated = MostradorFolio(**merged)
     data = validated.toJson()
     data.pop("_id", None)
     updated = folioRepository.edit(folio_id, data)
     return _hydrate(updated)
+
+
+def mark_customer_ready(folio_id: str) -> dict:
+    """One-way: the customer may look at the list. Ordering stays on Compartir."""
+    doc = folioRepository.find_by_id(folio_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Folio not found")
+    if doc.get("customer_ready") is True:
+        return _hydrate(doc)
+    now = _now()
+    folioRepository.edit(
+        folio_id,
+        {
+            "customer_ready": True,
+            "customer_ready_at": now,
+            "customer_visible_baseline": {
+                "pieces": doc.get("pieces") or [],
+                "vehicle": doc.get("vehicle"),
+            },
+            "customer_editions": doc.get("customer_editions") or [],
+            "updated_at": now,
+        },
+    )
+    return get(folio_id)
+
+
+def enable_for_buyer(
+    folio_ids: List[str],
+    acknowledged: bool,
+    caller_uid: str,
+) -> dict:
+    """Seller: let the buyer look at one or more drafts in one step.
+
+    Critical questions block a draft and can never be acknowledged. Warnings and
+    info must be acknowledged once; the acknowledgment is stored on each
+    question so a warning stops hiding the draft from the buyer. Nothing is
+    written unless every requested draft is allowed to proceed.
+    """
+    from app.dependencies.group_auth import assert_group_membership
+    from app.services.WhatsappClarificationService import (
+        open_questions,
+        question_acknowledged,
+        question_copy_text,
+        question_severity,
+    )
+
+    ids = []
+    for raw in folio_ids or []:
+        value = str(raw or "").strip()
+        if value and value not in ids:
+            ids.append(value)
+    if not ids:
+        raise HTTPException(status_code=400, detail="Elige al menos un borrador")
+
+    plans = []
+    needs_ack = False
+    for folio_id in ids:
+        doc = folioRepository.find_by_id(folio_id)
+        if not doc:
+            raise HTTPException(status_code=404, detail="Folio not found")
+        assert_group_membership(caller_uid, str(doc.get("origin_group_id") or ""))
+
+        if doc.get("customer_ready") is True or customer_can_view(doc):
+            plans.append({"folio_id": folio_id, "doc": doc, "status": "already_enabled"})
+            continue
+
+        pending = open_questions(doc)
+        blockers = [
+            question_copy_text(q)
+            for q in pending
+            if question_severity(q) == "critical"
+        ]
+        if blockers:
+            plans.append(
+                {"folio_id": folio_id, "doc": doc, "status": "blocked", "blocked_by": blockers}
+            )
+            continue
+        to_ack = [q for q in pending if not question_acknowledged(q)]
+        needs_ack = needs_ack or bool(to_ack)
+        plans.append({"folio_id": folio_id, "doc": doc, "status": "enabled"})
+
+    if needs_ack and not acknowledged:
+        raise HTTPException(
+            status_code=400,
+            detail="Confirma que entiendes las advertencias antes de habilitar",
+        )
+
+    now = _now()
+    results = []
+    for plan in plans:
+        entry = {"folio_id": plan["folio_id"], "status": plan["status"]}
+        if plan["status"] == "blocked":
+            entry["blocked_by"] = plan["blocked_by"]
+        elif plan["status"] == "enabled":
+            doc = plan["doc"]
+            questions = []
+            changed = False
+            for question in doc.get("whatsapp_pending_questions") or []:
+                if (
+                    question.get("status") == "open"
+                    and question_severity(question) != "critical"
+                    and not question.get("acknowledged_at")
+                ):
+                    question = {**question, "acknowledged_at": now}
+                    changed = True
+                questions.append(question)
+            if changed:
+                folioRepository.edit(
+                    plan["folio_id"],
+                    {"whatsapp_pending_questions": questions, "updated_at": now},
+                )
+            mark_customer_ready(plan["folio_id"])
+        results.append(entry)
+    return {"results": results}
 
 
 def _filter_pieces_for_visibility(folio_doc: dict, key: str) -> dict:

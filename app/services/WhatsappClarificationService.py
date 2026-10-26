@@ -94,9 +94,17 @@ def question_copy_text(question: dict) -> str:
     return str((question or {}).get("copy_text") or (question or {}).get("prompt") or "").strip()
 
 
+def question_acknowledged(question: dict) -> bool:
+    """True once the seller accepted a warning/info. Critical never counts."""
+    if question_severity(question) == "critical":
+        return False
+    return bool((question or {}).get("acknowledged_at"))
+
+
 def folio_share_ready(folio: dict) -> bool:
     return not any(
         question_severity(question) in _BLOCKING_SEVERITIES
+        and not question_acknowledged(question)
         for question in open_questions(folio)
     )
 
