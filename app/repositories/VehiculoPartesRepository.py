@@ -1,11 +1,45 @@
-from typing import List, Set, Tuple
+from typing import Callable, List, Set, Tuple, TypeVar
 import logging
+from sqlalchemy.exc import DBAPIError, OperationalError, PendingRollbackError
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_, func, select, exists, text, tuple_
 
 from models import Tiposparte, Tipospartetag, Categorias, Subcategorias
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
+
+
+def _is_dead_mysql_session(exc: BaseException) -> bool:
+    """True when the pooled connection died and the Session must be rolled back."""
+    if isinstance(exc, PendingRollbackError):
+        return True
+    if isinstance(exc, OperationalError):
+        return True
+    if isinstance(exc, DBAPIError) and getattr(exc, "connection_invalidated", False):
+        return True
+    message = str(exc).lower()
+    return "gone away" in message or "broken pipe" in message
+
+
+def _rollback_quietly(mysql_db: Session) -> None:
+    try:
+        mysql_db.rollback()
+    except Exception:
+        logger.debug("rollback after part search failure failed", exc_info=True)
+
+
+def _call_with_reconnect(mysql_db: Session, fn: Callable[[], _T]) -> _T:
+    """Run fn once more after rollback when MySQL dropped the connection."""
+    try:
+        return fn()
+    except Exception as exc:
+        if not _is_dead_mysql_session(exc):
+            raise
+        logger.warning("MySQL connection dropped during part search (%s); retrying", exc)
+        _rollback_quietly(mysql_db)
+        return fn()
 
 
 def _escape_boolean_word(w: str) -> str:
@@ -67,15 +101,21 @@ class VehiculoPartesRepository:
                 )
             )
         )
-        try:
+        def _read_keys() -> Set[Tuple[int, int, int]]:
             keys_desc = set(mysql_db.execute(stmt_desc, params).all())
             keys_tag = set(mysql_db.execute(stmt_tag, params).all())
             return keys_desc | keys_tag
+
+        try:
+            return _call_with_reconnect(mysql_db, _read_keys)
         except Exception as exc:
             logger.warning(
                 "FULLTEXT part search unavailable (%s); using regex fallback",
                 exc,
             )
+            # A failed statement invalidates the transaction. Roll it back or the
+            # regex fallback raises PendingRollbackError and aborts the request.
+            _rollback_quietly(mysql_db)
             return set()
 
     @staticmethod
@@ -141,8 +181,11 @@ class VehiculoPartesRepository:
 
     @staticmethod
     def count_by_regex(mysql_db: Session, regex: str) -> int:
-        q = VehiculoPartesRepository._base_filter_query(mysql_db, regex)
-        return q.count()
+        def _count() -> int:
+            q = VehiculoPartesRepository._base_filter_query(mysql_db, regex)
+            return q.count()
+
+        return _call_with_reconnect(mysql_db, _count)
 
     @staticmethod
     def find_partes_paginated(
@@ -151,14 +194,17 @@ class VehiculoPartesRepository:
         offset: int,
         limit: int,
     ) -> List[Tiposparte]:
-        q = (
-            VehiculoPartesRepository._base_filter_query(mysql_db, regex)
-            .options(
-                joinedload(Tiposparte.tipospartetag),
-                joinedload(Tiposparte.subcategorias).joinedload(Subcategorias.categorias),
+        def _load() -> List[Tiposparte]:
+            q = (
+                VehiculoPartesRepository._base_filter_query(mysql_db, regex)
+                .options(
+                    joinedload(Tiposparte.tipospartetag),
+                    joinedload(Tiposparte.subcategorias).joinedload(Subcategorias.categorias),
+                )
+                .order_by(Tiposparte.TipoParteDescripcion)
+                .offset(offset)
+                .limit(limit)
             )
-            .order_by(Tiposparte.TipoParteDescripcion)
-            .offset(offset)
-            .limit(limit)
-        )
-        return q.all()
+            return q.all()
+
+        return _call_with_reconnect(mysql_db, _load)
