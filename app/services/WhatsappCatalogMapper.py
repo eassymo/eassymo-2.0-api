@@ -330,48 +330,70 @@ def _map_position(
     return POSITION_NO_APLICA, False, True, True
 
 
+_GENERIC_UNIT_HINTS = {"pieza", "piezas", "pza", "pzas"}
+
+
+def _part_unit_labels(mysql_db: Session, tipo_parte_id: int) -> List[str]:
+    """Standardized units for this part, from findUnidadesMedidaByParte."""
+    units_payload = get_unidades_medida_by_parte(
+        mysql_db, tipo_parte_id, fallback_to_all=False
+    )
+    return [
+        (item.get("etiquetaDefecto") or "").strip()
+        for item in (units_payload.get("lstUnidadesMedida") or [])
+        if (item.get("etiquetaDefecto") or "").strip()
+    ]
+
+
+def _match_unit_label(mapped: str, labels: Sequence[str]) -> Optional[str]:
+    mapped_norm = _normalize_text(mapped)
+    if not mapped_norm:
+        return None
+    for label in labels:
+        if _normalize_text(label) == mapped_norm:
+            return label
+    for label in labels:
+        if mapped_norm in _normalize_text(label):
+            return label
+    return None
+
+
 def _map_unit(
     mysql_db: Session,
     *,
     tipo_parte_id: Optional[int],
     unit_hint: Optional[str],
 ) -> tuple[str, bool]:
-    """Return the unit and whether it is a catalog unit.
+    """Return the unit and whether it is one of the part's standardized units.
 
-    An empty hint stays Pieza. A hint that is not in the catalog is kept as
-    the customer wrote it instead of being replaced by the first catalog unit.
+    The request form defaults a part to the first unit returned by
+    findUnidadesMedidaByParte. The bot does the same when the message does not
+    name a unit, or when it only says the generic "pieza". A unit the customer
+    wrote that is not in that list is kept as written.
     """
     default = "Pieza"
     hint = (unit_hint or "").strip()
-    if not hint:
-        return default, True
-
     hint_norm = _normalize_text(hint)
     alias = UNIT_ALIASES.get(hint_norm)
     mapped = alias or hint
-    if hint_norm in {"pieza", "piezas"} or alias == default:
-        mapped = default
+    generic = not hint or hint_norm in _GENERIC_UNIT_HINTS
 
-    if mysql_db is None or not tipo_parte_id:
-        return mapped, bool(alias or hint_norm in {"pieza", "piezas"})
+    if mysql_db is not None and tipo_parte_id:
+        labels = _part_unit_labels(mysql_db, tipo_parte_id)
+        if labels:
+            if not generic:
+                matched = _match_unit_label(mapped, labels)
+                if matched:
+                    return matched, True
+                return hint, False
+            matched_generic = _match_unit_label(mapped or default, labels) if hint else None
+            if matched_generic:
+                return matched_generic, True
+            return labels[0], True
 
-    units_payload = get_unidades_medida_by_parte(mysql_db, tipo_parte_id)
-    labels = [
-        (item.get("etiquetaDefecto") or "").strip()
-        for item in (units_payload.get("lstUnidadesMedida") or [])
-        if (item.get("etiquetaDefecto") or "").strip()
-    ]
-    if not labels:
-        return mapped, bool(alias or hint_norm in {"pieza", "piezas"})
-
-    mapped_norm = _normalize_text(mapped)
-    for label in labels:
-        if _normalize_text(label) == mapped_norm:
-            return label, True
-    for label in labels:
-        if mapped_norm and mapped_norm in _normalize_text(label):
-            return label, True
-    return hint, False
+    if generic or alias == default:
+        return default, True
+    return mapped, bool(alias)
 
 
 def _hit_make_model(hit: Any) -> tuple[str, str]:

@@ -160,6 +160,107 @@ def test_map_line_keeps_unlisted_position_and_unit(mock_pick, mock_posiciones, m
     assert mapped.position_required is True
     assert mapped.unit_of_measure == "juego"
     assert mapped.unit_standardized is False
+    mock_units.assert_called_once()
+    assert mock_units.call_args.args[1] == 10
+    assert mock_units.call_args.kwargs["fallback_to_all"] is False
+
+
+@patch("app.services.WhatsappCatalogMapper.get_unidades_medida_by_parte")
+@patch("app.services.WhatsappCatalogMapper.VehiculoSensibilidadesRepository.find_posiciones_by_tipo_parte")
+@patch("app.services.WhatsappCatalogMapper._pick_catalog_match")
+def test_map_line_defaults_to_part_standardized_unit(mock_pick, mock_posiciones, mock_units):
+    mock_pick.return_value = {
+        "tipoParteId": 5108,
+        "tipoParteDescripcion": "Sensor De Detonación",
+        "categoriaId": 1,
+        "subCategoriaId": 2,
+        "tipoParteSensiblePosicion": False,
+    }
+    mock_posiciones.return_value = []
+    mock_units.return_value = {
+        "lstUnidadesMedida": [
+            {"etiquetaDefecto": "Juego", "unidadMedidaId": 4},
+            {"etiquetaDefecto": "Pieza", "unidadMedidaId": 1},
+        ],
+    }
+
+    mapped = WhatsappCatalogMapper().map_line(
+        MagicMock(),
+        ExtractionLine(
+            local_id="l1",
+            part_name="sensor de detonacion",
+            quantity=1,
+            unit="pieza",
+        ),
+    )
+
+    assert mapped.unit_of_measure == "Pieza"
+    assert mapped.unit_standardized is True
+
+
+@patch("app.services.WhatsappCatalogMapper.get_unidades_medida_by_parte")
+@patch("app.services.WhatsappCatalogMapper.VehiculoSensibilidadesRepository.find_posiciones_by_tipo_parte")
+@patch("app.services.WhatsappCatalogMapper._pick_catalog_match")
+def test_map_line_uses_only_standardized_unit_when_pieza_does_not_apply(
+    mock_pick, mock_posiciones, mock_units
+):
+    mock_pick.return_value = {
+        "tipoParteId": 5108,
+        "tipoParteDescripcion": "Sensor De Detonación",
+        "categoriaId": 1,
+        "subCategoriaId": 2,
+        "tipoParteSensiblePosicion": False,
+    }
+    mock_posiciones.return_value = []
+    mock_units.return_value = {
+        "lstUnidadesMedida": [{"etiquetaDefecto": "Juego", "unidadMedidaId": 4}],
+    }
+
+    mapped = WhatsappCatalogMapper().map_line(
+        MagicMock(),
+        ExtractionLine(
+            local_id="l1",
+            part_name="sensor de detonacion",
+            quantity=1,
+            unit="pieza",
+        ),
+    )
+
+    assert mapped.unit_of_measure == "Juego"
+    assert mapped.unit_standardized is True
+
+
+@patch("app.services.WhatsappCatalogMapper.get_unidades_medida_by_parte")
+@patch("app.services.WhatsappCatalogMapper.VehiculoSensibilidadesRepository.find_posiciones_by_tipo_parte")
+@patch("app.services.WhatsappCatalogMapper._pick_catalog_match")
+def test_map_line_keeps_named_unit_from_the_part_list(mock_pick, mock_posiciones, mock_units):
+    mock_pick.return_value = {
+        "tipoParteId": 5108,
+        "tipoParteDescripcion": "Aceite",
+        "categoriaId": 1,
+        "subCategoriaId": 2,
+        "tipoParteSensiblePosicion": False,
+    }
+    mock_posiciones.return_value = []
+    mock_units.return_value = {
+        "lstUnidadesMedida": [
+            {"etiquetaDefecto": "Pieza"},
+            {"etiquetaDefecto": "Litro"},
+        ],
+    }
+
+    mapped = WhatsappCatalogMapper().map_line(
+        MagicMock(),
+        ExtractionLine(
+            local_id="l1",
+            part_name="aceite",
+            quantity=2,
+            unit="litros",
+        ),
+    )
+
+    assert mapped.unit_of_measure == "Litro"
+    assert mapped.unit_standardized is True
 
 
 @patch("app.config.database.db")
