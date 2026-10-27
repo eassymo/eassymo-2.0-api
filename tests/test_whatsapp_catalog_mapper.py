@@ -441,3 +441,61 @@ def test_map_vehicle_skips_ambiguous_hits(mock_find):
     assert mapped is not None
     assert mapped.make is None
     assert mapped.model is None
+
+
+@patch("app.services.WhatsappCatalogMapper.AcesVehiclesService.find_aces_vehicles")
+def test_map_vehicle_result_statuses(mock_find):
+    from app.services.WhatsappCatalogMapper import (
+        VEHICLE_AMBIGUOUS,
+        VEHICLE_MATCHED,
+        VEHICLE_UNCHECKED,
+        VEHICLE_UNRECOGNIZED,
+    )
+
+    mapper = WhatsappCatalogMapper()
+    named = WhatsappExtractionProposal(
+        intent=ExtractionIntent.NEW_REQUEST,
+        vehicle=ExtractionVehicle(model="Estatus", year="2005"),
+    )
+
+    mock_find.return_value = []
+    vehicle, status = mapper.map_vehicle_result(MagicMock(), named, ["Estatus 2005 rojo"])
+    assert status == VEHICLE_UNRECOGNIZED
+    assert vehicle.model == "Estatus"
+
+    mock_find.return_value = [MagicMock(VehiculoFabricante="Dodge", VehiculoModelo="Stratus")]
+    vehicle, status = mapper.map_vehicle_result(MagicMock(), named, ["Stratus 2005"])
+    assert status == VEHICLE_MATCHED
+    assert vehicle.model == "Stratus"
+
+    mock_find.return_value = [
+        MagicMock(VehiculoFabricante="Renault", VehiculoModelo="Koleos"),
+        MagicMock(VehiculoFabricante="Nissan", VehiculoModelo="Koleos"),
+    ]
+    _, status = mapper.map_vehicle_result(MagicMock(), named, ["koleos"])
+    assert status == VEHICLE_AMBIGUOUS
+
+    mock_find.return_value = []
+    no_year = WhatsappExtractionProposal(
+        intent=ExtractionIntent.NEW_REQUEST,
+        vehicle=ExtractionVehicle(model="Estatus"),
+    )
+    _, status = mapper.map_vehicle_result(MagicMock(), no_year, ["Estatus rojo"])
+    assert status == VEHICLE_UNCHECKED
+    _, status = mapper.map_vehicle_result(None, named, ["Estatus 2005"])
+    assert status == VEHICLE_UNCHECKED
+
+
+@patch("app.services.WhatsappCatalogMapper.AcesVehiclesService.find_aces_vehicles")
+def test_map_vehicle_result_search_errors_are_unchecked(mock_find):
+    from app.services.WhatsappCatalogMapper import VEHICLE_UNCHECKED
+
+    mock_find.side_effect = RuntimeError("db down")
+    proposal = WhatsappExtractionProposal(
+        intent=ExtractionIntent.NEW_REQUEST,
+        vehicle=ExtractionVehicle(model="Estatus", year="2005"),
+    )
+    _, status = WhatsappCatalogMapper().map_vehicle_result(
+        MagicMock(), proposal, ["Estatus 2005"]
+    )
+    assert status == VEHICLE_UNCHECKED

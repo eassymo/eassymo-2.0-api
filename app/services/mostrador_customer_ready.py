@@ -22,8 +22,14 @@ def customer_can_view(doc: dict) -> bool:
 
 
 def customer_view_only(doc: dict) -> bool:
-    """Ready to look at, but not yet in the order flow (Compartir / assignment)."""
+    """Ready to look at, but not yet in the order flow (Compartir / assignment).
+
+    A WhatsApp draft is never view-only: once the seller shows it, the customer
+    claims it and orders like with a shared POS list.
+    """
     if doc.get("customer_ready") is not True:
+        return False
+    if str(doc.get("source") or "") == "whatsapp":
         return False
     if str(doc.get("status") or "") in {"shared", "confirmed", "closed"}:
         return False

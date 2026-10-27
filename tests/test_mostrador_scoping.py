@@ -933,3 +933,134 @@ def test_order_piece_requires_domicilio_address(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         svc.order_piece("fid", "p1", 0, "domicilio")
     assert exc.value.status_code == 400
+
+
+def _invite_with_ordered_piece(monkeypatch, visible_piece_ids):
+    doc = {
+        "_id": "fid",
+        "customer": {"name": "Cliente"},
+        "pieces": [
+            {"piece_id": "p-ordered", "name": "Bulbo", "order": {"status": "ordenada"}},
+            {"piece_id": "p-open-1", "name": "Filtro"},
+            {"piece_id": "p-open-2", "name": "Balata"},
+        ],
+    }
+    pushed = {}
+
+    def fake_push(fid, shop, visible, ts):
+        pushed["visible"] = visible
+        return {**doc, "participant_shops": [shop], "visibility": {}}
+
+    monkeypatch.setattr(svc.folioRepository, "find_by_id", lambda fid: doc)
+    monkeypatch.setattr(svc.folioRepository, "push_participant_shop", fake_push)
+    monkeypatch.setattr(svc.folioRepository, "edit", lambda fid, data: {**doc, **data})
+    monkeypatch.setattr(svc, "_hydrate", lambda d: d)
+    monkeypatch.setattr(svc, "_now", lambda: "2026-07-10T12:00:00Z")
+    monkeypatch.setattr(svc, "_build_share_urls", lambda *a, **k: {"share_path": "/pos/tube/x"})
+
+    result = svc.invite_shop(
+        "fid",
+        group_id=None,
+        name="Otra tienda",
+        eassymo=False,
+        visible_piece_ids=visible_piece_ids,
+    )
+    return result, pushed
+
+
+def test_invite_shop_still_works_when_another_piece_is_ordered(monkeypatch):
+    _, pushed = _invite_with_ordered_piece(monkeypatch, ["p-ordered", "p-open-1"])
+    assert pushed["visible"] == ["p-open-1"]
+
+
+def test_invite_shop_without_selection_gets_only_the_open_pieces(monkeypatch):
+    _, pushed = _invite_with_ordered_piece(monkeypatch, None)
+    assert pushed["visible"] == ["p-open-1", "p-open-2"]
+
+
+def test_invite_shop_refuses_when_every_chosen_piece_is_ordered(monkeypatch):
+    with pytest.raises(HTTPException) as exc:
+        _invite_with_ordered_piece(monkeypatch, ["p-ordered"])
+    assert exc.value.status_code == 400
+
+
+def test_confirm_writes_only_the_materialized_piece_not_the_whole_array(monkeypatch):
+    """confirm() runs on every public GET; it must not overwrite a guest's mark.
+
+    The folio it read had no mark on piece B yet. The guest then marks B, so a
+    whole-array write from the stale read would erase it.
+    """
+    from unittest.mock import MagicMock
+    from app.repositories import OrderRepository as order_repo
+
+    stale = {
+        "_id": "fid",
+        "origin_group_id": "shop-a",
+        "pieces": [
+            {
+                "piece_id": "A",
+                "name": "Bulbo",
+                "options": [{"brand": "GMC", "price": 100, "source_shop_id": "shop-a"}],
+                "order": {"option_index": 0, "status": "ordenada", "order_doc_id": None},
+            },
+            {
+                "piece_id": "B",
+                "name": "Filtro",
+                "options": [{"brand": "X", "price": 5, "captured_by_buyer": True}],
+            },
+        ],
+    }
+    set_orders = {}
+    edits = []
+
+    monkeypatch.setattr(svc.folioRepository, "find_by_id", lambda fid: stale)
+    monkeypatch.setattr(
+        svc.folioRepository,
+        "set_piece_order",
+        lambda fid, pid, order, ts: set_orders.setdefault(pid, order) or {**stale},
+    )
+    monkeypatch.setattr(
+        svc.folioRepository, "edit", lambda fid, data: edits.append(data) or {**stale, **data}
+    )
+    monkeypatch.setattr(order_repo, "insert", lambda data: MagicMock(inserted_id="order-1"))
+    built = MagicMock()
+    built.toJson.return_value = {"_id": "x"}
+    monkeypatch.setattr(svc, "_build_order_for_piece", lambda *a, **k: built)
+    monkeypatch.setattr(svc, "_group_name", lambda gid: "Tienda")
+    monkeypatch.setattr(svc, "_hydrate", lambda d: d)
+    monkeypatch.setattr(svc, "_now", lambda: "2026-07-10T12:00:00Z")
+    monkeypatch.setattr(svc, "_dispatch_notifications", lambda payload: payload)
+
+    result = svc.confirm("fid", allow_when_assigned=True)
+
+    assert result["order_ids"] == ["order-1"]
+    assert set(set_orders) == {"A"}
+    assert set_orders["A"]["order_doc_id"] == "order-1"
+    assert all("pieces" not in data for data in edits)
+
+
+def test_confirm_with_nothing_to_materialize_writes_nothing(monkeypatch):
+    doc = {
+        "_id": "fid",
+        "origin_group_id": "shop-a",
+        "pieces": [
+            {
+                "piece_id": "A",
+                "name": "Bulbo",
+                "options": [{"brand": "GMC", "price": 100}],
+                "order": {"option_index": 0, "status": "ordenada", "order_doc_id": None},
+            }
+        ],
+    }
+    writes = []
+    monkeypatch.setattr(svc.folioRepository, "find_by_id", lambda fid: doc)
+    monkeypatch.setattr(svc.folioRepository, "edit", lambda *a, **k: writes.append("edit"))
+    monkeypatch.setattr(svc.folioRepository, "set_piece_order", lambda *a, **k: writes.append("order"))
+    monkeypatch.setattr(svc, "_build_order_for_piece", lambda *a, **k: None)
+    monkeypatch.setattr(svc, "_group_name", lambda gid: "Tienda")
+    monkeypatch.setattr(svc, "_hydrate", lambda d: d)
+    monkeypatch.setattr(svc, "_now", lambda: "2026-07-10T12:00:00Z")
+    monkeypatch.setattr(svc, "_dispatch_notifications", lambda payload: payload)
+
+    svc.confirm("fid", allow_when_assigned=True)
+    assert writes == []

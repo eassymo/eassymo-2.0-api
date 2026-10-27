@@ -19,10 +19,17 @@ from app.repositories.WhatsappIntakeSessionRepository import (
     STATUS_COLLECTING,
     STATUS_FLUSHING,
 )
-from app.schemas.WhatsappExtraction import WhatsappExtractionProposal
+from app.schemas.WhatsappExtraction import (
+    ExtractionUncertainty,
+    WhatsappExtractionProposal,
+)
 from app.services import MostradorFolioService as folio_service
 from app.services.LlmExtractionService import LlmExtractionService, LlmRateLimitError
-from app.services.WhatsappCatalogMapper import WhatsappCatalogMapper
+from app.services.WhatsappCatalogMapper import (
+    VEHICLE_UNRECOGNIZED,
+    WhatsappCatalogMapper,
+    year_from_bodies,
+)
 from app.services.WhatsappIntakeCommands import (
     CANCEL_COMMANDS,
     FLUSH_COMMANDS,
@@ -344,9 +351,34 @@ class WhatsappIntakeProcessorService:
     def _map_catalog_vehicle(self, mysql_db, proposal, bodies):
         catalog_started = time.perf_counter()
         try:
-            return self.catalog_mapper.map_vehicle(mysql_db, proposal, bodies)
+            return self.catalog_mapper.map_vehicle_result(mysql_db, proposal, bodies)
         finally:
             _record_stage("catalog_ms", catalog_started)
+
+    def _apply_resolved_vehicle(
+        self,
+        proposal: WhatsappExtractionProposal,
+        resolved_vehicle,
+        status: str,
+    ) -> None:
+        """Adopt the catalog's vehicle; flag a named car the catalog lacks."""
+        if resolved_vehicle:
+            proposal.vehicle = resolved_vehicle
+            proposal.uncertainties = [
+                item
+                for item in (proposal.uncertainties or [])
+                if item.path not in {"vehicle.make", "vehicle.model"}
+                or not resolved_vehicle.make
+                or not resolved_vehicle.model
+            ]
+        if status == VEHICLE_UNRECOGNIZED:
+            proposal.uncertainties = [
+                *(proposal.uncertainties or []),
+                ExtractionUncertainty(
+                    path=clarify.VEHICLE_TYPE_PATH,
+                    reason="Vehículo no reconocido en el catálogo",
+                ),
+            ]
 
     def _lines_to_pieces(
         self,
@@ -566,6 +598,7 @@ class WhatsappIntakeProcessorService:
             "version",
             "licensePlate",
             "serviceOrder",
+            "vehicle_type",
         ):
             if not merged.get(field) and new.get(field):
                 merged[field] = new[field]
@@ -896,6 +929,7 @@ class WhatsappIntakeProcessorService:
         creator_uid: Optional[str],
         burst_id: Optional[str],
         original_replied_message_sid: Optional[str] = None,
+        proposal: Optional[WhatsappExtractionProposal] = None,
     ) -> bool:
         folio, question = self._resolve_complement_folio(
             from_number=from_number,
@@ -903,6 +937,7 @@ class WhatsappIntakeProcessorService:
             group_id=group_id,
             creator_uid=creator_uid,
             original_replied_message_sid=original_replied_message_sid,
+            proposal=proposal,
         )
         if not folio:
             return False
@@ -1474,6 +1509,41 @@ class WhatsappIntakeProcessorService:
         )
         return folio
 
+    def _bodies_name_other_year(self, folio: dict, bodies: List[str]) -> bool:
+        year = year_from_bodies(bodies)
+        folio_year = self._identity((folio.get("vehicle") or {}).get("year"))
+        return bool(year and folio_year and year != folio_year)
+
+    def _is_new_vehicle_request(
+        self, proposal: Optional[WhatsappExtractionProposal], folio: dict
+    ) -> bool:
+        """Parts for a car other than the draft are a new request, not an answer."""
+        return bool(
+            proposal
+            and proposal.lines
+            and self._proposal_names_different_vehicle(
+                folio.get("vehicle"), proposal
+            )
+        )
+
+    def _answerable_drafts(
+        self, drafts: List[dict], proposal: Optional[WhatsappExtractionProposal]
+    ) -> List[dict]:
+        """Drafts a loose message could answer.
+
+        Info alerts (catalog miss) have no answer to give, so a draft that only
+        has those is not waiting on the seller.
+        """
+        return [
+            draft
+            for draft in drafts
+            if any(
+                clarify.question_severity(question) in clarify._BLOCKING_SEVERITIES
+                for question in clarify.open_questions(draft)
+            )
+            and not self._is_new_vehicle_request(proposal, draft)
+        ]
+
     def _resolve_complement_folio(
         self,
         *,
@@ -1482,6 +1552,7 @@ class WhatsappIntakeProcessorService:
         group_id: str,
         creator_uid: Optional[str],
         original_replied_message_sid: Optional[str] = None,
+        proposal: Optional[WhatsappExtractionProposal] = None,
     ) -> Tuple[Optional[dict], Optional[dict]]:
         if original_replied_message_sid:
             folio = clarify.find_folio_by_clarify_sid(original_replied_message_sid)
@@ -1498,9 +1569,12 @@ class WhatsappIntakeProcessorService:
                 open_q = clarify.open_questions(folio)
                 return folio, open_q[0] if len(open_q) == 1 else None
 
-        drafts = clarify.find_drafts_with_open_questions(
-            origin_group_id=group_id,
-            creator_uid=creator_uid,
+        drafts = self._answerable_drafts(
+            clarify.find_drafts_with_open_questions(
+                origin_group_id=group_id,
+                creator_uid=creator_uid,
+            ),
+            proposal,
         )
         if len(drafts) == 1:
             open_q = clarify.open_questions(drafts[0])
@@ -1509,7 +1583,11 @@ class WhatsappIntakeProcessorService:
             last_token = self._latest_share_token(from_number)
             if last_token:
                 folio = self._load_folio_by_share_token(last_token)
-                if folio and clarify.open_questions(folio):
+                if (
+                    folio
+                    and clarify.open_questions(folio)
+                    and not self._is_new_vehicle_request(proposal, folio)
+                ):
                     open_q = clarify.open_questions(folio)
                     return folio, open_q[0] if len(open_q) == 1 else None
         return None, None
@@ -1749,18 +1827,10 @@ class WhatsappIntakeProcessorService:
             new_pieces = self._lines_to_pieces(
                 mysql_db, proposal, known_vehicle=folio.get("vehicle")
             )
-            resolved_vehicle = self._map_catalog_vehicle(
+            resolved_vehicle, vehicle_status = self._map_catalog_vehicle(
                 mysql_db, proposal, bodies
             )
-            if resolved_vehicle:
-                proposal.vehicle = resolved_vehicle
-                proposal.uncertainties = [
-                    item
-                    for item in (proposal.uncertainties or [])
-                    if item.path not in {"vehicle.make", "vehicle.model"}
-                    or not resolved_vehicle.make
-                    or not resolved_vehicle.model
-                ]
+            self._apply_resolved_vehicle(proposal, resolved_vehicle, vehicle_status)
             new_vehicle = self._vehicle_from_proposal(proposal)
             merged_vehicle = self._merge_vehicle(folio.get("vehicle"), new_vehicle)
             merged_pieces = self._merge_pieces(folio.get("pieces") or [], new_pieces)
@@ -2040,18 +2110,10 @@ class WhatsappIntakeProcessorService:
             mysql_db = MySQLSessionLocal()
         try:
             pieces = self._lines_to_pieces(mysql_db, proposal)
-            resolved_vehicle = self._map_catalog_vehicle(
+            resolved_vehicle, vehicle_status = self._map_catalog_vehicle(
                 mysql_db, proposal, bodies or []
             )
-            if resolved_vehicle:
-                proposal.vehicle = resolved_vehicle
-                proposal.uncertainties = [
-                    item
-                    for item in (proposal.uncertainties or [])
-                    if item.path not in {"vehicle.make", "vehicle.model"}
-                    or not resolved_vehicle.make
-                    or not resolved_vehicle.model
-                ]
+            self._apply_resolved_vehicle(proposal, resolved_vehicle, vehicle_status)
             vehicle = self._vehicle_from_proposal(proposal)
             sibling_anchor = None
             sibling_uid = None
@@ -2259,6 +2321,7 @@ class WhatsappIntakeProcessorService:
                 creator_uid=creator_uid,
                 burst_id=burst_id,
                 original_replied_message_sid=original_replied_message_sid,
+                proposal=proposal,
             ):
                 return
             clarification = next(
@@ -2326,6 +2389,7 @@ class WhatsappIntakeProcessorService:
             creator_uid=creator_uid,
             burst_id=burst_id,
             original_replied_message_sid=original_replied_message_sid,
+            proposal=proposal,
         ):
             return
 
@@ -2334,6 +2398,24 @@ class WhatsappIntakeProcessorService:
             resume_folio = (
                 self._load_folio_by_share_token(last_token) if last_token else None
             )
+            if resume_folio and self._bodies_name_other_year(
+                resume_folio, extract_bodies
+            ):
+                # A year the draft does not have means another car, even when
+                # the model never named it. Parts for it are a new request.
+                self._create_draft_from_proposal(
+                    from_number=from_number,
+                    group_id=group_id,
+                    creator_uid=creator_uid,
+                    store_name=store_name,
+                    proposal=proposal,
+                    message_sids=message_sids,
+                    primary_intake_id=primary_intake_id,
+                    bodies=extract_bodies,
+                    burst_id=burst_id,
+                    session=session,
+                )
+                return
             if resume_folio:
                 can_resume, refuse_message = self._can_resume_folio(
                     resume_folio,
