@@ -48,6 +48,9 @@ Reglas estrictas:
 - Interpreta apodos y diminutivos comunes de autos en México. Si infieres con alta confianza, usa make/model oficiales
   (ej: "Jettita" → make "Volkswagen", model "Jetta"; "koleos" → make "Renault", model "Koleos")
   y pon evidence.kind "inferred" con el apodo original en raw.
+- NUNCA inventes una marca ni un modelo. Solo escribe make cuando el cliente la dijo o el modelo es un auto real
+  que conoces con certeza. Si el nombre no corresponde a un auto que conozcas (ej. "Estatus"), copia el texto del
+  cliente tal cual en model, deja make null y agrega uncertainties[] en vehicle.model. No lo cambies por un auto parecido.
 - Si el apodo es ambiguo (varios autos posibles), no inventes make/model: deja esos campos null y agrega
   uncertainties[] pidiendo confirmación (pregunta concreta, ej. "¿Es un Volkswagen Jetta 2015?").
 - Si falta información (año, posición, etc.), usa uncertainties[]; no adivines compatibilidad ni posición.

@@ -154,6 +154,19 @@ def _plausible_vehicle_year(year: str) -> bool:
     return _MIN_VEHICLE_YEAR <= value <= _MAX_VEHICLE_YEAR
 
 
+def _make_in_bodies(make: str, bodies: Sequence[str]) -> bool:
+    """True when the customer wrote this brand (or a shortening such as "chevy")."""
+    words = _tokenize(make)
+    if not words:
+        return False
+    stem = words[0][:4]
+    return any(
+        token.startswith(stem)
+        for body in bodies or []
+        for token in _tokenize(body)
+    )
+
+
 def year_from_bodies(bodies: Sequence[str]) -> Optional[str]:
     """Recover a vehicle year GLM often drops when it arrives as its own bubble."""
     standalone: List[str] = []
@@ -552,9 +565,17 @@ class WhatsappCatalogMapper:
         if mysql_db is None:
             return resolved, VEHICLE_UNCHECKED
 
+        terms = vehicle_search_terms(proposal, bodies)
+        named_model = _normalize_text(vehicle.model or "")
+        if named_model:
+            # A model was named: only searches that include it can place the
+            # car. A brand alone (or a word from the chat) says nothing about
+            # the model, and an invented brand must not hide an unknown model.
+            terms = [term for term in terms if named_model in _normalize_text(term)]
+
         searched = False
         ambiguous = False
-        for term in vehicle_search_terms(proposal, bodies):
+        for term in terms:
             try:
                 hits = AcesVehiclesService.find_aces_vehicles(mysql_db, term, year)
             except Exception:
@@ -581,5 +602,15 @@ class WhatsappCatalogMapper:
         if ambiguous:
             return resolved, VEHICLE_AMBIGUOUS
         if searched and (vehicle.make or vehicle.model):
+            if vehicle.make and not _make_in_bodies(vehicle.make, bodies):
+                # The customer never said this brand and the catalog has no
+                # such model: the brand was a guess, not data.
+                resolved = ExtractionVehicle(
+                    make=None,
+                    model=resolved.model,
+                    year=year,
+                    engine=resolved.engine,
+                    vin=resolved.vin,
+                )
             return resolved, VEHICLE_UNRECOGNIZED
         return resolved, VEHICLE_UNCHECKED

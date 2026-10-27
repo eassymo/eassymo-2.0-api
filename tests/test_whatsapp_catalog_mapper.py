@@ -499,3 +499,75 @@ def test_map_vehicle_result_search_errors_are_unchecked(mock_find):
         MagicMock(), proposal, ["Estatus 2005"]
     )
     assert status == VEHICLE_UNCHECKED
+
+
+def _catalog_without_estatus(db, term, year):
+    """No "Estatus" exists, but the Chevrolet brand alone returns many models."""
+    if "estatus" in term.lower():
+        return []
+    if "chevrolet" in term.lower():
+        return [
+            MagicMock(VehiculoFabricante="Chevrolet", VehiculoModelo="Aveo"),
+            MagicMock(VehiculoFabricante="Chevrolet", VehiculoModelo="Malibu"),
+        ]
+    return []
+
+
+@patch("app.services.WhatsappCatalogMapper.AcesVehiclesService.find_aces_vehicles")
+def test_invented_make_does_not_hide_an_unknown_model(mock_find):
+    from app.services.WhatsappCatalogMapper import VEHICLE_UNRECOGNIZED
+
+    mock_find.side_effect = _catalog_without_estatus
+    proposal = WhatsappExtractionProposal(
+        intent=ExtractionIntent.NEW_REQUEST,
+        vehicle=ExtractionVehicle(make="Chevrolet", model="Estatus", year="2005"),
+    )
+    vehicle, status = WhatsappCatalogMapper().map_vehicle_result(
+        MagicMock(),
+        proposal,
+        ["Buen día compa, necesito unas bujías...", "Estatus 2005 rojo, de mi vecina"],
+    )
+    assert status == VEHICLE_UNRECOGNIZED
+    assert vehicle.make is None  # the customer never said Chevrolet
+    assert vehicle.model == "Estatus"
+    assert vehicle.year == "2005"
+    searched = [call.args[1] for call in mock_find.call_args_list]
+    assert searched and all("estatus" in term.lower() for term in searched)
+
+
+@patch("app.services.WhatsappCatalogMapper.AcesVehiclesService.find_aces_vehicles")
+def test_a_brand_the_customer_wrote_is_kept_when_the_model_is_unknown(mock_find):
+    from app.services.WhatsappCatalogMapper import VEHICLE_UNRECOGNIZED
+
+    mock_find.side_effect = _catalog_without_estatus
+    proposal = WhatsappExtractionProposal(
+        intent=ExtractionIntent.NEW_REQUEST,
+        vehicle=ExtractionVehicle(make="Chevrolet", model="Estatus", year="2005"),
+    )
+    vehicle, status = WhatsappCatalogMapper().map_vehicle_result(
+        MagicMock(), proposal, ["bujías para chevy Estatus 2005"]
+    )
+    assert status == VEHICLE_UNRECOGNIZED
+    assert vehicle.make == "Chevrolet"
+
+
+@patch("app.services.WhatsappCatalogMapper.AcesVehiclesService.find_aces_vehicles")
+def test_a_named_model_is_not_resolved_from_unrelated_chat_words(mock_find):
+    """A hit on a chat word ("rojo") must not turn an unknown model into some other car."""
+    from app.services.WhatsappCatalogMapper import VEHICLE_UNRECOGNIZED
+
+    def search(db, term, year):
+        if "estatus" in term.lower():
+            return []
+        return [MagicMock(VehiculoFabricante="Ford", VehiculoModelo="Rojo")]
+
+    mock_find.side_effect = search
+    proposal = WhatsappExtractionProposal(
+        intent=ExtractionIntent.NEW_REQUEST,
+        vehicle=ExtractionVehicle(model="Estatus", year="2005"),
+    )
+    vehicle, status = WhatsappCatalogMapper().map_vehicle_result(
+        MagicMock(), proposal, ["Estatus 2005 rojo, de mi vecina"]
+    )
+    assert status == VEHICLE_UNRECOGNIZED
+    assert vehicle.make is None and vehicle.model == "Estatus"
