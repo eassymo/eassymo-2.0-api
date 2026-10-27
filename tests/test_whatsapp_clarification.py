@@ -1702,3 +1702,145 @@ def test_parts_with_only_another_year_do_not_merge_into_last_draft(
     mock_folio_service.create.assert_called_once()
     assert any("Borrador listo" in body for body in sent)
     assert not any("Borrador actualizado" in body for body in sent)
+
+
+def test_close_vehicle_questions_closes_only_what_the_edit_filled():
+    questions = [
+        {"id": "q-make", "path": "vehicle.make", "status": "open"},
+        {"id": "q-type", "path": clarify.VEHICLE_TYPE_PATH, "status": "open"},
+        {"id": "q-year", "path": "vehicle.year", "status": "open"},
+        {"id": "q-pos", "path": "piece:p1.position", "status": "open"},
+        {"id": "q-done", "path": "vehicle.model", "status": "answered"},
+    ]
+    closed = clarify.close_vehicle_questions(
+        questions, {"maker": "Dodge", "model": "Stratus", "vehicle_type": "Auto/Camioneta"}
+    )
+    by_id = {q["id"]: q for q in closed}
+    assert by_id["q-make"]["status"] == "answered"
+    assert by_id["q-type"]["status"] == "answered"
+    assert by_id["q-year"]["status"] == "open"  # the edit left the year empty
+    assert by_id["q-pos"]["status"] == "open"
+    assert by_id["q-done"]["status"] == "answered"
+    assert questions[0]["status"] == "open"  # input is not mutated
+
+
+def test_editing_the_vehicle_on_a_draft_closes_its_vehicle_warnings(monkeypatch):
+    from app.services import MostradorFolioService as svc
+
+    doc = {
+        "_id": "fid",
+        "source": "whatsapp",
+        "status": "draft",
+        "origin_group_id": "g1",
+        "vehicle": {"model": "Estatus", "year": "2005"},
+        "pieces": [],
+        "whatsapp_pending_questions": [
+            {"id": "q-make", "path": "vehicle.make", "prompt": "¿Marca?", "status": "open"},
+            {
+                "id": "q-type",
+                "path": clarify.VEHICLE_TYPE_PATH,
+                "prompt": "¿Es auto/camioneta, moto, camión u otro?",
+                "status": "open",
+            },
+        ],
+    }
+    saved = {}
+    monkeypatch.setattr(svc.folioRepository, "find_by_id", lambda fid: doc)
+    monkeypatch.setattr(
+        svc.folioRepository, "edit", lambda fid, data: saved.update(data) or {**doc, **data}
+    )
+    monkeypatch.setattr(svc, "_hydrate", lambda d: d)
+    monkeypatch.setattr(svc, "_now", lambda: "2026-07-10T12:00:00Z")
+
+    svc.update(
+        "fid",
+        {"vehicle": {"maker": "Dodge", "model": "Stratus", "year": "2005", "vehicle_type": "Auto/Camioneta"}},
+    )
+
+    assert {q["id"]: q["status"] for q in saved["whatsapp_pending_questions"]} == {
+        "q-make": "answered",
+        "q-type": "answered",
+    }
+    assert saved["vehicle"]["maker"] == "Dodge"
+
+
+def _stratus_draft(questions):
+    return {
+        "_id": "folio-estatus",
+        "share_token": "tok-estatus",
+        "folio_code": "ESTAT1",
+        "updated_at": "2026-01-01T00:00:00+00:00",
+        "source": "whatsapp",
+        "status": "draft",
+        "origin_group_id": "g1",
+        "creator_user": "uid-1",
+        "vehicle": {"model": "Estatus", "year": "2005"},
+        "pieces": [{"piece_id": "p1", "name": "Bujías", "tipoParteId": "7"}],
+        "whatsapp_pending_questions": questions,
+    }
+
+
+@pytest.mark.parametrize(
+    "path, expect_pointer",
+    [
+        (clarify.VEHICLE_TYPE_PATH, True),
+        ("vehicle.make", True),
+        ("piece:p1.position", False),
+    ],
+    ids=["type_question", "make_question", "unrelated_question"],
+)
+@patch("app.services.WhatsappIntakeProcessorService.pending_repo")
+@patch("app.services.WhatsappIntakeProcessorService.folio_service")
+@patch("app.services.WhatsappIntakeProcessorService.inbound_repo")
+@patch("app.services.WhatsappIntakeProcessorService.WhatsappService")
+@patch("app.services.WhatsappIntakeProcessorService.LlmExtractionService")
+def test_vehicle_try_on_a_draft_waiting_for_its_car_points_to_the_draft(
+    mock_llm_cls,
+    mock_whatsapp_cls,
+    mock_inbound_repo,
+    mock_folio_service,
+    mock_pending_repo,
+    path,
+    expect_pointer,
+):
+    from app.services.WhatsappIntakeProcessorService import WhatsappIntakeProcessorService
+
+    draft = _stratus_draft(
+        [{"id": "q1", "path": path, "prompt": "?", "severity": "warning", "status": "open"}]
+    )
+    mock_folio_service._is_assigned_to_buyer.return_value = False
+    mock_folio_service._has_ordered_pieces.return_value = False
+    mock_llm_cls.return_value.extract.return_value = WhatsappExtractionProposal(
+        intent=ExtractionIntent.NEW_REQUEST,
+        vehicle=ExtractionVehicle(make="Dodge", model="Estratus", year="2005"),
+    )
+    mock_whatsapp_cls.return_value.send_text_message.return_value = {"message_sid": "OUT"}
+
+    service = WhatsappIntakeProcessorService()
+    service.extract_enabled = True
+    service.client_base_url = "https://www.eassymo.mx"
+    service.whatsapp_public_base_url = "https://www.eassymo.mx"
+    service._handle_resume(
+        from_number="+5217779313704",
+        resume_folio=draft,
+        group_id="g1",
+        creator_uid="uid-1",
+        store_name="Tienda",
+        bodies=["es un estratus"],
+        message_sids=["SM1"],
+        burst_id="b1",
+    )
+
+    sent = [
+        c.args[1]
+        for c in mock_whatsapp_cls.return_value.send_text_message.call_args_list
+    ]
+    assert len(sent) == 1
+    if expect_pointer:
+        assert "No reconocemos «Dodge Estratus»" in sent[0]
+        assert "Entra al borrador para editar el vehículo manualmente" in sent[0]
+        assert "whatsapp-draft/tok-estatus" in sent[0]
+        assert "es otro vehículo" not in sent[0]
+    else:
+        assert "es otro vehículo" in sent[0]
+    mock_folio_service.update.assert_not_called()

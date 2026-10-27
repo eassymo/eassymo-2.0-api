@@ -1122,8 +1122,6 @@ class WhatsappIntakeProcessorService:
             return
 
         if self._proposal_names_different_vehicle(resume_folio.get("vehicle"), proposal):
-            current = self._folio_vehicle_label(resume_folio) or "el borrador actual"
-            other = self._proposal_vehicle_label(proposal) or "el otro vehículo"
             for sid in message_sids:
                 if sid:
                     inbound_repo.update_fields(
@@ -1134,6 +1132,18 @@ class WhatsappIntakeProcessorService:
                             **({"burst_id": burst_id} if burst_id else {}),
                         },
                     )
+            if self._vehicle_identity_is_open(resume_folio):
+                # The draft is waiting on its car: this reply is a try at it,
+                # not a second vehicle. The seller fixes it in the draft.
+                self._send_vehicle_edit_pointer(
+                    from_number,
+                    resume_folio,
+                    proposal,
+                    burst_id=burst_id,
+                )
+                return
+            current = self._folio_vehicle_label(resume_folio) or "el borrador actual"
+            other = self._proposal_vehicle_label(proposal) or "el otro vehículo"
             self._send_bot_message(
                 from_number,
                 f"Se queda {current}. {other} es otro vehículo: "
@@ -1508,6 +1518,43 @@ class WhatsappIntakeProcessorService:
             creator_uid=creator_uid,
         )
         return folio
+
+    def _vehicle_identity_is_open(self, folio: dict) -> bool:
+        """True while the draft still asks for its make, model or vehicle type."""
+        return any(
+            question.get("path") in clarify.VEHICLE_IDENTITY_PATHS
+            for question in clarify.open_questions(folio)
+        )
+
+    def _send_vehicle_edit_pointer(
+        self,
+        from_number: str,
+        folio: dict,
+        proposal: WhatsappExtractionProposal,
+        *,
+        burst_id: Optional[str],
+    ) -> None:
+        vehicle = proposal.vehicle
+        written = " ".join(
+            str(part).strip()
+            for part in (getattr(vehicle, "make", None), getattr(vehicle, "model", None))
+            if part
+        )
+        folio_id = str(folio.get("_id") or folio.get("id") or "")
+        link = self._draft_preview_link(
+            str(folio.get("share_token") or ""),
+            folio_id,
+            version=str(folio.get("updated_at") or "") or None,
+        )
+        subject = f"«{written}»" if written else "ese vehículo"
+        self._send_bot_message(
+            from_number,
+            f"No reconocemos {subject}. Entra al borrador para editar el "
+            f"vehículo manualmente:\n{link}",
+            burst_id=burst_id,
+            kind="bot_error",
+            folio_id=folio_id,
+        )
 
     def _bodies_name_other_year(self, folio: dict, bodies: List[str]) -> bool:
         year = year_from_bodies(bodies)

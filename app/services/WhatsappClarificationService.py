@@ -23,6 +23,8 @@ _WAMID_RE = re.compile(r"wamid\.[A-Za-z0-9+/=_-]+")
 _SKIP_POSITIONS = {"", "no aplica", "n/a", "na"}
 
 VEHICLE_TYPE_PATH = "vehicle.type"
+# Questions only a vehicle edit can settle (the year has its own quick answer).
+VEHICLE_IDENTITY_PATHS = {"vehicle.make", "vehicle.model", VEHICLE_TYPE_PATH}
 # Same labels as the web vehicle selector (year-selector.tsx).
 VEHICLE_TYPE_CAR = "Auto/Camioneta"
 _VEHICLE_TYPE_KEYWORDS = (
@@ -766,6 +768,34 @@ def mark_question_answered(folio: dict, question_id: str) -> List[dict]:
             row["status"] = "answered"
         updated.append(row)
     return updated
+
+
+_VEHICLE_QUESTION_FIELDS = {
+    "vehicle.make": "maker",
+    "vehicle.model": "model",
+    "vehicle.year": "year",
+    VEHICLE_TYPE_PATH: "vehicle_type",
+}
+
+
+def close_vehicle_questions(
+    questions: Sequence[dict], vehicle: Optional[dict]
+) -> List[dict]:
+    """Close the open vehicle questions that a vehicle edit has now filled in."""
+    vehicle = vehicle or {}
+    closed: List[dict] = []
+    for item in questions or []:
+        row = dict(item)
+        field = _VEHICLE_QUESTION_FIELDS.get(str(row.get("path") or ""))
+        if (
+            field
+            and row.get("status") == "open"
+            and str(vehicle.get(field) or "").strip()
+        ):
+            row["status"] = "answered"
+            row["answered_via"] = "pos_edit"
+        closed.append(row)
+    return closed
 
 
 def attach_asked_sid(
