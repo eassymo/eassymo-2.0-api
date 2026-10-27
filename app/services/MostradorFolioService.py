@@ -516,6 +516,12 @@ def update(folio_id: str, patch: Dict[str, Any]) -> dict:
     for key, value in patch.items():
         if key in allowed:
             merged[key] = value
+    if "vehicle" in patch and "whatsapp_pending_questions" not in patch:
+        from app.services.WhatsappClarificationService import close_vehicle_questions
+
+        merged["whatsapp_pending_questions"] = close_vehicle_questions(
+            doc.get("whatsapp_pending_questions"), merged.get("vehicle")
+        )
     edition = edition_update(
         doc,
         merged.get("pieces") or [],
