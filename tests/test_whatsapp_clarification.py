@@ -1844,3 +1844,170 @@ def test_vehicle_try_on_a_draft_waiting_for_its_car_points_to_the_draft(
     else:
         assert "es otro vehículo" in sent[0]
     mock_folio_service.update.assert_not_called()
+
+
+def _estatus_draft_with_open_vehicle_questions():
+    return _stratus_draft(
+        [
+            {
+                "id": "q-make",
+                "path": "vehicle.make",
+                "prompt": "¿Cuál es la marca del vehículo modelo Estatus 2005?",
+                "severity": "critical",
+                "status": "open",
+            },
+            {
+                "id": "q-type",
+                "path": clarify.VEHICLE_TYPE_PATH,
+                "prompt": "No reconocemos «Estatus 2005». ¿Es auto/camioneta, moto, camión u otro?",
+                "severity": "warning",
+                "status": "open",
+            },
+        ]
+    )
+
+
+def _flush_estatus_burst(
+    *,
+    part_name,
+    mock_llm_cls,
+    mock_whatsapp_cls,
+    mock_inbound_repo,
+    mock_folio_service,
+    mock_session_repo,
+    mock_pending_repo,
+):
+    """Seller has an Estatus draft with 2 open vehicle questions, then sends a burst."""
+    from app.services.WhatsappIntakeProcessorService import WhatsappIntakeProcessorService
+
+    draft = _estatus_draft_with_open_vehicle_questions()
+    session = _collecting_session(
+        messages=[
+            {"message_sid": "SM1", "body": "Estatus 2005 rojo, de mi vecina"},
+            {"message_sid": "SM2", "body": f"Buen día compa, necesito {part_name}..."},
+        ],
+    )
+    mock_inbound_repo.find_by_message_sid.return_value = {"_id": "mongo-1"}
+    # The extractor no longer invents a brand: model and year, no make.
+    mock_llm_cls.return_value.extract.return_value = WhatsappExtractionProposal(
+        intent=ExtractionIntent.NEW_REQUEST,
+        vehicle=ExtractionVehicle(model="Estatus", year="2005"),
+        lines=[ExtractionLine(local_id="l1", part_name=part_name, quantity=1)],
+    )
+    created = {
+        "_id": "folio-new",
+        "share_token": "tok-new",
+        "folio_code": "NEW001",
+        "updated_at": "2026-01-01T00:00:00+00:00",
+        "vehicle": {"model": "Estatus", "year": "2005"},
+        "pieces": [],
+        "whatsapp_pending_questions": [],
+    }
+    mock_folio_service.create.return_value = created
+    mock_folio_service.update.side_effect = lambda _id, patch_: {**created, **patch_}
+    mock_folio_service._normalize_vehicle.return_value = created["vehicle"]
+    mock_folio_service._is_assigned_to_buyer.return_value = False
+    mock_folio_service._has_ordered_pieces.return_value = False
+    mock_folio_service.get_by_share_token.return_value = draft
+    mock_pending_repo.get_last_share_token.return_value = "tok-estatus"
+    mock_whatsapp_cls.return_value.native_reactions_enabled = False
+    mock_whatsapp_cls.return_value.send_text_message.return_value = {"message_sid": "OUT"}
+
+    with patch(
+        "app.services.WhatsappIntakeProcessorService.clarify.find_drafts_with_open_questions",
+        return_value=[draft],
+    ):
+        service = WhatsappIntakeProcessorService()
+        service.extract_enabled = True
+        service.client_base_url = "https://www.eassymo.mx"
+        service.whatsapp_public_base_url = "https://www.eassymo.mx"
+        service._flush_session("+5217779313704", session)
+    return [
+        c.args[1]
+        for c in mock_whatsapp_cls.return_value.send_text_message.call_args_list
+    ]
+
+
+_ESTATUS_PATCHES = [
+    patch("app.services.WhatsappIntakeProcessorService.pending_repo"),
+    patch("app.services.WhatsappIntakeProcessorService.session_repo"),
+    patch("app.services.WhatsappIntakeProcessorService.folio_service"),
+    patch("app.services.WhatsappIntakeProcessorService.MySQLSessionLocal", None),
+    patch("app.services.WhatsappIntakeProcessorService.inbound_repo"),
+    patch("app.services.WhatsappIntakeProcessorService.WhatsappService"),
+    patch("app.services.WhatsappIntakeProcessorService.LlmExtractionService"),
+]
+
+
+def _with_estatus_patches(fn):
+    for decorator in reversed(_ESTATUS_PATCHES):
+        fn = decorator(fn)
+    return fn
+
+
+@_with_estatus_patches
+def test_resending_an_unrecognized_car_request_replies_instead_of_asking_which_question(
+    mock_llm_cls,
+    mock_whatsapp_cls,
+    mock_inbound_repo,
+    mock_folio_service,
+    mock_session_repo,
+    mock_pending_repo,
+):
+    sent = _flush_estatus_burst(
+        part_name="unas bujías",
+        mock_llm_cls=mock_llm_cls,
+        mock_whatsapp_cls=mock_whatsapp_cls,
+        mock_inbound_repo=mock_inbound_repo,
+        mock_folio_service=mock_folio_service,
+        mock_session_repo=mock_session_repo,
+        mock_pending_repo=mock_pending_repo,
+    )
+    assert not any("varias aclaraciones" in body for body in sent)
+    assert any("Ya tienes este borrador" in body for body in sent)
+    assert not any("whatsapp-draft/tok-new" in body for body in sent)
+    mock_folio_service.create.assert_not_called()
+
+
+@_with_estatus_patches
+def test_new_parts_for_an_unrecognized_car_open_their_own_draft(
+    mock_llm_cls,
+    mock_whatsapp_cls,
+    mock_inbound_repo,
+    mock_folio_service,
+    mock_session_repo,
+    mock_pending_repo,
+):
+    sent = _flush_estatus_burst(
+        part_name="una batería",
+        mock_llm_cls=mock_llm_cls,
+        mock_whatsapp_cls=mock_whatsapp_cls,
+        mock_inbound_repo=mock_inbound_repo,
+        mock_folio_service=mock_folio_service,
+        mock_session_repo=mock_session_repo,
+        mock_pending_repo=mock_pending_repo,
+    )
+    assert not any("varias aclaraciones" in body for body in sent)
+    mock_folio_service.create.assert_called_once()
+    assert any("Borrador listo" in body for body in sent)
+
+
+def test_open_draft_match_ignores_a_make_that_is_missing_on_one_side():
+    from app.services.WhatsappIntakeProcessorService import WhatsappIntakeProcessorService
+
+    service = WhatsappIntakeProcessorService()
+    draft = {
+        "vehicle": {"maker": "Chevrolet", "model": "Estatus", "year": "2005"},
+        "pieces": [{"piece_id": "p1", "name": "Bujías"}],
+    }
+
+    def proposal(make):
+        return WhatsappExtractionProposal(
+            intent=ExtractionIntent.NEW_REQUEST,
+            vehicle=ExtractionVehicle(make=make, model="Estatus", year="2005"),
+            lines=[ExtractionLine(local_id="l1", part_name="bujías", quantity=1)],
+        )
+
+    assert service._proposal_matches_open_draft(proposal(None), draft) is True
+    assert service._proposal_matches_open_draft(proposal("Chevrolet"), draft) is True
+    assert service._proposal_matches_open_draft(proposal("Dodge"), draft) is False
