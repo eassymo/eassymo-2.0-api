@@ -91,3 +91,27 @@ def test_diff_reports_added_and_removed_pieces():
     details = [change["detail"] for change in changes]
     assert "Pieza agregada" in details
     assert "Pieza eliminada" in details
+
+
+def test_ready_whatsapp_draft_is_not_view_only():
+    ready = {"status": "draft", "source": "whatsapp", "customer_ready": True}
+    assert customer_can_view(ready) is True
+    assert customer_view_only(ready) is False
+
+
+def test_customer_can_change_a_ready_whatsapp_draft_but_not_a_ready_counter_draft(monkeypatch):
+    import pytest
+    from fastapi import HTTPException
+    from app.services import MostradorFolioService as svc
+
+    docs = {
+        "wa": {"_id": "fid-wa", "status": "draft", "source": "whatsapp", "customer_ready": True},
+        "counter": {"_id": "fid-c", "status": "draft", "source": "counter", "customer_ready": True},
+    }
+    monkeypatch.setattr(svc.folioRepository, "find_by_share_token", lambda token: docs[token])
+    monkeypatch.setattr(svc, "_folio_share_ready", lambda doc: True)
+
+    assert svc.folio_id_for_customer_change("wa") == "fid-wa"
+    with pytest.raises(HTTPException) as exc:
+        svc.folio_id_for_customer_change("counter")
+    assert exc.value.status_code == 409

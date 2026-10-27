@@ -14,6 +14,11 @@ from app.services.VehiculoPartesService import search_partes_paginator
 
 POSITION_NO_APLICA = "No aplica"
 
+VEHICLE_MATCHED = "matched"
+VEHICLE_AMBIGUOUS = "ambiguous"
+VEHICLE_UNRECOGNIZED = "unrecognized"
+VEHICLE_UNCHECKED = "unchecked"
+
 POSITION_ALIASES: Dict[str, str] = {
     "delantera": "Delantera",
     "delanteras": "Delantera",
@@ -515,12 +520,27 @@ class WhatsappCatalogMapper:
         proposal: WhatsappExtractionProposal,
         bodies: Sequence[str],
     ) -> Optional[ExtractionVehicle]:
+        return self.map_vehicle_result(mysql_db, proposal, bodies)[0]
+
+    def map_vehicle_result(
+        self,
+        mysql_db: Session,
+        proposal: WhatsappExtractionProposal,
+        bodies: Sequence[str],
+    ) -> tuple[Optional[ExtractionVehicle], str]:
+        """Resolve the vehicle and say how the catalog lookup went.
+
+        Status is one of VEHICLE_MATCHED, VEHICLE_AMBIGUOUS,
+        VEHICLE_UNRECOGNIZED (the car was named, the year known and the
+        catalog has nothing for it) or VEHICLE_UNCHECKED (no year or no
+        database, so no lookup could say either way).
+        """
         vehicle = proposal.vehicle or ExtractionVehicle()
         year = (vehicle.year or "").strip() or None
         if not year:
             year = year_from_bodies(bodies)
         if not year:
-            return proposal.vehicle
+            return proposal.vehicle, VEHICLE_UNCHECKED
 
         resolved = ExtractionVehicle(
             make=vehicle.make,
@@ -530,24 +550,36 @@ class WhatsappCatalogMapper:
             vin=vehicle.vin,
         )
         if mysql_db is None:
-            return resolved
+            return resolved, VEHICLE_UNCHECKED
 
+        searched = False
+        ambiguous = False
         for term in vehicle_search_terms(proposal, bodies):
             try:
                 hits = AcesVehiclesService.find_aces_vehicles(mysql_db, term, year)
             except Exception:
                 continue
+            searched = True
             unique = _unique_vehicle_hits(hits)
+            if len(unique) > 1:
+                ambiguous = True
             if len(unique) != 1:
                 continue
             make, model = _hit_make_model(unique[0])
             if not make and not model:
                 continue
-            return ExtractionVehicle(
-                make=make or resolved.make,
-                model=model or resolved.model,
-                year=year,
-                engine=resolved.engine,
-                vin=resolved.vin,
+            return (
+                ExtractionVehicle(
+                    make=make or resolved.make,
+                    model=model or resolved.model,
+                    year=year,
+                    engine=resolved.engine,
+                    vin=resolved.vin,
+                ),
+                VEHICLE_MATCHED,
             )
-        return resolved
+        if ambiguous:
+            return resolved, VEHICLE_AMBIGUOUS
+        if searched and (vehicle.make or vehicle.model):
+            return resolved, VEHICLE_UNRECOGNIZED
+        return resolved, VEHICLE_UNCHECKED

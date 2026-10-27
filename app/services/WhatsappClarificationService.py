@@ -22,6 +22,22 @@ from app.services.WhatsappCatalogMapper import (
 _WAMID_RE = re.compile(r"wamid\.[A-Za-z0-9+/=_-]+")
 _SKIP_POSITIONS = {"", "no aplica", "n/a", "na"}
 
+VEHICLE_TYPE_PATH = "vehicle.type"
+# Same labels as the web vehicle selector (year-selector.tsx).
+VEHICLE_TYPE_CAR = "Auto/Camioneta"
+_VEHICLE_TYPE_KEYWORDS = (
+    ("Moto", {"moto", "motos", "motocicleta", "motoneta", "scooter"}),
+    (
+        "Camión",
+        {"camion", "camiones", "trailer", "tractocamion", "torton", "autobus"},
+    ),
+    (
+        VEHICLE_TYPE_CAR,
+        {"auto", "autos", "carro", "carros", "coche", "camioneta", "pickup", "suv"},
+    ),
+    ("Otro", {"otro", "otra", "otros"}),
+)
+
 
 def extract_whatsapp_message_id(channel_metadata: str) -> Optional[str]:
     raw = (channel_metadata or "").strip()
@@ -85,7 +101,7 @@ def question_severity(question: dict) -> str:
     path = str((question or {}).get("path") or "").strip()
     if path in {"vehicle.year", "vehicle.make", "vehicle.model"}:
         return "critical"
-    if ".position" in path:
+    if ".position" in path or path == VEHICLE_TYPE_PATH:
         return "warning"
     return "info"
 
@@ -247,8 +263,32 @@ def derive_pending_questions(
             )
         )
 
+    if VEHICLE_TYPE_PATH in uncertainty_reason and not str(
+        vehicle.get("vehicle_type") or ""
+    ).strip():
+        label = " ".join(
+            str(vehicle.get(key)).strip()
+            for key in ("maker", "model", "year")
+            if vehicle.get(key)
+        )
+        add(
+            _alert(
+                path=VEHICLE_TYPE_PATH,
+                copy_text=(
+                    f"No reconocemos «{label}». "
+                    if label
+                    else "No reconocemos el vehículo. "
+                )
+                + "¿Es auto/camioneta, moto, camión u otro?",
+                severity="warning",
+                source="vehicle_type",
+            )
+        )
+
     for path, reason in uncertainty_reason.items():
         if path in seen_paths or not reason:
+            continue
+        if path == VEHICLE_TYPE_PATH:
             continue
         if path.startswith("lines") and ".position" in path:
             continue
@@ -614,6 +654,15 @@ def apply_material_note_to_folio(
     return {}, False
 
 
+def resolve_vehicle_type(text: str) -> Optional[str]:
+    """Map a free-text answer to one of the web selector's vehicle types."""
+    tokens = set(_tokenize(text))
+    for label, keywords in _VEHICLE_TYPE_KEYWORDS:
+        if tokens & keywords:
+            return label
+    return None
+
+
 def resolve_vehicle_patch(text: str, field_path: str) -> Optional[str]:
     cleaned = (text or "").strip()
     if not cleaned:
@@ -626,6 +675,8 @@ def resolve_vehicle_patch(text: str, field_path: str) -> Optional[str]:
     if field_path == "vehicle.year":
         match = re.search(r"\b((?:19|20)\d{2})\b", cleaned)
         return match.group(1) if match else None
+    if field_path == VEHICLE_TYPE_PATH:
+        return resolve_vehicle_type(cleaned)
     return cleaned
 
 
@@ -662,6 +713,7 @@ def apply_answer_to_folio(
             "vehicle.year": "year",
             "vehicle.engine": "engine",
             "vehicle.vin": "vin",
+            VEHICLE_TYPE_PATH: "vehicle_type",
         }
         field = key_map.get(path)
         if not field:

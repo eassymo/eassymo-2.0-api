@@ -1380,3 +1380,325 @@ def test_seller_read_returns_a_draft_that_is_not_ready(
     loaded = get_for_origin_seller("tok", "seller-1")
     assert loaded["_id"] == "folio-1"
     mock_membership.assert_called_once_with("seller-1", "shop-1")
+
+
+@pytest.mark.parametrize(
+    "open_question",
+    [
+        {
+            "id": "q-miss",
+            "path": "piece:p1.catalog",
+            "piece_id": "p1",
+            "copy_text": "No encontramos «pistón» en el catálogo.",
+            "severity": "info",
+            "status": "open",
+        },
+        {
+            "id": "q-pos",
+            "path": "piece:p1.position",
+            "piece_id": "p1",
+            "prompt": "¿Son delanteras o traseras?",
+            "status": "open",
+        },
+    ],
+    ids=["info_only_draft", "blocking_question_draft"],
+)
+@patch("app.services.WhatsappIntakeProcessorService.pending_repo")
+@patch("app.services.WhatsappIntakeProcessorService.session_repo")
+@patch("app.services.WhatsappIntakeProcessorService.folio_service")
+@patch("app.services.WhatsappIntakeProcessorService.MySQLSessionLocal", None)
+@patch("app.services.WhatsappIntakeProcessorService.inbound_repo")
+@patch("app.services.WhatsappIntakeProcessorService.WhatsappService")
+@patch("app.services.WhatsappIntakeProcessorService.LlmExtractionService")
+def test_parts_for_another_car_without_year_create_new_draft_not_complement(
+    mock_llm_cls,
+    mock_whatsapp_cls,
+    mock_inbound_repo,
+    mock_folio_service,
+    mock_session_repo,
+    mock_pending_repo,
+    open_question,
+):
+    from app.services.WhatsappIntakeProcessorService import WhatsappIntakeProcessorService
+
+    existing = _open_versa_folio(whatsapp_pending_questions=[open_question])
+    session = _collecting_session(
+        messages=[
+            {"message_sid": "SM1", "body": "Buen día compa, necesito unas bujías"},
+            {"message_sid": "SM2", "body": "Batería de Stratus"},
+        ],
+    )
+    mock_inbound_repo.find_by_message_sid.return_value = {"_id": "mongo-1"}
+    mock_llm_cls.return_value.extract.return_value = WhatsappExtractionProposal(
+        intent=ExtractionIntent.NEW_REQUEST,
+        lines=[
+            ExtractionLine(local_id="l1", part_name="bujías", quantity=1),
+            ExtractionLine(local_id="l2", part_name="batería", quantity=1),
+        ],
+        vehicle=ExtractionVehicle(make="Chrysler", model="Stratus"),
+    )
+    created = {
+        "_id": "folio-stratus",
+        "share_token": "share-stratus",
+        "folio_code": "STRAT1",
+        "updated_at": "2026-01-01T00:00:00+00:00",
+    }
+    mock_folio_service.create.return_value = created
+    mock_folio_service.update.return_value = created
+    mock_folio_service._normalize_vehicle.return_value = {
+        "maker": "Chrysler",
+        "model": "Stratus",
+    }
+    mock_folio_service._is_assigned_to_buyer.return_value = False
+    mock_folio_service._has_ordered_pieces.return_value = False
+    mock_folio_service.get_by_share_token.return_value = existing
+    mock_pending_repo.get_last_share_token.return_value = "share-versa"
+    mock_whatsapp_cls.return_value.native_reactions_enabled = False
+    mock_whatsapp_cls.return_value.send_text_message.return_value = {
+        "message_sid": "SM-OUT"
+    }
+
+    with patch(
+        "app.services.WhatsappIntakeProcessorService.clarify.find_drafts_with_open_questions",
+        return_value=[existing],
+    ):
+        service = WhatsappIntakeProcessorService()
+        service.extract_enabled = True
+        service.client_base_url = "https://www.eassymo.mx"
+        service.whatsapp_public_base_url = "https://www.eassymo.mx"
+        service._flush_session("+5217779313704", session)
+
+    mock_folio_service.create.assert_called_once()
+    sent = [
+        call.args[1]
+        for call in mock_whatsapp_cls.return_value.send_text_message.call_args_list
+    ]
+    assert any("Borrador listo" in body for body in sent)
+    assert not any("Vinculado a" in body for body in sent)
+
+
+def _unrecognized_proposal():
+    return WhatsappExtractionProposal(
+        intent=ExtractionIntent.NEW_REQUEST,
+        lines=[ExtractionLine(local_id="l1", part_name="bujías", quantity=1)],
+        vehicle=ExtractionVehicle(model="Estatus", year="2005"),
+        uncertainties=[
+            ExtractionUncertainty(
+                path=clarify.VEHICLE_TYPE_PATH, reason="Vehículo no reconocido"
+            )
+        ],
+    )
+
+
+def test_unrecognized_vehicle_asks_vehicle_type_as_warning():
+    folio = {
+        "vehicle": {"model": "Estatus", "year": "2005"},
+        "pieces": [{"piece_id": "p1", "name": "Bujías", "tipoParteId": "7"}],
+        "whatsapp_pending_questions": [],
+    }
+    questions = clarify.derive_pending_questions(
+        folio, _unrecognized_proposal(), mysql_db=None
+    )
+    type_questions = [q for q in questions if q["path"] == clarify.VEHICLE_TYPE_PATH]
+    assert len(type_questions) == 1
+    assert type_questions[0]["severity"] == "warning"
+    assert "Estatus 2005" in type_questions[0]["copy_text"]
+    assert "moto" in type_questions[0]["copy_text"]
+    assert not any(
+        q["severity"] == "critical" and q["path"] == clarify.VEHICLE_TYPE_PATH
+        for q in questions
+    )
+
+
+def test_vehicle_type_question_skipped_once_type_is_known():
+    folio = {
+        "vehicle": {"model": "Estatus", "year": "2005", "vehicle_type": "Moto"},
+        "pieces": [],
+        "whatsapp_pending_questions": [],
+    }
+    questions = clarify.derive_pending_questions(
+        folio, _unrecognized_proposal(), mysql_db=None
+    )
+    assert not any(q["path"] == clarify.VEHICLE_TYPE_PATH for q in questions)
+
+
+@pytest.mark.parametrize(
+    "answer, expected",
+    [
+        ("es una moto", "Moto"),
+        ("Motocicleta", "Moto"),
+        ("camión", "Camión"),
+        ("es un tráiler", "Camión"),
+        ("auto", "Auto/Camioneta"),
+        ("una camioneta pickup", "Auto/Camioneta"),
+        ("otro", "Otro"),
+    ],
+)
+def test_answering_vehicle_type_sets_vehicle_type(answer, expected):
+    folio = {"vehicle": {"model": "Estatus", "year": "2005"}, "pieces": []}
+    question = {"path": clarify.VEHICLE_TYPE_PATH, "status": "open"}
+    patch_, ok, detail = clarify.apply_answer_to_folio(folio, question, answer)
+    assert ok is True
+    assert patch_["vehicle"]["vehicle_type"] == expected
+    assert patch_["vehicle"]["model"] == "Estatus"
+    assert detail == expected
+
+
+def test_answering_vehicle_type_with_gibberish_is_not_applied():
+    folio = {"vehicle": {"model": "Estatus", "year": "2005"}, "pieces": []}
+    question = {"path": clarify.VEHICLE_TYPE_PATH, "status": "open"}
+    _, ok, _ = clarify.apply_answer_to_folio(folio, question, "mmm no sé la verdad")
+    assert ok is False
+
+
+def test_vehicle_type_question_blocks_share_until_answered():
+    question = {
+        "path": clarify.VEHICLE_TYPE_PATH,
+        "status": "open",
+        "severity": "warning",
+    }
+    assert clarify.folio_share_ready({"whatsapp_pending_questions": [question]}) is False
+
+
+def _flush_after_versa_draft(
+    *,
+    extract_result,
+    bodies,
+    mock_llm_cls,
+    mock_whatsapp_cls,
+    mock_inbound_repo,
+    mock_folio_service,
+    mock_session_repo,
+    mock_pending_repo,
+    vehicle_status=None,
+):
+    """Seller already has an open Versa draft, then sends `bodies`."""
+    from app.services.WhatsappIntakeProcessorService import WhatsappIntakeProcessorService
+
+    existing = _open_versa_folio(
+        whatsapp_pending_questions=[
+            {
+                "id": "q-miss",
+                "path": "piece:p1.catalog",
+                "piece_id": "p1",
+                "copy_text": "No encontramos «pistón» en el catálogo.",
+                "severity": "info",
+                "status": "open",
+            }
+        ]
+    )
+    session = _collecting_session(
+        messages=[
+            {"message_sid": f"SM{i}", "body": body} for i, body in enumerate(bodies)
+        ],
+    )
+    mock_inbound_repo.find_by_message_sid.return_value = {"_id": "mongo-1"}
+    mock_llm_cls.return_value.extract.return_value = extract_result
+    created = {
+        "_id": "folio-new",
+        "share_token": "share-new",
+        "folio_code": "NEW001",
+        "updated_at": "2026-01-01T00:00:00+00:00",
+        "vehicle": {"model": "Estatus", "year": "2005"},
+        "pieces": [],
+        "whatsapp_pending_questions": [],
+    }
+    mock_folio_service.create.return_value = created
+    mock_folio_service.update.side_effect = lambda _id, patch_: {**created, **patch_}
+    mock_folio_service._normalize_vehicle.return_value = created["vehicle"]
+    mock_folio_service._is_assigned_to_buyer.return_value = False
+    mock_folio_service._has_ordered_pieces.return_value = False
+    mock_folio_service.get_by_share_token.return_value = existing
+    mock_pending_repo.get_last_share_token.return_value = "share-versa"
+    mock_whatsapp_cls.return_value.native_reactions_enabled = False
+    mock_whatsapp_cls.return_value.send_text_message.return_value = {"message_sid": "OUT"}
+
+    with patch(
+        "app.services.WhatsappIntakeProcessorService.clarify.find_drafts_with_open_questions",
+        return_value=[existing],
+    ):
+        service = WhatsappIntakeProcessorService()
+        service.extract_enabled = True
+        service.client_base_url = "https://www.eassymo.mx"
+        service.whatsapp_public_base_url = "https://www.eassymo.mx"
+        if vehicle_status:
+            service.catalog_mapper.map_vehicle_result = MagicMock(
+                return_value=(extract_result.vehicle, vehicle_status)
+            )
+        service._flush_session("+5217779313704", session)
+    return [
+        c.args[1]
+        for c in mock_whatsapp_cls.return_value.send_text_message.call_args_list
+    ]
+
+
+@patch("app.services.WhatsappIntakeProcessorService.pending_repo")
+@patch("app.services.WhatsappIntakeProcessorService.session_repo")
+@patch("app.services.WhatsappIntakeProcessorService.folio_service")
+@patch("app.services.WhatsappIntakeProcessorService.MySQLSessionLocal", None)
+@patch("app.services.WhatsappIntakeProcessorService.inbound_repo")
+@patch("app.services.WhatsappIntakeProcessorService.WhatsappService")
+@patch("app.services.WhatsappIntakeProcessorService.LlmExtractionService")
+def test_unrecognized_car_creates_separate_draft_with_type_question(
+    mock_llm_cls,
+    mock_whatsapp_cls,
+    mock_inbound_repo,
+    mock_folio_service,
+    mock_session_repo,
+    mock_pending_repo,
+):
+    sent = _flush_after_versa_draft(
+        extract_result=WhatsappExtractionProposal(
+            intent=ExtractionIntent.NEW_REQUEST,
+            lines=[ExtractionLine(local_id="l1", part_name="bujías", quantity=1)],
+            vehicle=ExtractionVehicle(model="Estatus", year="2005"),
+        ),
+        bodies=["Buen día compa, necesito unas bujías", "Estatus 2005 rojo, de mi vecina"],
+        vehicle_status="unrecognized",
+        mock_llm_cls=mock_llm_cls,
+        mock_whatsapp_cls=mock_whatsapp_cls,
+        mock_inbound_repo=mock_inbound_repo,
+        mock_folio_service=mock_folio_service,
+        mock_session_repo=mock_session_repo,
+        mock_pending_repo=mock_pending_repo,
+    )
+
+    mock_folio_service.create.assert_called_once()
+    assert not any("Vinculado a" in body for body in sent)
+    draft = next(body for body in sent if "Borrador listo" in body)
+    assert "No reconocemos «Estatus 2005»" in draft
+    assert "moto" in draft
+
+
+@patch("app.services.WhatsappIntakeProcessorService.pending_repo")
+@patch("app.services.WhatsappIntakeProcessorService.session_repo")
+@patch("app.services.WhatsappIntakeProcessorService.folio_service")
+@patch("app.services.WhatsappIntakeProcessorService.MySQLSessionLocal", None)
+@patch("app.services.WhatsappIntakeProcessorService.inbound_repo")
+@patch("app.services.WhatsappIntakeProcessorService.WhatsappService")
+@patch("app.services.WhatsappIntakeProcessorService.LlmExtractionService")
+def test_parts_with_only_another_year_do_not_merge_into_last_draft(
+    mock_llm_cls,
+    mock_whatsapp_cls,
+    mock_inbound_repo,
+    mock_folio_service,
+    mock_session_repo,
+    mock_pending_repo,
+):
+    sent = _flush_after_versa_draft(
+        extract_result=WhatsappExtractionProposal(
+            intent=ExtractionIntent.NEW_REQUEST,
+            lines=[ExtractionLine(local_id="l1", part_name="bujías", quantity=1)],
+        ),
+        bodies=["Buen día compa, necesito unas bujías", "es un 2005 rojo"],
+        mock_llm_cls=mock_llm_cls,
+        mock_whatsapp_cls=mock_whatsapp_cls,
+        mock_inbound_repo=mock_inbound_repo,
+        mock_folio_service=mock_folio_service,
+        mock_session_repo=mock_session_repo,
+        mock_pending_repo=mock_pending_repo,
+    )
+
+    mock_folio_service.create.assert_called_once()
+    assert any("Borrador listo" in body for body in sent)
+    assert not any("Borrador actualizado" in body for body in sent)

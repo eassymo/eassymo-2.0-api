@@ -63,6 +63,9 @@ class MostradorVehicle(BaseModel):
     license_plate: Optional[str] = Field(None, alias="licensePlate")
     service_order: Optional[str] = Field(None, alias="serviceOrder")
     group_vehicle_id: Optional[str] = Field(None, description="ref to GroupCars when picked from existing")
+    vehicle_type: Optional[str] = Field(
+        None, description="Auto/Camioneta, Moto, Camión or Otro (the web selector's type)"
+    )
 
 
 class MostradorOption(BaseModel):

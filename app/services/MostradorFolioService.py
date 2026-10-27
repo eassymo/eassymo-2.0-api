@@ -1,4 +1,5 @@
 from app.repositories import MostradorFolioRepository as folioRepository
+from app.services.CatalogLabelService import record_option_labels
 from app.schemas.MostradorFolio import MostradorFolio, FolioStatus, FolioSource
 from fastapi import HTTPException
 from bson import ObjectId
@@ -476,6 +477,11 @@ def update_pieces(folio_id: str, pieces: List[dict]) -> dict:
     normalized = [p.model_dump() for p in validated.pieces]
     edition = edition_update(doc, normalized, doc.get("vehicle"), now=_now())
     updated = folioRepository.set_pieces(folio_id, normalized, _now())
+    record_option_labels(
+        _labelable_options(normalized),
+        doc.get("creator_user"),
+        known=_labelable_options(doc.get("pieces") or []),
+    )
     if edition:
         folioRepository.edit(folio_id, edition)
     sync_assigned_folio(folio_id)
@@ -1047,6 +1053,21 @@ def confirm_guest_option(
     return _hydrate(refreshed)
 
 
+def _labelable_options(pieces: List[dict]) -> List[dict]:
+    """Options complete enough to feed the Brands / Guarantees autocomplete.
+
+    A guest's option counts too, but only with a brand and a price filled, so
+    half-typed text does not reach the shared catalog.
+    """
+    return [
+        option
+        for piece in pieces or []
+        for option in (piece.get("options") or [])
+        if str(option.get("brand") or "").strip()
+        and option.get("price") not in (None, "")
+    ]
+
+
 def _option_is_ready(option: dict) -> bool:
     brand = (option.get("brand") or "").strip()
     price = option.get("price")
@@ -1112,6 +1133,10 @@ def _merge_piece_options(
         folio_id, piece_id, normalized["options"], new_status, _now())
     if not updated:
         raise HTTPException(status_code=500, detail="Could not update piece options")
+    record_option_labels(
+        _labelable_options([{"options": incoming}]),
+        doc.get("creator_user"),
+    )
     if log_activity:
         piece_label = _piece_display_name(target)
         shop_label = shop_name or "Una tienda"
@@ -1311,11 +1336,15 @@ def invite_shop(
     client_origin: Optional[str] = None,
     captured_by_buyer: bool = False,
 ) -> dict:
-    """Add a participant shop. Temp shops (no account) get a tube_token + visibility scope."""
+    """Add a participant shop. Temp shops (no account) get a tube_token + visibility scope.
+
+    A piece that is already ordered stays with its order; the new shop only
+    gets the pieces still open, so one ordered piece never blocks sharing the rest.
+    """
     doc = folioRepository.find_by_id(folio_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Folio not found")
-    _require_capture_editable_after_order(doc)
+    visible_piece_ids = _open_piece_ids_for_invite(doc, visible_piece_ids)
 
     tube_token = None if eassymo else uuid4().hex
     shop = {
@@ -2170,6 +2199,28 @@ def _require_piece_options_editable(doc: dict, piece_id: str) -> None:
         )
 
 
+def _open_piece_ids_for_invite(
+    doc: dict, visible_piece_ids: Optional[List[str]]
+) -> Optional[List[str]]:
+    """Drop ordered pieces from an invite; refuse when nothing is left to quote."""
+    ordered = {
+        p.get("piece_id") for p in (doc.get("pieces") or []) if _piece_has_order(p)
+    }
+    if not ordered:
+        return visible_piece_ids
+    if visible_piece_ids is None:
+        candidates = [p.get("piece_id") for p in (doc.get("pieces") or [])]
+    else:
+        candidates = list(visible_piece_ids)
+    open_ids = [pid for pid in candidates if pid and pid not in ordered]
+    if not open_ids:
+        raise HTTPException(
+            status_code=400,
+            detail="Todas las piezas elegidas ya fueron ordenadas",
+        )
+    return open_ids
+
+
 def _require_capture_editable_after_order(doc: dict) -> None:
     if _has_ordered_pieces(doc):
         raise HTTPException(
@@ -2877,6 +2928,7 @@ def confirm(folio_id: str, *, allow_when_assigned: bool = False) -> dict:
     specific_order_uid = doc.get("specific_order_uid") or uuid4().hex
     created_ids: List[str] = []
     pieces = [dict(p) for p in (doc.get("pieces") or [])]
+    materialized: Dict[str, dict] = {}
     notifications: List[dict] = []
     store_name = _group_name(doc.get("origin_group_id"))
 
@@ -2902,6 +2954,7 @@ def confirm(folio_id: str, *, allow_when_assigned: bool = False) -> dict:
         order_doc_id = str(result.inserted_id)
         created_ids.append(order_doc_id)
         piece["order"] = {**piece["order"], "order_doc_id": order_doc_id, "status": "confirmada"}
+        materialized[piece["piece_id"]] = piece["order"]
 
         customer = doc.get("customer") or {}
         if customer.get("type") == "eassymo" and customer.get("user_uid") and customer.get("group_id"):
@@ -2920,13 +2973,20 @@ def confirm(folio_id: str, *, allow_when_assigned: bool = False) -> dict:
                 nd["type"] = nd["type"].value
             notifications.append(nd)
 
-    updated = folioRepository.edit(folio_id, {
-        "pieces": pieces,
-        "status": FolioStatus.CONFIRMED.value,
-        "specific_order_uid": specific_order_uid,
-        "order_ids": (doc.get("order_ids") or []) + created_ids,
-        "updated_at": _now(),
-    })
+    # Write only the pieces that got an Order doc. This also runs from every
+    # public GET, so rewriting the whole array would erase a guest's mark made
+    # on another piece in between.
+    if created_ids:
+        for piece_id, order_embed in materialized.items():
+            folioRepository.set_piece_order(folio_id, piece_id, order_embed, _now())
+        updated = folioRepository.edit(folio_id, {
+            "status": FolioStatus.CONFIRMED.value,
+            "specific_order_uid": specific_order_uid,
+            "order_ids": (doc.get("order_ids") or []) + created_ids,
+            "updated_at": _now(),
+        })
+    else:
+        updated = doc
 
     return _dispatch_notifications({
         "folio": _hydrate(updated),
@@ -3062,6 +3122,7 @@ def _normalize_vehicle(vehicle_info: Optional[dict]) -> Optional[dict]:
         "licensePlate": vehicle_info.get("licensePlate") or vehicle_info.get("license_plate"),
         "serviceOrder": vehicle_info.get("serviceOrder") or vehicle_info.get("service_order"),
         "group_vehicle_id": str(vehicle_info.get("_id")) if vehicle_info.get("_id") else None,
+        "vehicle_type": vehicle_info.get("vehicle_type") or vehicle_info.get("vehicleType"),
     }
 
 
