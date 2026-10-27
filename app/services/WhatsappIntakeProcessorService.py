@@ -1169,12 +1169,9 @@ class WhatsappIntakeProcessorService:
         if _has_draft_pointer(bodies) or _extract_draft_token(bodies):
             return False
         vehicle = proposal.vehicle
-        has_vehicle = bool(
-            vehicle
-            and vehicle.make
-            and vehicle.model
-            and vehicle.year
-        )
+        # The make is optional: a car the catalog does not know arrives with no
+        # make, and that is still a request of its own, not an answer.
+        has_vehicle = bool(vehicle and vehicle.model and vehicle.year)
         return has_vehicle and len(proposal.lines or []) > 0
 
     def _persist_pending_questions(
@@ -1266,9 +1263,11 @@ class WhatsappIntakeProcessorService:
     ) -> bool:
         vehicle = folio.get("vehicle") or {}
         extracted = proposal.vehicle
-        if not extracted or not extracted.make or not extracted.model or not extracted.year:
+        if not extracted or not extracted.model or not extracted.year:
             return False
-        if str(vehicle.get("maker") or "").strip().lower() != str(extracted.make).strip().lower():
+        draft_make = str(vehicle.get("maker") or "").strip().lower()
+        new_make = str(extracted.make or "").strip().lower()
+        if draft_make and new_make and draft_make != new_make:
             return False
         if str(vehicle.get("model") or "").strip().lower() != str(extracted.model).strip().lower():
             return False
