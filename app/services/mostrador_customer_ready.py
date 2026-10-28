@@ -156,3 +156,69 @@ def edition_update(
         "customer_editions": editions,
         "customer_visible_baseline": {"pieces": pieces, "vehicle": vehicle},
     }
+
+
+def seller_offer_count(doc: dict) -> int:
+    """Options the seller side captured; the customer's own typed ones don't count."""
+    return sum(
+        1
+        for piece in (doc.get("pieces") or [])
+        for option in (piece.get("options") or [])
+        if not option.get("captured_by_buyer")
+    )
+
+
+def _hide_seller_offer_details(folio: dict) -> dict:
+    share_prices = folio.get("share_prices") is not False
+    share_codes = folio.get("share_codes") is not False
+    if share_prices and share_codes:
+        return folio
+
+    pieces = []
+    for piece in folio.get("pieces") or []:
+        options = []
+        for option in piece.get("options") or []:
+            if option.get("captured_by_buyer"):
+                options.append(option)  # the customer's own entry stays theirs
+                continue
+            hidden = dict(option)
+            if not share_prices:
+                hidden["price"] = None
+                hidden["price_hidden"] = True
+            if not share_codes:
+                hidden["code"] = None
+                hidden["code_hidden"] = True
+            options.append(hidden)
+        pieces.append({**piece, "options": options})
+
+    result = {**folio, "pieces": pieces}
+    # Internal snapshots and the edit history quote the hidden values.
+    result.pop("customer_visible_baseline", None)
+    if not share_prices:
+        result["customer_editions"] = [
+            {
+                **edition,
+                "changes": [
+                    change
+                    for change in (edition.get("changes") or [])
+                    if not str(change.get("detail") or "").startswith("Opciones:")
+                ],
+            }
+            for edition in (folio.get("customer_editions") or [])
+        ]
+    return result
+
+
+def customer_view(payload):
+    """What a customer may see of a folio response (the folio, or {"folio": ...}).
+
+    Seller routes never call this; every response built from a public share
+    token does, so a price the seller hid cannot leave through any of them.
+    """
+    if not isinstance(payload, dict):
+        return payload
+    if isinstance(payload.get("folio"), dict):
+        return {**payload, "folio": _hide_seller_offer_details(payload["folio"])}
+    if "pieces" in payload:
+        return _hide_seller_offer_details(payload)
+    return payload

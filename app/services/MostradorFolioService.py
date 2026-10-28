@@ -9,8 +9,10 @@ from zoneinfo import ZoneInfo
 from uuid import uuid4
 from app.services.mostrador_customer_ready import (
     customer_can_view,
+    customer_view,
     customer_view_only,
     edition_update,
+    seller_offer_count,
 )
 
 
@@ -37,6 +39,7 @@ def _hydrate(doc: dict) -> dict:
     data = MostradorFolio(**enriched).toJson()
     data["customer_view_only"] = customer_view_only(doc)
     data["preparing"] = not customer_can_view(doc)
+    data["offer_count"] = seller_offer_count(doc)
     return data
 
 
@@ -244,6 +247,8 @@ def get_by_share_token(
     if for_customer and hydrated.get("preparing"):
         hydrated["pieces"] = []
         hydrated["customer_editions"] = []
+    if for_customer:
+        hydrated = customer_view(hydrated)
     return hydrated
 
 
@@ -353,6 +358,7 @@ def sibling_draft_summaries(
             "customer_name": (customer.get("name") or "").strip() or None,
             "assigned": _is_assigned_to_buyer(doc),
             "customer_ready": customer_can_view(doc),
+            "offer_count": seller_offer_count(doc),
         })
     return summaries
 
@@ -511,7 +517,11 @@ def update(folio_id: str, patch: Dict[str, Any]) -> dict:
         "assignment_with_options",
         "sibling_uid",
         "whatsapp_pending_questions",
+        "share_prices",
+        "share_codes",
     }
+    # Raises when a piece is already ordered and the value would change.
+    _visibility_patch(doc, patch.get("share_prices"), patch.get("share_codes"))
     merged = {**doc}
     for key, value in patch.items():
         if key in allowed:
@@ -538,7 +548,34 @@ def update(folio_id: str, patch: Dict[str, Any]) -> dict:
     return _hydrate(updated)
 
 
-def mark_customer_ready(folio_id: str) -> dict:
+def _visibility_patch(
+    doc: dict, share_prices: Optional[bool], share_codes: Optional[bool]
+) -> Dict[str, Any]:
+    """Fields to store for what the customer sees of the seller's offers.
+
+    Only values that change count. Once any piece is ordered nothing about
+    this may change, in either direction.
+    """
+    patch: Dict[str, Any] = {}
+    for key, value in (("share_prices", share_prices), ("share_codes", share_codes)):
+        if value is None:
+            continue
+        wanted = bool(value)
+        if (doc.get(key) is not False) != wanted:
+            patch[key] = wanted
+    if patch and _has_ordered_pieces(doc):
+        raise HTTPException(
+            status_code=409,
+            detail="Ya hay piezas ordenadas: no se puede cambiar lo que ve el cliente",
+        )
+    return patch
+
+
+def mark_customer_ready(
+    folio_id: str,
+    share_prices: Optional[bool] = None,
+    share_codes: Optional[bool] = None,
+) -> dict:
     """One-way: the customer may look at the list. Ordering stays on Compartir."""
     doc = folioRepository.find_by_id(folio_id)
     if not doc:
@@ -557,6 +594,7 @@ def mark_customer_ready(folio_id: str) -> dict:
             },
             "customer_editions": doc.get("customer_editions") or [],
             "updated_at": now,
+            **_visibility_patch(doc, share_prices, share_codes),
         },
     )
     return get(folio_id)
@@ -566,6 +604,8 @@ def enable_for_buyer(
     folio_ids: List[str],
     acknowledged: bool,
     caller_uid: str,
+    share_prices: Optional[bool] = None,
+    share_codes: Optional[bool] = None,
 ) -> dict:
     """Seller: let the buyer look at one or more drafts in one step.
 
@@ -647,7 +687,14 @@ def enable_for_buyer(
                     plan["folio_id"],
                     {"whatsapp_pending_questions": questions, "updated_at": now},
                 )
-            mark_customer_ready(plan["folio_id"])
+            # The choice only matters for a draft that has offers to hide.
+            visibility = {}
+            if seller_offer_count(doc) > 0:
+                if share_prices is not None:
+                    visibility["share_prices"] = share_prices
+                if share_codes is not None:
+                    visibility["share_codes"] = share_codes
+            mark_customer_ready(plan["folio_id"], **visibility)
         results.append(entry)
     return {"results": results}
 
@@ -1701,6 +1748,8 @@ def share(
     whatsapp_phone: Optional[str] = None,
     *,
     client_origin: Optional[str] = None,
+    share_prices: Optional[bool] = None,
+    share_codes: Optional[bool] = None,
 ) -> dict:
     """
     Mark a folio as shared with the customer. Persists customer info, ensures a share_token,
@@ -1716,6 +1765,7 @@ def share(
         "share_token": share_token,
         "status": FolioStatus.SHARED.value,
         "updated_at": _now(),
+        **_visibility_patch(doc, share_prices, share_codes),
     }
     existing_customer = doc.get("customer") or {}
     existing_group_id = existing_customer.get("group_id")

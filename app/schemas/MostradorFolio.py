@@ -236,6 +236,14 @@ class MostradorFolio(BaseModel):
         description="Seller marked the list ready for the customer to look at",
     )
     customer_ready_at: Optional[datetime] = Field(None)
+    share_prices: bool = Field(
+        True,
+        description="When false the customer does not see the seller's option prices",
+    )
+    share_codes: bool = Field(
+        True,
+        description="When false the customer does not see the seller's option product codes",
+    )
     customer_editions: List[dict] = Field(
         default_factory=list,
         description="Seller edits made after the list was shown to the customer",
