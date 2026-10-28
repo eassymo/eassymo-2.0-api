@@ -152,7 +152,10 @@ def public_order(share_token: str, data: dict = Body(...)):
             delivery_contact=data.get("delivery_contact"),
             allow_when_assigned=True,
         )
-        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content=get_successful_response(folioService.customer_view(response)),
+        )
     except Exception as e:
         return JSONResponse(status_code=_err_status(e), content=get_unsuccessful_response(e))
 
@@ -162,7 +165,10 @@ def public_unorder(share_token: str, piece_id: str):
     try:
         folio_id = folioService.folio_id_for_customer_change(share_token)
         response = folioService.unorder_piece(folio_id, piece_id, allow_when_assigned=True)
-        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content=get_successful_response(folioService.customer_view(response)),
+        )
     except Exception as e:
         return JSONResponse(status_code=_err_status(e), content=get_unsuccessful_response(e))
 
@@ -233,7 +239,10 @@ def public_add_piece(share_token: str, data: dict = Body(...)):
     try:
         folio_id = folioService.folio_id_for_customer_change(share_token)
         response = folioService.add_piece_by_guest(folio_id, data)
-        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content=get_successful_response(folioService.customer_view(response)),
+        )
     except Exception as e:
         return JSONResponse(status_code=_err_status(e), content=get_unsuccessful_response(e))
 
@@ -243,7 +252,10 @@ def public_remove_piece(share_token: str, piece_id: str):
     try:
         folio_id = folioService.folio_id_for_customer_change(share_token)
         response = folioService.remove_guest_piece(folio_id, piece_id)
-        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content=get_successful_response(folioService.customer_view(response)),
+        )
     except Exception as e:
         return JSONResponse(status_code=_err_status(e), content=get_unsuccessful_response(e))
 
@@ -262,7 +274,10 @@ def public_submit_piece_options(share_token: str, piece_id: str, data: dict = Bo
             shop_id=data.get("shop_id"),
             shop_name=data.get("shop_name"),
         )
-        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content=get_successful_response(folioService.customer_view(response)),
+        )
     except Exception as e:
         return JSONResponse(status_code=_err_status(e), content=get_unsuccessful_response(e))
 
@@ -272,7 +287,10 @@ def public_confirm(share_token: str):
     try:
         folio_id = folioService.folio_id_for_customer_change(share_token)
         response = folioService.confirm(folio_id, allow_when_assigned=True)
-        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content=get_successful_response(folioService.customer_view(response)),
+        )
     except Exception as e:
         return JSONResponse(status_code=_err_status(e), content=get_unsuccessful_response(e))
 
@@ -290,7 +308,10 @@ def public_invite_shop(share_token: str, request: Request, data: dict = Body(...
             client_origin=folioService._client_origin_from_request(request),
             captured_by_buyer=bool(data.get("captured_by_buyer", False)),
         )
-        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content=get_successful_response(folioService.customer_view(response)),
+        )
     except Exception as e:
         return JSONResponse(status_code=_err_status(e), content=get_unsuccessful_response(e))
 
@@ -306,7 +327,10 @@ def public_claim_guest(share_token: str, data: dict = Body(...)):
             folio_id,
             guest_device_id=data.get("guest_device_id"),
         )
-        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content=get_successful_response(folioService.customer_view(response)),
+        )
     except Exception as e:
         return JSONResponse(status_code=_err_status(e), content=get_unsuccessful_response(e))
 
@@ -325,7 +349,10 @@ def public_claim_account(share_token: str, request: Request, data: dict = Body(.
             phone=data.get("phone"),
             group_name=data.get("group_name"),
         )
-        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content=get_successful_response(folioService.customer_view(response)),
+        )
     except Exception as e:
         return JSONResponse(status_code=_err_status(e), content=get_unsuccessful_response(e))
 
@@ -344,7 +371,10 @@ def public_create_taller_account(share_token: str, request: Request, data: dict 
             phone=data.get("phone"),
             group_name=data.get("group_name"),
         )
-        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content=get_successful_response(folioService.customer_view(response)),
+        )
     except Exception as e:
         return JSONResponse(status_code=_err_status(e), content=get_unsuccessful_response(e))
 
@@ -362,7 +392,10 @@ def public_finish_claim(share_token: str, request: Request, data: dict = Body(..
             group_id=data.get("group_id"),
             account_kind=data.get("account_kind", "buyer"),
         )
-        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content=get_successful_response(folioService.customer_view(response)),
+        )
     except Exception as e:
         return JSONResponse(status_code=_err_status(e), content=get_unsuccessful_response(e))
 
@@ -588,9 +621,13 @@ def customer_name(folio_id: str, request: Request, data: dict = Body(...)):
     "/{folio_id}/customer-ready",
     description="Seller: let the customer look at this list. Does not open ordering.",
 )
-def mark_customer_ready(folio_id: str):
+def mark_customer_ready(folio_id: str, data: dict = Body(default={})):
     try:
-        response = folioService.mark_customer_ready(folio_id)
+        response = folioService.mark_customer_ready(
+            folio_id,
+            share_prices=data.get("share_prices"),
+            share_codes=data.get("share_codes"),
+        )
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
         return JSONResponse(status_code=_err_status(e), content=get_unsuccessful_response(e))
@@ -610,6 +647,8 @@ def enable_for_buyer(request: Request, data: dict = Body(...)):
             data.get("folio_ids") or [],
             bool(data.get("acknowledged")),
             caller_uid,
+            share_prices=data.get("share_prices"),
+            share_codes=data.get("share_codes"),
         )
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
@@ -625,6 +664,8 @@ def share(folio_id: str, request: Request, data: dict = Body(default={})):
             channel=data.get("channel", "whatsapp"),
             whatsapp_phone=data.get("whatsapp_phone"),
             client_origin=folioService._client_origin_from_request(request),
+            share_prices=data.get("share_prices"),
+            share_codes=data.get("share_codes"),
         )
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:

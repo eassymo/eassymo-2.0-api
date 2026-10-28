@@ -74,7 +74,7 @@ class WhatsappIntakeVerificationService:
             "WHATSAPP_TEMPLATE_VERIFY", "wp_eassymo_verification_binder"
         ).strip()
         self.template_language = (
-            os.getenv("WHATSAPP_TEMPLATE_VERIFY_LANGUAGE", "en").strip() or "en"
+            os.getenv("WHATSAPP_TEMPLATE_VERIFY_LANGUAGE", "es_MX").strip() or "es_MX"
         )
 
     def start(self, uid: str, phone: str) -> Dict[str, str]:
