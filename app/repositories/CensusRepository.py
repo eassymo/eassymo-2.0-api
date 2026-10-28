@@ -132,8 +132,23 @@ def find_with_geospatial(filters, lat, lng, max_distance_meters, limit=20, skip=
                 }
             })
         
+        # Eassymo groups (group_reference_id set) first, so they are not buried
+        # under the unclaimed census rows that sit closer.
+        pipeline.append({
+            "$addFields": {
+                "_is_group": {
+                    "$cond": [
+                        {"$eq": [{"$ifNull": ["$group_reference_id", ""]}, ""]},
+                        0,
+                        1,
+                    ]
+                }
+            }
+        })
+
         pipeline.append({
             "$sort": {
+                "_is_group": -1,
                 "distance_meters": 1,  # Closest first
                 "Entity_Name": 1,  # Then by name
                 "group_reference_id": 1
@@ -150,6 +165,7 @@ def find_with_geospatial(filters, lat, lng, max_distance_meters, limit=20, skip=
                 "distance_km": {"$divide": ["$distance_meters", 1000]}
             }
         })
+        pipeline.append({"$project": {"_is_group": 0}})
         
         return database.db["Census"].aggregate(pipeline)
         
