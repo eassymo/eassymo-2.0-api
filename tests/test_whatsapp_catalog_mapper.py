@@ -1,0 +1,573 @@
+from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from app.repositories.WhatsappIntakeSessionRepository import (
+    STATUS_COLLECTING,
+    append_message,
+    bump_generation,
+    open_session,
+)
+from app.schemas.WhatsappExtraction import ExtractionLine, ExtractionVehicle, WhatsappExtractionProposal, ExtractionIntent, ExtractionUncertainty
+from app.services.WhatsappCatalogMapper import (
+    WhatsappCatalogMapper,
+    strip_position_tokens,
+    _pick_catalog_match,
+    _score_catalog_item,
+    vehicle_search_terms,
+    year_from_bodies,
+)
+
+
+def test_score_catalog_item_prefers_exact_match():
+    assert _score_catalog_item("balata", "Balatas") >= 80
+    assert _score_catalog_item("balata", "Ajustadores De Balata") < 55
+
+
+def test_strip_position_tokens_removes_delantera():
+    assert strip_position_tokens("balatas delanteras", "delantera") == "balatas"
+
+
+@patch("app.services.WhatsappCatalogMapper.search_partes_paginator")
+def test_pick_catalog_match_returns_balatas_for_balata(mock_search):
+    mock_search.return_value = {
+        "historicoBusqueda": {
+            "details": [
+                {
+                    "partes": [
+                        {
+                            "tipoParteId": 10,
+                            "tipoParteDescripcion": "Balatas",
+                            "categoriaId": 1,
+                            "subCategoriaId": 2,
+                            "tipoParteSensiblePosicion": True,
+                        },
+                        {
+                            "tipoParteId": 11,
+                            "tipoParteDescripcion": "Ajustadores De Balata",
+                            "categoriaId": 1,
+                            "subCategoriaId": 2,
+                            "tipoParteSensiblePosicion": False,
+                        },
+                    ]
+                }
+            ]
+        }
+    }
+    match = _pick_catalog_match(MagicMock(), "balata")
+    assert match is not None
+    assert match["tipoParteDescripcion"] == "Balatas"
+
+
+@patch("app.services.WhatsappCatalogMapper.search_partes_paginator")
+def test_pick_catalog_match_stays_unmatched_when_ambiguous(mock_search):
+    mock_search.return_value = {
+        "historicoBusqueda": {
+            "details": [
+                {
+                    "partes": [
+                        {
+                            "tipoParteId": 10,
+                            "tipoParteDescripcion": "Filtro de aceite",
+                            "categoriaId": 1,
+                            "subCategoriaId": 2,
+                        },
+                        {
+                            "tipoParteId": 11,
+                            "tipoParteDescripcion": "Filtro de aire",
+                            "categoriaId": 1,
+                            "subCategoriaId": 2,
+                        },
+                    ]
+                }
+            ]
+        }
+    }
+    assert _pick_catalog_match(MagicMock(), "filtro") is None
+
+
+@patch("app.services.WhatsappCatalogMapper.get_unidades_medida_by_parte")
+@patch("app.services.WhatsappCatalogMapper.VehiculoSensibilidadesRepository.find_posiciones_by_tipo_parte")
+@patch("app.services.WhatsappCatalogMapper._pick_catalog_match")
+def test_map_line_maps_balatas_delantera(mock_pick, mock_posiciones, mock_units):
+    mock_pick.return_value = {
+        "tipoParteId": 10,
+        "tipoParteDescripcion": "Balatas",
+        "categoriaId": 1,
+        "subCategoriaId": 2,
+        "tipoParteSensiblePosicion": True,
+    }
+    pos = MagicMock()
+    pos.PosicionNombre = "Delantera"
+    mock_posiciones.return_value = [pos]
+    mock_units.return_value = {
+        "lstUnidadesMedida": [{"etiquetaDefecto": "Pieza"}],
+    }
+
+    mapped = WhatsappCatalogMapper().map_line(
+        MagicMock(),
+        ExtractionLine(
+            local_id="l1",
+            part_name="balatas",
+            quantity=1,
+            unit="pieza",
+            position="delantera",
+        ),
+    )
+
+    assert mapped.tipo_parte_id == "10"
+    assert mapped.name == "Balatas"
+    assert mapped.position == "Delantera"
+    assert mapped.position_suggested is True
+    assert mapped.position_required is True
+    assert mapped.position_standardized is True
+    assert mapped.unit_standardized is True
+    assert mapped.catalog_matched is True
+
+
+@patch("app.services.WhatsappCatalogMapper.get_unidades_medida_by_parte")
+@patch("app.services.WhatsappCatalogMapper.VehiculoSensibilidadesRepository.find_posiciones_by_tipo_parte")
+@patch("app.services.WhatsappCatalogMapper._pick_catalog_match")
+def test_map_line_keeps_unlisted_position_and_unit(mock_pick, mock_posiciones, mock_units):
+    mock_pick.return_value = {
+        "tipoParteId": 10,
+        "tipoParteDescripcion": "Balatas",
+        "categoriaId": 1,
+        "subCategoriaId": 2,
+        "tipoParteSensiblePosicion": True,
+    }
+    pos = MagicMock()
+    pos.PosicionNombre = "Delantera"
+    mock_posiciones.return_value = [pos]
+    mock_units.return_value = {
+        "lstUnidadesMedida": [{"etiquetaDefecto": "Pieza"}],
+    }
+
+    mapped = WhatsappCatalogMapper().map_line(
+        MagicMock(),
+        ExtractionLine(
+            local_id="l1",
+            part_name="balatas",
+            quantity=1,
+            unit="juego",
+            position="lado piloto",
+        ),
+    )
+
+    assert mapped.position == "lado piloto"
+    assert mapped.position_standardized is False
+    assert mapped.position_required is True
+    assert mapped.unit_of_measure == "juego"
+    assert mapped.unit_standardized is False
+    mock_units.assert_called_once()
+    assert mock_units.call_args.args[1] == 10
+    assert mock_units.call_args.kwargs["fallback_to_all"] is False
+
+
+@patch("app.services.WhatsappCatalogMapper.get_unidades_medida_by_parte")
+@patch("app.services.WhatsappCatalogMapper.VehiculoSensibilidadesRepository.find_posiciones_by_tipo_parte")
+@patch("app.services.WhatsappCatalogMapper._pick_catalog_match")
+def test_map_line_defaults_to_part_standardized_unit(mock_pick, mock_posiciones, mock_units):
+    mock_pick.return_value = {
+        "tipoParteId": 5108,
+        "tipoParteDescripcion": "Sensor De Detonación",
+        "categoriaId": 1,
+        "subCategoriaId": 2,
+        "tipoParteSensiblePosicion": False,
+    }
+    mock_posiciones.return_value = []
+    mock_units.return_value = {
+        "lstUnidadesMedida": [
+            {"etiquetaDefecto": "Juego", "unidadMedidaId": 4},
+            {"etiquetaDefecto": "Pieza", "unidadMedidaId": 1},
+        ],
+    }
+
+    mapped = WhatsappCatalogMapper().map_line(
+        MagicMock(),
+        ExtractionLine(
+            local_id="l1",
+            part_name="sensor de detonacion",
+            quantity=1,
+            unit="pieza",
+        ),
+    )
+
+    assert mapped.unit_of_measure == "Pieza"
+    assert mapped.unit_standardized is True
+
+
+@patch("app.services.WhatsappCatalogMapper.get_unidades_medida_by_parte")
+@patch("app.services.WhatsappCatalogMapper.VehiculoSensibilidadesRepository.find_posiciones_by_tipo_parte")
+@patch("app.services.WhatsappCatalogMapper._pick_catalog_match")
+def test_map_line_uses_only_standardized_unit_when_pieza_does_not_apply(
+    mock_pick, mock_posiciones, mock_units
+):
+    mock_pick.return_value = {
+        "tipoParteId": 5108,
+        "tipoParteDescripcion": "Sensor De Detonación",
+        "categoriaId": 1,
+        "subCategoriaId": 2,
+        "tipoParteSensiblePosicion": False,
+    }
+    mock_posiciones.return_value = []
+    mock_units.return_value = {
+        "lstUnidadesMedida": [{"etiquetaDefecto": "Juego", "unidadMedidaId": 4}],
+    }
+
+    mapped = WhatsappCatalogMapper().map_line(
+        MagicMock(),
+        ExtractionLine(
+            local_id="l1",
+            part_name="sensor de detonacion",
+            quantity=1,
+            unit="pieza",
+        ),
+    )
+
+    assert mapped.unit_of_measure == "Juego"
+    assert mapped.unit_standardized is True
+
+
+@patch("app.services.WhatsappCatalogMapper.get_unidades_medida_by_parte")
+@patch("app.services.WhatsappCatalogMapper.VehiculoSensibilidadesRepository.find_posiciones_by_tipo_parte")
+@patch("app.services.WhatsappCatalogMapper._pick_catalog_match")
+def test_map_line_keeps_named_unit_from_the_part_list(mock_pick, mock_posiciones, mock_units):
+    mock_pick.return_value = {
+        "tipoParteId": 5108,
+        "tipoParteDescripcion": "Aceite",
+        "categoriaId": 1,
+        "subCategoriaId": 2,
+        "tipoParteSensiblePosicion": False,
+    }
+    mock_posiciones.return_value = []
+    mock_units.return_value = {
+        "lstUnidadesMedida": [
+            {"etiquetaDefecto": "Pieza"},
+            {"etiquetaDefecto": "Litro"},
+        ],
+    }
+
+    mapped = WhatsappCatalogMapper().map_line(
+        MagicMock(),
+        ExtractionLine(
+            local_id="l1",
+            part_name="aceite",
+            quantity=2,
+            unit="litros",
+        ),
+    )
+
+    assert mapped.unit_of_measure == "Litro"
+    assert mapped.unit_standardized is True
+
+
+@patch("app.config.database.db")
+def test_append_message_sets_flush_at_once(mock_db):
+    col = MagicMock()
+    mock_db.__getitem__.return_value = col
+    now = datetime.now(timezone.utc)
+    first = {
+        "from_number": "+521",
+        "status": STATUS_COLLECTING,
+        "messages": [{"body": "first"}],
+        "generation": 1,
+        "flush_at": now + timedelta(seconds=8),
+    }
+    col.find_one_and_update.return_value = first
+
+    first_session, auto_flush, schedule = append_message(
+        "+521",
+        {"body": "first"},
+        quiet_seconds=8,
+    )
+    assert schedule is True
+    assert first_session["flush_at"] is not None
+
+    second = {
+        **first,
+        "messages": [{"body": "first"}, {"body": "second"}],
+    }
+    col.find_one_and_update.return_value = second
+
+    second_session, _, schedule_again = append_message(
+        "+521",
+        {"body": "second"},
+        quiet_seconds=8,
+    )
+    assert schedule_again is False
+    assert second_session["flush_at"] == first_session["flush_at"]
+    assert auto_flush is False
+
+
+@patch("app.config.database.db")
+def test_bump_generation_increments_for_listo(mock_db):
+    col = MagicMock()
+    mock_db.__getitem__.return_value = col
+    session = {
+        "from_number": "+521",
+        "status": STATUS_COLLECTING,
+        "generation": 1,
+    }
+    bumped = {**session, "generation": 2}
+    col.find_one.side_effect = [session, bumped]
+
+    result = bump_generation("+521")
+    assert result["generation"] == 2
+
+
+def test_vehicle_search_terms_keeps_koleos_from_burst():
+    proposal = WhatsappExtractionProposal(
+        intent=ExtractionIntent.NEW_REQUEST,
+        vehicle=ExtractionVehicle(year="2020"),
+        lines=[
+            ExtractionLine(local_id="a", part_name="sensor de detonación", quantity=1),
+            ExtractionLine(
+                local_id="b",
+                part_name="balatas",
+                quantity=1,
+                position="delantera",
+                raw="Y también unas balatas delanteras",
+            ),
+        ],
+    )
+    terms = vehicle_search_terms(
+        proposal,
+        [
+            "Te encargo pa una koleos",
+            "2020",
+            "Un sensor de detonación porfa",
+            "Y también unas balatas delanteras",
+        ],
+    )
+    assert "koleos" in [term.lower() for term in terms]
+
+
+def test_year_from_bodies_uses_standalone_year_bubble():
+    assert (
+        year_from_bodies(
+            [
+                "Te encargo pa una koleos",
+                "2020",
+                "Un sensor de detonación porfa",
+                "Y también unas balatas delanteras",
+            ]
+        )
+        == "2020"
+    )
+
+
+def test_year_from_bodies_ignores_implausible_and_conflicting_years():
+    assert year_from_bodies(["filtro", "99"]) is None
+    assert year_from_bodies(["2015", "2020"]) is None
+
+
+def test_year_from_bodies_uses_single_mentioned_year():
+    assert year_from_bodies(["Jetta 2015, filtro de aire"]) == "2015"
+
+
+@patch("app.services.WhatsappCatalogMapper.AcesVehiclesService.find_aces_vehicles")
+def test_map_vehicle_fills_year_glm_dropped_from_standalone_bubble(mock_find):
+    hit = MagicMock()
+    hit.VehiculoFabricante = "Renault"
+    hit.VehiculoModelo = "Koleos"
+    mock_find.return_value = [hit]
+
+    proposal = WhatsappExtractionProposal(
+        intent=ExtractionIntent.NEW_REQUEST,
+        vehicle=ExtractionVehicle(make=None, model=None, year=None),
+        lines=[ExtractionLine(local_id="a", part_name="sensor de detonación", quantity=1)],
+    )
+    mapped = WhatsappCatalogMapper().map_vehicle(
+        MagicMock(),
+        proposal,
+        [
+            "Te encargo pa una koleos",
+            "2020",
+            "Un sensor de detonación porfa",
+            "Y también unas balatas delanteras",
+        ],
+    )
+    assert mapped is not None
+    assert mapped.year == "2020"
+    assert mapped.make == "Renault"
+    assert mapped.model == "Koleos"
+    assert mock_find.call_args.args[2] == "2020"
+
+
+@patch("app.services.WhatsappCatalogMapper.AcesVehiclesService.find_aces_vehicles")
+def test_map_vehicle_resolves_koleos_2020(mock_find):
+    hit = MagicMock()
+    hit.VehiculoFabricante = "Renault"
+    hit.VehiculoModelo = "Koleos"
+    mock_find.return_value = [hit]
+
+    proposal = WhatsappExtractionProposal(
+        intent=ExtractionIntent.NEW_REQUEST,
+        vehicle=ExtractionVehicle(year="2020"),
+        uncertainties=[
+            ExtractionUncertainty(
+                path="vehicle.make",
+                reason="No se menciona la marca",
+            )
+        ],
+        lines=[ExtractionLine(local_id="a", part_name="sensor de detonación", quantity=1)],
+    )
+    mapped = WhatsappCatalogMapper().map_vehicle(
+        MagicMock(),
+        proposal,
+        ["Te encargo pa una koleos", "2020"],
+    )
+    assert mapped is not None
+    assert mapped.make == "Renault"
+    assert mapped.model == "Koleos"
+    assert mapped.year == "2020"
+    mock_find.assert_called()
+    assert mock_find.call_args.args[1].lower() == "koleos"
+    assert mock_find.call_args.args[2] == "2020"
+
+
+@patch("app.services.WhatsappCatalogMapper.AcesVehiclesService.find_aces_vehicles")
+def test_map_vehicle_skips_ambiguous_hits(mock_find):
+    first = MagicMock(VehiculoFabricante="Renault", VehiculoModelo="Koleos")
+    second = MagicMock(VehiculoFabricante="Nissan", VehiculoModelo="Koleos")
+    mock_find.return_value = [first, second]
+    proposal = WhatsappExtractionProposal(
+        intent=ExtractionIntent.NEW_REQUEST,
+        vehicle=ExtractionVehicle(year="2020"),
+    )
+    mapped = WhatsappCatalogMapper().map_vehicle(MagicMock(), proposal, ["koleos"])
+    assert mapped is not None
+    assert mapped.make is None
+    assert mapped.model is None
+
+
+@patch("app.services.WhatsappCatalogMapper.AcesVehiclesService.find_aces_vehicles")
+def test_map_vehicle_result_statuses(mock_find):
+    from app.services.WhatsappCatalogMapper import (
+        VEHICLE_AMBIGUOUS,
+        VEHICLE_MATCHED,
+        VEHICLE_UNCHECKED,
+        VEHICLE_UNRECOGNIZED,
+    )
+
+    mapper = WhatsappCatalogMapper()
+    named = WhatsappExtractionProposal(
+        intent=ExtractionIntent.NEW_REQUEST,
+        vehicle=ExtractionVehicle(model="Estatus", year="2005"),
+    )
+
+    mock_find.return_value = []
+    vehicle, status = mapper.map_vehicle_result(MagicMock(), named, ["Estatus 2005 rojo"])
+    assert status == VEHICLE_UNRECOGNIZED
+    assert vehicle.model == "Estatus"
+
+    mock_find.return_value = [MagicMock(VehiculoFabricante="Dodge", VehiculoModelo="Stratus")]
+    vehicle, status = mapper.map_vehicle_result(MagicMock(), named, ["Stratus 2005"])
+    assert status == VEHICLE_MATCHED
+    assert vehicle.model == "Stratus"
+
+    mock_find.return_value = [
+        MagicMock(VehiculoFabricante="Renault", VehiculoModelo="Koleos"),
+        MagicMock(VehiculoFabricante="Nissan", VehiculoModelo="Koleos"),
+    ]
+    _, status = mapper.map_vehicle_result(MagicMock(), named, ["koleos"])
+    assert status == VEHICLE_AMBIGUOUS
+
+    mock_find.return_value = []
+    no_year = WhatsappExtractionProposal(
+        intent=ExtractionIntent.NEW_REQUEST,
+        vehicle=ExtractionVehicle(model="Estatus"),
+    )
+    _, status = mapper.map_vehicle_result(MagicMock(), no_year, ["Estatus rojo"])
+    assert status == VEHICLE_UNCHECKED
+    _, status = mapper.map_vehicle_result(None, named, ["Estatus 2005"])
+    assert status == VEHICLE_UNCHECKED
+
+
+@patch("app.services.WhatsappCatalogMapper.AcesVehiclesService.find_aces_vehicles")
+def test_map_vehicle_result_search_errors_are_unchecked(mock_find):
+    from app.services.WhatsappCatalogMapper import VEHICLE_UNCHECKED
+
+    mock_find.side_effect = RuntimeError("db down")
+    proposal = WhatsappExtractionProposal(
+        intent=ExtractionIntent.NEW_REQUEST,
+        vehicle=ExtractionVehicle(model="Estatus", year="2005"),
+    )
+    _, status = WhatsappCatalogMapper().map_vehicle_result(
+        MagicMock(), proposal, ["Estatus 2005"]
+    )
+    assert status == VEHICLE_UNCHECKED
+
+
+def _catalog_without_estatus(db, term, year):
+    """No "Estatus" exists, but the Chevrolet brand alone returns many models."""
+    if "estatus" in term.lower():
+        return []
+    if "chevrolet" in term.lower():
+        return [
+            MagicMock(VehiculoFabricante="Chevrolet", VehiculoModelo="Aveo"),
+            MagicMock(VehiculoFabricante="Chevrolet", VehiculoModelo="Malibu"),
+        ]
+    return []
+
+
+@patch("app.services.WhatsappCatalogMapper.AcesVehiclesService.find_aces_vehicles")
+def test_invented_make_does_not_hide_an_unknown_model(mock_find):
+    from app.services.WhatsappCatalogMapper import VEHICLE_UNRECOGNIZED
+
+    mock_find.side_effect = _catalog_without_estatus
+    proposal = WhatsappExtractionProposal(
+        intent=ExtractionIntent.NEW_REQUEST,
+        vehicle=ExtractionVehicle(make="Chevrolet", model="Estatus", year="2005"),
+    )
+    vehicle, status = WhatsappCatalogMapper().map_vehicle_result(
+        MagicMock(),
+        proposal,
+        ["Buen día compa, necesito unas bujías...", "Estatus 2005 rojo, de mi vecina"],
+    )
+    assert status == VEHICLE_UNRECOGNIZED
+    assert vehicle.make is None  # the customer never said Chevrolet
+    assert vehicle.model == "Estatus"
+    assert vehicle.year == "2005"
+    searched = [call.args[1] for call in mock_find.call_args_list]
+    assert searched and all("estatus" in term.lower() for term in searched)
+
+
+@patch("app.services.WhatsappCatalogMapper.AcesVehiclesService.find_aces_vehicles")
+def test_a_brand_the_customer_wrote_is_kept_when_the_model_is_unknown(mock_find):
+    from app.services.WhatsappCatalogMapper import VEHICLE_UNRECOGNIZED
+
+    mock_find.side_effect = _catalog_without_estatus
+    proposal = WhatsappExtractionProposal(
+        intent=ExtractionIntent.NEW_REQUEST,
+        vehicle=ExtractionVehicle(make="Chevrolet", model="Estatus", year="2005"),
+    )
+    vehicle, status = WhatsappCatalogMapper().map_vehicle_result(
+        MagicMock(), proposal, ["bujías para chevy Estatus 2005"]
+    )
+    assert status == VEHICLE_UNRECOGNIZED
+    assert vehicle.make == "Chevrolet"
+
+
+@patch("app.services.WhatsappCatalogMapper.AcesVehiclesService.find_aces_vehicles")
+def test_a_named_model_is_not_resolved_from_unrelated_chat_words(mock_find):
+    """A hit on a chat word ("rojo") must not turn an unknown model into some other car."""
+    from app.services.WhatsappCatalogMapper import VEHICLE_UNRECOGNIZED
+
+    def search(db, term, year):
+        if "estatus" in term.lower():
+            return []
+        return [MagicMock(VehiculoFabricante="Ford", VehiculoModelo="Rojo")]
+
+    mock_find.side_effect = search
+    proposal = WhatsappExtractionProposal(
+        intent=ExtractionIntent.NEW_REQUEST,
+        vehicle=ExtractionVehicle(model="Estatus", year="2005"),
+    )
+    vehicle, status = WhatsappCatalogMapper().map_vehicle_result(
+        MagicMock(), proposal, ["Estatus 2005 rojo, de mi vecina"]
+    )
+    assert status == VEHICLE_UNRECOGNIZED
+    assert vehicle.make is None and vehicle.model == "Estatus"

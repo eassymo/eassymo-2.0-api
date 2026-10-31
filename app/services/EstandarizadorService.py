@@ -3,6 +3,9 @@ from typing import Dict, Any, List
 from sqlalchemy.orm import Session
 
 from app.repositories.EstandarizadorRepository import EstandarizadorRepository
+from app.repositories.VehiculoSensibilidadesRepository import (
+    VehiculoSensibilidadesRepository,
+)
 from app.repositories.NonAcesVehiclesRepository import find_distinct_makes
 from app.utils.armadora_names import (
     format_armadora_display_name,
@@ -20,13 +23,56 @@ def _unidad_to_item(u) -> Dict[str, Any]:
     }
 
 
+def get_all_unidades_medida(mysql_db: Session) -> Dict[str, Any]:
+    lst = EstandarizadorRepository.find_all_unidades_medida(mysql_db)
+    return {
+        "success": True,
+        "lstUnidadesMedida": [_unidad_to_item(u) for u in lst],
+    }
+
+
+def _position_to_item(p) -> Dict[str, Any]:
+    return {
+        "posicionId": p.PosicionId,
+        "posicionNombre": p.PosicionNombre or "",
+        "clavei18n": p.clavei18n or "",
+    }
+
+
+def get_all_posiciones(mysql_db: Session) -> Dict[str, Any]:
+    lst = VehiculoSensibilidadesRepository.find_all_posiciones(mysql_db)
+    return {
+        "success": True,
+        "lstPosiciones": [_position_to_item(p) for p in lst],
+    }
+
+
+def get_posiciones_by_parte(mysql_db: Session, id_tipo_parte: int) -> Dict[str, Any]:
+    lst = VehiculoSensibilidadesRepository.find_posiciones_by_tipo_parte(
+        mysql_db, id_tipo_parte
+    )
+    return {
+        "success": True,
+        "lstPosiciones": [_position_to_item(p) for p in lst],
+    }
+
+
 def get_unidades_medida_by_parte(
-    mysql_db: Session, id_tipo_parte: int
+    mysql_db: Session,
+    id_tipo_parte: int,
+    *,
+    fallback_to_all: bool = True,
 ) -> Dict[str, Any]:
+    """Units linked to this part type.
+
+    The HTTP endpoint keeps the historical fallback to every unit when a part
+    has none linked. Callers that must stay on the part's own list pass
+    fallback_to_all=False.
+    """
     lst = EstandarizadorRepository.find_unidades_medida_by_tipo_parte(
         mysql_db, id_tipo_parte
     )
-    if not lst:
+    if not lst and fallback_to_all:
         lst = EstandarizadorRepository.find_all_unidades_medida(mysql_db)
     lst_unidades: List[Dict[str, Any]] = [_unidad_to_item(u) for u in lst]
     return {"success": True, "lstUnidadesMedida": lst_unidades}

@@ -17,6 +17,7 @@ def _exc_detail(exc: HTTPException) -> str:
 
 
 @commissionerInviteRouter.post("")
+@commissionerInviteRouter.post("/", include_in_schema=False)
 def create_commissioner_invite(request: Request, payload: Dict[str, Any] = Body(...)):
     try:
         census_id = payload.get("census_id")
@@ -37,6 +38,7 @@ def create_commissioner_invite(request: Request, payload: Dict[str, Any] = Body(
 
 
 @commissionerInviteRouter.get("")
+@commissionerInviteRouter.get("/", include_in_schema=False)
 def list_commissioner_invites(
     request: Request,
     commissioner_group_id: Optional[str] = Query(

@@ -10,6 +10,7 @@ callCenterConnectionRouter = APIRouter(prefix="/callCenterConnection")
 
 
 @callCenterConnectionRouter.post("", description="creates a unique connection between a call center and a group", tags=["Call Center"])
+@callCenterConnectionRouter.post("/", include_in_schema=False)
 def insert(payload: CallCenterConnection = Body()):
     try:
         response = CallCenterConnectionService.insert(payload)
@@ -20,6 +21,7 @@ def insert(payload: CallCenterConnection = Body()):
 
 
 @callCenterConnectionRouter.get("", description="query service for call center connections", tags=["Call Center"])
+@callCenterConnectionRouter.get("/", include_in_schema=False)
 def find(
     callcenter_id: Optional[str] = Query(default=None, title="callcenter_id"),
     group_id: Optional[str] = Query(default=None, title="group_id")

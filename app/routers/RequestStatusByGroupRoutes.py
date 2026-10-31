@@ -10,12 +10,14 @@ requestStatusByGroupRouter = APIRouter(prefix="/requestStatusByGroup")
 
 
 @requestStatusByGroupRouter.post("", response_model=RequestStatusByGroup)
+@requestStatusByGroupRouter.post("/", include_in_schema=False)
 def insert(payload: RequestStatusByGroup = Body(None)):
     response = RequestStatusByGroupService.insert(payload)
     return JSONResponse(status_code=status.HTTP_200_OK, content=response.toJson())
 
 
 @requestStatusByGroupRouter.get("/", response_model=RequestStatusByGroup)
+@requestStatusByGroupRouter.get("", include_in_schema=False)
 def find_by_group_and_request_id(
     group_id: Optional[str] = Query(None, title="group_id"),
     request_id: Optional[str] = Query(None, title="request_id")

@@ -4,6 +4,7 @@ from bson import ObjectId
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from enum import Enum
+from app.schemas.PartRequest import DeliveryAddress, DeliveryContact
 
 
 class FolioStatus(str, Enum):
@@ -21,6 +22,7 @@ class FolioSource(str, Enum):
     ORDER = "order"
     OFFER_CREATOR = "offer_creator"
     QR_LOAD = "qr_load"
+    WHATSAPP = "whatsapp"
 
 
 class PieceStatus(str, Enum):
@@ -61,6 +63,9 @@ class MostradorVehicle(BaseModel):
     license_plate: Optional[str] = Field(None, alias="licensePlate")
     service_order: Optional[str] = Field(None, alias="serviceOrder")
     group_vehicle_id: Optional[str] = Field(None, description="ref to GroupCars when picked from existing")
+    vehicle_type: Optional[str] = Field(
+        None, description="Auto/Camioneta, Moto, Camión or Otro (the web selector's type)"
+    )
 
 
 class MostradorOption(BaseModel):
@@ -93,6 +98,8 @@ class MostradorPieceOrder(BaseModel):
     status: str = Field("ordenada")
     ordered_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo('UTC')))
     order_doc_id: Optional[str] = Field(None, description="set after confirm -> real Order id")
+    delivery_address: Optional[DeliveryAddress] = Field(None)
+    delivery_contact: Optional[DeliveryContact] = Field(None)
 
 
 class MostradorPiece(BaseModel):
@@ -106,6 +113,18 @@ class MostradorPiece(BaseModel):
     qty: int = Field(1)
     unitOfMeasure: Optional[str] = Field("Pieza")
     position: Optional[str] = Field("No aplica")
+    position_suggested: bool = Field(
+        False, description="WhatsApp mapper suggested this position for seller review"
+    )
+    position_required: bool = Field(
+        False, description="Catalog part needs a position before the draft can be shared"
+    )
+    position_standardized: bool = Field(
+        True, description="Position is a catalog name, or no position was written"
+    )
+    unit_standardized: bool = Field(
+        True, description="Unit of measure is a catalog unit"
+    )
     comments: Optional[str] = Field(None)
     note: bool = Field(False)
     sample: bool = Field(False)
@@ -115,6 +134,7 @@ class MostradorPiece(BaseModel):
     # piece-level shop attribution
     added_by_shop_id: Optional[str] = Field(None)
     added_by_shop_name: Optional[str] = Field(None)
+    added_by_guest: Optional[bool] = Field(None)
 
 
 class ParticipantShop(BaseModel):
@@ -122,6 +142,9 @@ class ParticipantShop(BaseModel):
     name: Optional[str] = Field(None)
     eassymo: bool = Field(True, description="false = temp shop / invitado")
     tube_token: Optional[str] = Field(None, description="token for a temp shop restricted tube")
+    captured_by_buyer: Optional[bool] = Field(
+        None, description="true when the buyer logs this shop's quotes themselves"
+    )
 
 
 class MostradorCustomer(BaseModel):
@@ -132,11 +155,53 @@ class MostradorCustomer(BaseModel):
     group_id: Optional[str] = Field(None, description="customer taller group when existing")
 
 
+class MostradorOriginGroup(BaseModel):
+    """Public-safe seller group snapshot (hydrated from origin_group_id, not stored on folio)."""
+    name: Optional[str] = Field(None)
+    logo_url: Optional[str] = Field(None)
+    address: Optional[str] = Field(None)
+    phone: Optional[str] = Field(None)
+    whatsapp: Optional[str] = Field(None)
+
+
+class MostradorActivityLogEntry(BaseModel):
+    id: str = Field(...)
+    type: str = Field(...)
+    message: str = Field(...)
+    piece_id: Optional[str] = Field(None)
+    shop_name: Optional[str] = Field(None)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo('UTC')))
+    migrated: bool = Field(False)
+
+
+class WhatsappPendingQuestion(BaseModel):
+    id: str = Field(...)
+    path: str = Field(..., description="vehicle.engine, piece:{id}.position, etc.")
+    piece_id: Optional[str] = Field(None)
+    prompt: str = Field(...)
+    copy_text: Optional[str] = Field(
+        None, description="Sentence the seller can paste to the customer"
+    )
+    severity: Optional[str] = Field(
+        None, description="critical, warning, or info"
+    )
+    status: str = Field("open", description="open or answered")
+    asked_message_sid: Optional[str] = Field(None)
+    source: Optional[str] = Field(None, description="llm, catalog_position, vehicle_field")
+    acknowledged_at: Optional[datetime] = Field(
+        None,
+        description="Seller accepted this warning/info when enabling the draft for the buyer",
+    )
+
+
 class MostradorFolio(BaseModel):
     id: Optional[str] = Field(None, alias="_id")
     folio_code: Optional[str] = Field(None, description="short human code (Capturar Folio)")
     share_token: Optional[str] = Field(None, description="UUID for public/customer view")
     source: FolioSource = Field(FolioSource.COUNTER)
+    whatsapp_intake_id: Optional[str] = Field(
+        None, description="WhatsappInboundMessages id or MessageSid"
+    )
     status: FolioStatus = Field(FolioStatus.DRAFT)
     origin_group_id: Optional[str] = Field(None, description="seller group that opened it")
     creator_user: Optional[str] = Field(None, description="creator uid")
@@ -148,11 +213,47 @@ class MostradorFolio(BaseModel):
         description="map of shop_id/tube_token -> list of visible piece_ids (tube scoping)")
     customer: Optional[MostradorCustomer] = Field(None)
     specific_order_uid: Optional[str] = Field(None, description="groups created Orders")
+    sibling_uid: Optional[str] = Field(
+        None,
+        description=(
+            "Groups WhatsApp drafts for different vehicles from one continued request. "
+            "Copied onto PartRequest.specific_order_uid and parent_request_uid so the "
+            "vehicles stay one sibling order."
+        ),
+    )
     order_ids: List[str] = Field(default_factory=list)
     part_request_ids: List[str] = Field(
         default_factory=list, description="real PartRequest ids materialized for buyer group")
     assignment_with_options: Optional[bool] = Field(
         None, description="whether initial assignment included seller offers snapshot")
+    activity_log: List[MostradorActivityLogEntry] = Field(default_factory=list)
+    whatsapp_pending_questions: List[WhatsappPendingQuestion] = Field(
+        default_factory=list,
+        description="Non-blocking clarifications asked over WhatsApp",
+    )
+    customer_ready: bool = Field(
+        False,
+        description="Seller marked the list ready for the customer to look at",
+    )
+    customer_ready_at: Optional[datetime] = Field(None)
+    share_prices: bool = Field(
+        True,
+        description="When false the customer does not see the seller's option prices",
+    )
+    share_codes: bool = Field(
+        True,
+        description="When false the customer does not see the seller's option product codes",
+    )
+    customer_editions: List[dict] = Field(
+        default_factory=list,
+        description="Seller edits made after the list was shown to the customer",
+    )
+    customer_visible_baseline: Optional[dict] = Field(
+        None,
+        description="Pieces and vehicle last shown to the customer",
+    )
+    origin_group: Optional[MostradorOriginGroup] = Field(
+        None, description="hydrated seller group info for public views")
     created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo('UTC')))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo('UTC')))
 
@@ -170,3 +271,25 @@ class MostradorFolio(BaseModel):
         if self.status is not None:
             data['status'] = self.status.value if isinstance(self.status, Enum) else self.status
         return data
+
+
+class AccountProvisionResponse(BaseModel):
+    folio: dict
+    group_id: Optional[str] = None
+    needs_group: bool = False
+    user: Optional[dict] = None
+    notifications: List[dict] = Field(default_factory=list)
+
+
+class FolioRedirectInfoResponse(BaseModel):
+    origin_group_id: Optional[str] = None
+    origin_group_name: Optional[str] = None
+    share_token: str
+    status: Optional[str] = None
+    folio_code: Optional[str] = None
+
+
+class ClaimOwnerResponse(BaseModel):
+    folio: dict
+    claimed: bool = False
+    group_id: Optional[str] = None
