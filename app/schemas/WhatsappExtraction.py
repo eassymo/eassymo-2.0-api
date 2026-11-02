@@ -105,3 +105,30 @@ class WhatsappExtractionProposal(BaseModel):
         if value is None:
             return []
         return value
+
+
+class ClarificationAnswer(BaseModel):
+    """One open question the seller's reply answers, as proposed by the model."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    question_id: str
+    value: str
+    # Exact words from the seller's message that support the answer
+    evidence: str = ""
+
+    @field_validator("question_id", "value", "evidence", mode="before")
+    @classmethod
+    def _stringify(cls, value: Any) -> str:
+        return "" if value is None else str(value).strip()
+
+
+class ClarificationAnswers(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    answers: List[ClarificationAnswer] = Field(default_factory=list)
+
+    @field_validator("answers", mode="before")
+    @classmethod
+    def _null_answers(cls, value: Any) -> Any:
+        return [] if value is None else value

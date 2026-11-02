@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch, call
 import pytest
 
 from app.schemas.WhatsappExtraction import (
+    ClarificationAnswers,
     ExtractionEvidence,
     ExtractionIntent,
     ExtractionLine,
@@ -804,6 +805,9 @@ def test_handle_complement_multiple_open_questions_without_link(
     mock_whatsapp_cls.return_value.send_text_message.return_value = {"message_sid": "SM-ASK"}
 
     service = WhatsappIntakeProcessorService()
+    # The model could not tie the reply to a question (reasoned answers: tests/test_whatsapp_reasoned_answers.py)
+    service.llm_service = MagicMock()
+    service.llm_service.match_answers.return_value = ClarificationAnswers()
     handled = service._handle_complement_or_answer(
         from_number="+5217779313704",
         folio=folio,
