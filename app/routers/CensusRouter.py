@@ -45,6 +45,14 @@ def find(
         None, title="lng", description="Longitude for geospatial search"),
     range_km: Optional[float] = Query(
         None, title="range_km", description="Search radius in kilometers"),
+    min_lat: Optional[float] = Query(
+        None, title="min_lat", description="South edge of the visible map area. With min_lng, max_lat and max_lng, only census items inside the box are returned (overrides range_km)"),
+    min_lng: Optional[float] = Query(
+        None, title="min_lng", description="West edge of the visible map area"),
+    max_lat: Optional[float] = Query(
+        None, title="max_lat", description="North edge of the visible map area"),
+    max_lng: Optional[float] = Query(
+        None, title="max_lng", description="East edge of the visible map area"),
     limit: Optional[int] = Query(50, title="limit")
 ):
     user = request.state._state.get('user')
@@ -64,6 +72,10 @@ def find(
         "lat": lat,
         "lng": lng,
         "range_km": range_km,
+        "min_lat": min_lat,
+        "min_lng": min_lng,
+        "max_lat": max_lat,
+        "max_lng": max_lng,
         "limit": limit,
         "page":  params.dict()["page"]
     }

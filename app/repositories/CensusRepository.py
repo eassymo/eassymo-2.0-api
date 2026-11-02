@@ -63,6 +63,87 @@ def find_city(state: str):
     return database.db["Census"].distinct("Entity_Address_City", {"Entity_Location_State": state})
 
 
+def find_within_bounds(filters, bounds, lat=None, lng=None, limit=200):
+    """
+    Find census documents inside a map viewport (bounding box).
+
+    Args:
+        filters: MongoDB filters (from build_filters)
+        bounds: (min_lat, min_lng, max_lat, max_lng)
+        lat, lng: Optional reference point; when given, distance_meters/distance_km are added
+        limit: Number of documents to return
+
+    Returns:
+        Aggregation cursor, linked Eassymo groups first
+    """
+    min_lat, min_lng, max_lat, max_lng = bounds
+
+    query = {**filters}
+    query.pop("limit", None)
+    query.pop("page", None)
+    query.pop("show_only_census", None)
+    query.pop("location", None)
+
+    # Polygon (not $box) so the 2dsphere index on location is used
+    query["location"] = {
+        "$geoWithin": {
+            "$geometry": {
+                "type": "Polygon",
+                "coordinates": [[
+                    [min_lng, min_lat],
+                    [max_lng, min_lat],
+                    [max_lng, max_lat],
+                    [min_lng, max_lat],
+                    [min_lng, min_lat],
+                ]],
+            }
+        }
+    }
+
+    has_reference_point = lat is not None and lng is not None
+
+    if has_reference_point:
+        pipeline = [{
+            "$geoNear": {
+                "near": {"type": "Point", "coordinates": [lng, lat]},
+                "distanceField": "distance_meters",
+                "spherical": True,
+                "query": query,
+            }
+        }]
+    else:
+        pipeline = [{"$match": query}]
+
+    pipeline.append({
+        "$addFields": {
+            "_is_group": {
+                "$cond": [
+                    {"$eq": [{"$ifNull": ["$group_reference_id", ""]}, ""]},
+                    0,
+                    1,
+                ]
+            }
+        }
+    })
+
+    sort = {"_is_group": -1}
+    if has_reference_point:
+        sort["distance_meters"] = 1
+    sort["Entity_Name"] = 1
+    pipeline.append({"$sort": sort})
+    pipeline.append({"$limit": limit})
+
+    if has_reference_point:
+        pipeline.append({
+            "$addFields": {
+                "distance_km": {"$divide": ["$distance_meters", 1000]}
+            }
+        })
+    pipeline.append({"$project": {"_is_group": 0}})
+
+    return database.db["Census"].aggregate(pipeline)
+
+
 def find_with_geospatial(filters, lat, lng, max_distance_meters, limit=20, skip=0):
     """
     Find census documents using geospatial aggregation with distance calculation.
