@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Body, Depends, status, Request, Header, UploadFile, Form
+from fastapi import APIRouter, Body, Depends, status, Request, Header, UploadFile, Form, Query
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
@@ -35,11 +35,17 @@ def create(request: Request, data: dict = Body(...), groupselected: str = Header
 
 @mostradorRouter.get("", description="List folios for the selected group")
 @mostradorRouter.get("/", include_in_schema=False)
-def list_folios(request: Request, groupselected: str = Header(None)):
+def list_folios(
+    request: Request,
+    groupselected: str = Header(None),
+    page: Optional[int] = Query(None, ge=1, description="Page number (1-based); used with limit"),
+    limit: Optional[int] = Query(None, ge=1, le=100, description="Folios per page; omit to return all"),
+    search: Optional[str] = Query(None, description="Case-insensitive match on folio code, customer, vehicle or piece names"),
+):
     try:
         caller_uid = require_authenticated_uid(request)
         assert_group_membership(caller_uid, str(groupselected))
-        response = folioService.list_for_group(groupselected)
+        response = folioService.list_for_group(groupselected, page=page, limit=limit, search=search)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
         return JSONResponse(status_code=_err_status(e), content=get_unsuccessful_response(e))

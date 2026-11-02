@@ -1,3 +1,4 @@
+import re
 from app.repositories import MostradorFolioRepository as folioRepository
 from app.services.CatalogLabelService import record_option_labels
 from app.schemas.MostradorFolio import MostradorFolio, FolioStatus, FolioSource
@@ -68,17 +69,51 @@ def create(payload: dict, creator_uid: Optional[str], group_id: Optional[str]) -
         raise HTTPException(status_code=500, detail=f"Error while creating folio {e}")
 
 
-def list_for_group(group_id: Optional[str]) -> List[dict]:
+_FOLIO_SEARCH_FIELDS = (
+    "folio_code",
+    "customer.name",
+    "customer.phone",
+    "vehicle.maker",
+    "vehicle.model",
+    "vehicle.year",
+    "pieces.name",
+    "pieces.tipoParteDescripcion",
+)
+
+
+def _folio_search_filter(search: Optional[str]) -> Optional[dict]:
+    """Every word must appear in one of the searchable fields (case-insensitive)."""
+    words = [word for word in (search or "").split() if word]
+    if not words:
+        return None
+    return {
+        "$and": [
+            {"$or": [{field: {"$regex": re.escape(word), "$options": "i"}} for field in _FOLIO_SEARCH_FIELDS]}
+            for word in words
+        ]
+    }
+
+
+def list_for_group(
+    group_id: Optional[str],
+    page: Optional[int] = None,
+    limit: Optional[int] = None,
+    search: Optional[str] = None,
+) -> List[dict]:
     if not group_id:
         raise HTTPException(status_code=400, detail="group_id is required")
     try:
-        filters = {
+        filters: Dict[str, Any] = {
             "$or": [
                 {"origin_group_id": group_id},
                 {"participant_shops.group_id": group_id},
             ]
         }
-        return [_hydrate(d) for d in folioRepository.find(filters)]
+        search_filter = _folio_search_filter(search)
+        if search_filter:
+            filters = {"$and": [filters, search_filter]}
+        skip = ((page or 1) - 1) * limit if limit else 0
+        return [_hydrate(d) for d in folioRepository.find(filters, skip=skip, limit=limit or 0)]
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error while listing folios {e}")
 

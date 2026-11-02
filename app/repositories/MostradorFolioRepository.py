@@ -71,8 +71,14 @@ def find_by_tube_token(tube_token: str) -> Optional[dict]:
     return _col().find_one({"participant_shops.tube_token": tube_token})
 
 
-def find(filters: Dict[str, Any]):
-    return _col().find(filters).sort("updated_at", -1)
+def find(filters: Dict[str, Any], skip: int = 0, limit: int = 0):
+    """limit=0 means no limit. _id breaks updated_at ties so pages don't overlap."""
+    cursor = _col().find(filters).sort([("updated_at", -1), ("_id", -1)])
+    if skip:
+        cursor = cursor.skip(skip)
+    if limit:
+        cursor = cursor.limit(limit)
+    return cursor
 
 
 def find_by_customer_phone(phone: str, limit: int = 25) -> List[dict]:
