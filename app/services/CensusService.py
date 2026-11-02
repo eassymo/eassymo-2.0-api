@@ -14,20 +14,45 @@ from typing import List
 from difflib import SequenceMatcher
 
 
+BOUNDS_SEARCH_MAX_LIMIT = 200
+
+
+def _get_bounds(parameters):
+    """(min_lat, min_lng, max_lat, max_lng) when all four map bounds are given, else None."""
+    bounds = tuple(parameters.get(key) for key in ("min_lat", "min_lng", "max_lat", "max_lng"))
+    return bounds if all(value is not None for value in bounds) else None
+
+
 def find(filters):
     try:
         user_uid = filters["userUid"]
         group_id = filters["group_id"]
 
+        bounds = _get_bounds(filters)
+        is_bounds_search = bounds is not None
+
         # Check if this is a geospatial search
-        is_geospatial_search = (filters.get("lat") is not None and
+        is_geospatial_search = (not is_bounds_search and
+                                filters.get("lat") is not None and
                                 filters.get("lng") is not None and
                                 filters.get("range_km") is not None)
 
         built_filters = build_filters(filters)
         print(built_filters)
 
-        if is_geospatial_search:
+        if is_bounds_search:
+            # Visible map area; lat/lng (when given) only drive distance_km
+            results = list(censusRepository.find_within_bounds(
+                built_filters,
+                bounds,
+                filters.get("lat"),
+                filters.get("lng"),
+                min(built_filters["limit"], BOUNDS_SEARCH_MAX_LIMIT),
+            ))
+            total_count = len(results)
+            group_count = sum(
+                1 for r in results if r.get("group_reference_id"))
+        elif is_geospatial_search:
             # Use geospatial aggregation for location-based search
             range_meters = filters["range_km"] * 1000
             results = list(censusRepository.find_with_geospatial(
@@ -61,7 +86,8 @@ def find(filters):
             "group_count": group_count,
             "page": built_filters["page"],
             "limit": built_filters["limit"],
-            "is_geospatial_search": is_geospatial_search
+            "is_geospatial_search": is_geospatial_search,
+            "is_bounds_search": is_bounds_search
         }
     except PyMongoError as err:
         return {"message": f'Error getting items from census {err}'}
@@ -187,8 +213,9 @@ def build_filters(parameters):
             {"group_reference_id": {"$nin": [None, ""]}},
         ]})
 
-    # Handle geospatial search
-    if (parameters.get("lat") is not None and
+    # Handle geospatial search (map bounds take precedence over the radius)
+    if (_get_bounds(parameters) is None and
+        parameters.get("lat") is not None and
         parameters.get("lng") is not None and
             parameters.get("range_km") is not None):
 

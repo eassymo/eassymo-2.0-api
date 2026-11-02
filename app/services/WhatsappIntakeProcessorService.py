@@ -20,13 +20,18 @@ from app.repositories.WhatsappIntakeSessionRepository import (
     STATUS_FLUSHING,
 )
 from app.schemas.WhatsappExtraction import (
+    ExtractionIntent,
     ExtractionUncertainty,
+    ExtractionVehicle,
     WhatsappExtractionProposal,
 )
 from app.services import MostradorFolioService as folio_service
 from app.services.LlmExtractionService import LlmExtractionService, LlmRateLimitError
 from app.services.WhatsappCatalogMapper import (
+    VEHICLE_MATCHED,
+    VEHICLE_UNCHECKED,
     VEHICLE_UNRECOGNIZED,
+    _normalize_text as _normalize_catalog_text,
     WhatsappCatalogMapper,
     year_from_bodies,
 )
@@ -953,6 +958,7 @@ class WhatsappIntakeProcessorService:
             burst_id=burst_id,
             group_id=group_id,
             creator_uid=creator_uid,
+            quoted_sid=original_replied_message_sid,
         )
 
     def _try_fill_forwarded_answers(
@@ -1649,6 +1655,7 @@ class WhatsappIntakeProcessorService:
         burst_id: Optional[str],
         group_id: str,
         creator_uid: Optional[str],
+        quoted_sid: Optional[str] = None,
     ) -> bool:
         can_resume, refuse_message = self._can_resume_folio(
             folio,
@@ -1681,6 +1688,15 @@ class WhatsappIntakeProcessorService:
 
         if not question:
             open_items = clarify.open_questions(folio)
+            # One reply can answer several of the questions asked together
+            if len(open_items) > 1 and self._apply_reasoned_answers(
+                from_number=from_number,
+                folio=folio,
+                answer_text=answer_text,
+                quoted_sid=quoted_sid,
+                burst_id=burst_id,
+            ):
+                return True
             if len(open_items) > 1 and not _extract_draft_token([answer_text]):
                 self._send_bot_message(
                     from_number,
@@ -1702,7 +1718,19 @@ class WhatsappIntakeProcessorService:
             )
             return True
 
-        patch, ok, detail = clarify.apply_answer_to_folio(folio, question, answer_text)
+        if str(question.get("path") or "") in clarify.FREE_TEXT_VEHICLE_PATHS:
+            # Brand and model never take the raw reply; the model and the catalog decide
+            if self._apply_reasoned_answers(
+                from_number=from_number,
+                folio=folio,
+                answer_text=answer_text,
+                quoted_sid=quoted_sid,
+                burst_id=burst_id,
+            ):
+                return True
+            patch, ok, detail = folio, False, None
+        else:
+            patch, ok, detail = clarify.apply_answer_to_folio(folio, question, answer_text)
         if ok:
             updated = folio_service.update(
                 folio_id,
@@ -1753,6 +1781,165 @@ class WhatsappIntakeProcessorService:
                 folio_id=folio_id,
             )
         return True
+
+    def _apply_reasoned_answers(
+        self,
+        *,
+        from_number: str,
+        folio: dict,
+        answer_text: str,
+        quoted_sid: Optional[str],
+        burst_id: Optional[str],
+    ) -> bool:
+        """Let the model work out which open questions the reply answers, then save the ones that check out.
+
+        Every proposed answer must be backed by the seller's own words. Brand and
+        model are saved only when the catalog recognizes the car; the brand may then
+        come from the catalog even if the seller only named the model.
+        """
+        questions = [
+            item
+            for item in clarify.open_questions(folio)
+            if not str(item.get("path") or "").endswith(".catalog")
+        ]
+        if not questions or not (answer_text or "").strip():
+            return False
+
+        quoted_doc = self._inbound_doc(quoted_sid) if quoted_sid else {}
+        quoted_text = str(quoted_doc.get("body") or "") if quoted_doc.get("direction") == "outbound" else ""
+        try:
+            proposed = self.llm_service.match_answers(
+                [answer_text],
+                [
+                    {
+                        "id": item.get("id"),
+                        "prompt": clarify.question_copy_text(item) or item.get("prompt"),
+                    }
+                    for item in questions
+                ],
+                quoted_text=quoted_text,
+            )
+        except Exception:
+            logger.exception("Answer matching failed for %s", from_number)
+            return False
+
+        by_id = {str(item.get("id")): item for item in questions}
+        normalized_reply = f" {_normalize_catalog_text(answer_text)} "
+        identity: Dict[str, str] = {}
+        others: List[Tuple[dict, str]] = []
+        for answer in proposed.answers:
+            question = by_id.get(answer.question_id)
+            evidence = _normalize_catalog_text(answer.evidence)
+            if not question or not answer.value or not evidence:
+                continue
+            if f" {evidence} " not in normalized_reply:
+                continue
+            path = str(question.get("path") or "")
+            if path in clarify.FREE_TEXT_VEHICLE_PATHS:
+                identity[path] = answer.value
+            else:
+                others.append((question, answer.value))
+
+        pieces = [dict(piece) for piece in (folio.get("pieces") or [])]
+        vehicle = dict(folio.get("vehicle") or {})
+        answered_ids: List[str] = []
+        details: List[str] = []
+        for question, value in others:
+            trial = {**folio, "pieces": pieces, "vehicle": vehicle}
+            patch, ok, detail = clarify.apply_answer_to_folio(trial, question, value)
+            if not ok:
+                continue
+            pieces = patch.get("pieces", pieces)
+            vehicle = patch.get("vehicle", vehicle)
+            answered_ids.append(str(question.get("id")))
+            if detail:
+                details.append(detail)
+
+        if identity:
+            status, matched = self._catalog_identity(
+                make=identity.get("vehicle.make") or vehicle.get("maker"),
+                model=identity.get("vehicle.model") or vehicle.get("model"),
+                year=vehicle.get("year"),
+                answer_text=answer_text,
+            )
+            if matched:
+                vehicle["maker"], vehicle["model"] = matched
+                answered_ids.extend(
+                    str(item.get("id"))
+                    for item in questions
+                    if item.get("path") in clarify.FREE_TEXT_VEHICLE_PATHS
+                )
+                details.insert(0, f"{matched[0]} {matched[1]}")
+            elif status == VEHICLE_UNCHECKED:
+                # No year or no catalog yet, so nothing can confirm the car. Keep what the
+                # seller actually wrote; an inferred brand waits for the catalog.
+                stated: List[str] = []
+                for item in questions:
+                    path = str(item.get("path") or "")
+                    value = identity.get(path)
+                    if not value or f" {_normalize_catalog_text(value)} " not in normalized_reply:
+                        continue
+                    vehicle["maker" if path == "vehicle.make" else "model"] = value
+                    answered_ids.append(str(item.get("id")))
+                    stated.append(value)
+                if stated:
+                    details.insert(0, " ".join(stated))
+
+        if not answered_ids:
+            return False
+
+        pending = [dict(item) for item in (folio.get("whatsapp_pending_questions") or [])]
+        for row in pending:
+            if str(row.get("id")) in answered_ids and row.get("status") == "open":
+                row["status"] = "answered"
+        folio_id = str(folio.get("_id") or folio.get("id") or "")
+        updated = folio_service.update(
+            folio_id,
+            {"pieces": pieces, "vehicle": vehicle, "whatsapp_pending_questions": pending},
+        )
+        share_token = str(updated.get("share_token") or folio.get("share_token") or "")
+        version = str(updated.get("updated_at") or "")
+        link = self._draft_preview_link(share_token, folio_id, version=version or None)
+        self._send_bot_message(
+            from_number,
+            clarify.append_alert_lines(
+                f"Listo · {clarify.folio_code_of(updated)} · {' · '.join(details) or 'actualizado'}.\n{link}",
+                updated,
+            ),
+            burst_id=burst_id,
+            kind="bot_draft",
+            folio_id=folio_id,
+            media_url=self._draft_card_image_url(share_token, version=version or None),
+        )
+        return True
+
+    def _catalog_identity(
+        self,
+        *,
+        make: Optional[str],
+        model: Optional[str],
+        year: Optional[str],
+        answer_text: str,
+    ) -> Tuple[str, Optional[Tuple[str, str]]]:
+        """Catalog status, plus (make, model) only when it recognizes exactly one car."""
+        if not model and not make:
+            return VEHICLE_UNCHECKED, None
+        mysql_db = MySQLSessionLocal() if MySQLSessionLocal is not None else None
+        try:
+            proposal = WhatsappExtractionProposal(
+                intent=ExtractionIntent.NEW_REQUEST,
+                vehicle=ExtractionVehicle(make=make or None, model=model or None, year=year or None),
+            )
+            resolved, status = self._map_catalog_vehicle(mysql_db, proposal, [answer_text])
+        except Exception:
+            logger.exception("Catalog lookup failed while applying answers")
+            return VEHICLE_UNCHECKED, None
+        finally:
+            if mysql_db is not None:
+                mysql_db.close()
+        if status != VEHICLE_MATCHED or not resolved or not resolved.make or not resolved.model:
+            return status, None
+        return status, (resolved.make, resolved.model)
 
     def _send_draft_link_message(
         self,

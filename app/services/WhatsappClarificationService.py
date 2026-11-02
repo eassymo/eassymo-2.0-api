@@ -25,6 +25,8 @@ _SKIP_POSITIONS = {"", "no aplica", "n/a", "na"}
 VEHICLE_TYPE_PATH = "vehicle.type"
 # Questions only a vehicle edit can settle (the year has its own quick answer).
 VEHICLE_IDENTITY_PATHS = {"vehicle.make", "vehicle.model", VEHICLE_TYPE_PATH}
+# Answers to these are free text, so a raw reply must never be written into them.
+FREE_TEXT_VEHICLE_PATHS = {"vehicle.make", "vehicle.model"}
 # Same labels as the web vehicle selector (year-selector.tsx).
 VEHICLE_TYPE_CAR = "Auto/Camioneta"
 _VEHICLE_TYPE_KEYWORDS = (
@@ -574,6 +576,9 @@ def fill_open_questions(folio: dict, answer_text: str) -> Optional[Tuple[dict, L
         if question.get("status") != "open":
             continue
         if str(question.get("path") or "").endswith(".catalog"):
+            continue
+        if question.get("path") in FREE_TEXT_VEHICLE_PATHS:
+            # A bare year/position reply would land here verbatim as a brand or model
             continue
         trial = {
             **folio,
