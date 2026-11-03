@@ -922,6 +922,25 @@ class WhatsappIntakeProcessorService:
             )
             return None
 
+    def _quoted_folio(self, original_replied_message_sid: Optional[str]) -> Optional[dict]:
+        """Draft a quoted bot message belongs to: a clarification question or the draft message."""
+        if not original_replied_message_sid:
+            return None
+        folio = clarify.find_folio_by_clarify_sid(original_replied_message_sid)
+        if folio:
+            return folio
+        doc = self._inbound_doc(original_replied_message_sid)
+        folio_id = str(doc.get("folio_id") or "") if doc.get("direction") == "outbound" else ""
+        if not folio_id:
+            return None
+        try:
+            return folio_service.get(folio_id)
+        except HTTPException:
+            return None
+        except Exception:
+            logger.exception("Failed to load folio for quoted bot message")
+            return None
+
     def _latest_original_reply_sid(self, message_sids: List[str]) -> Optional[str]:
         for sid in reversed(message_sids):
             doc = inbound_repo.find_by_message_sid(sid) or {}
@@ -1619,6 +1638,14 @@ class WhatsappIntakeProcessorService:
                     if question.get("asked_message_sid") == original_replied_message_sid:
                         return folio, question
                 return folio, None
+            quoted = self._quoted_folio(original_replied_message_sid)
+            if (
+                quoted
+                and clarify.open_questions(quoted)
+                and not self._is_new_vehicle_request(proposal, quoted)
+            ):
+                open_q = clarify.open_questions(quoted)
+                return quoted, open_q[0] if len(open_q) == 1 else None
 
         token = _extract_draft_token(bodies)
         if token:
@@ -2660,6 +2687,26 @@ class WhatsappIntakeProcessorService:
             return
 
         if self._is_full_new_request(proposal, extract_bodies):
+            quoted = self._quoted_folio(original_replied_message_sid)
+            if quoted and self._is_new_vehicle_request(proposal, quoted):
+                can_resume, _refuse = self._can_resume_folio(
+                    quoted, group_id=group_id or "", creator_uid=creator_uid
+                )
+                if can_resume:
+                    self._create_draft_from_proposal(
+                        from_number=from_number,
+                        group_id=group_id,
+                        creator_uid=creator_uid,
+                        store_name=store_name,
+                        proposal=proposal,
+                        message_sids=message_sids,
+                        primary_intake_id=primary_intake_id,
+                        bodies=extract_bodies,
+                        burst_id=burst_id,
+                        session=session,
+                        sibling_of=quoted,
+                    )
+                    return
             matched = self._find_resend_match_folio(
                 from_number=from_number,
                 proposal=proposal,
@@ -2703,10 +2750,13 @@ class WhatsappIntakeProcessorService:
             return
 
         if not self._proposal_has_vehicle(proposal):
-            last_token = self._latest_share_token(from_number)
-            resume_folio = (
-                self._load_folio_by_share_token(last_token) if last_token else None
-            )
+            resume_folio = self._quoted_folio(original_replied_message_sid)
+            from_quote = resume_folio is not None
+            if not resume_folio:
+                last_token = self._latest_share_token(from_number)
+                resume_folio = (
+                    self._load_folio_by_share_token(last_token) if last_token else None
+                )
             if resume_folio and self._bodies_name_other_year(
                 resume_folio, extract_bodies
             ):
@@ -2723,6 +2773,7 @@ class WhatsappIntakeProcessorService:
                     bodies=extract_bodies,
                     burst_id=burst_id,
                     session=session,
+                    sibling_of=resume_folio if from_quote else None,
                 )
                 return
             if resume_folio:

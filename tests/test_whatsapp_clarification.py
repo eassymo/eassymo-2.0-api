@@ -2015,3 +2015,55 @@ def test_open_draft_match_ignores_a_make_that_is_missing_on_one_side():
     assert service._proposal_matches_open_draft(proposal(None), draft) is True
     assert service._proposal_matches_open_draft(proposal("Chevrolet"), draft) is True
     assert service._proposal_matches_open_draft(proposal("Dodge"), draft) is False
+
+
+@patch("app.services.WhatsappIntakeProcessorService.folio_service")
+@patch("app.services.WhatsappIntakeProcessorService.inbound_repo")
+@patch("app.services.WhatsappClarificationService.folioRepository")
+def test_resolve_complement_folio_reply_to_draft_message(
+    mock_folio_repo, mock_inbound_repo, mock_folio_service
+):
+    from app.services.WhatsappIntakeProcessorService import WhatsappIntakeProcessorService
+
+    folio = {
+        "_id": "folio-2",
+        "folio_code": "QUOTED",
+        "whatsapp_pending_questions": [
+            {"id": "q1", "path": "vehicle.engine", "status": "open", "prompt": "¿Motor?"}
+        ],
+    }
+    mock_folio_repo.find_by_clarify_message_sid.return_value = None
+    mock_inbound_repo.find_by_message_sid.return_value = {
+        "message_sid": "SM-DRAFT",
+        "direction": "outbound",
+        "kind": "bot_draft",
+        "folio_id": "folio-2",
+    }
+    mock_folio_service.get.return_value = folio
+
+    service = WhatsappIntakeProcessorService()
+    resolved_folio, question = service._resolve_complement_folio(
+        from_number="+5217779313704",
+        bodies=["1.6"],
+        group_id="g1",
+        creator_uid="uid-1",
+        original_replied_message_sid="SM-DRAFT",
+    )
+
+    assert resolved_folio["folio_code"] == "QUOTED"
+    assert question["path"] == "vehicle.engine"
+
+
+@patch("app.services.WhatsappIntakeProcessorService.inbound_repo")
+@patch("app.services.WhatsappClarificationService.folioRepository")
+def test_quoted_folio_ignores_inbound_user_messages(mock_folio_repo, mock_inbound_repo):
+    from app.services.WhatsappIntakeProcessorService import WhatsappIntakeProcessorService
+
+    mock_folio_repo.find_by_clarify_message_sid.return_value = None
+    mock_inbound_repo.find_by_message_sid.return_value = {
+        "message_sid": "SM-USER",
+        "direction": "inbound",
+        "folio_id": "folio-3",
+    }
+
+    assert WhatsappIntakeProcessorService()._quoted_folio("SM-USER") is None
