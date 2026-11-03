@@ -93,8 +93,6 @@ celerybeat.pid
 *.sage.py
 
 # Environments
-.env
-.env.local
 .env.development.local
 .env.test.local
 .env.production.local
@@ -143,7 +141,6 @@ cython_debug/
 # OS / IDE
 .DS_Store
 .cursor/
-.vscode/
 .idea/
 
 # Local-only scripts and exports
@@ -152,3 +149,5 @@ temp_auto_push.bat
 temp_interactive_push.bat
 
 # Note: .env.example and docs/ remain tracked.
+config.bat
+node_modules
