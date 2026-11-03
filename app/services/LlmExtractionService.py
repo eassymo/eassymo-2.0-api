@@ -10,7 +10,11 @@ import requests
 
 from app.schemas.WhatsappExtraction import (
     ClarificationAnswers,
+    ExtractionEvidence,
     ExtractionIntent,
+    ExtractionLine,
+    ExtractionUncertainty,
+    ExtractionVehicle,
     WhatsappExtractionProposal,
 )
 
@@ -397,18 +401,94 @@ class LlmExtractionService:
                 texts.append(alt)
         return texts
 
+    @staticmethod
+    def _known(model: Any, item: Any) -> Optional[Dict[str, Any]]:
+        """The item's fields the schema knows; None when it isn't an object."""
+        if not isinstance(item, dict):
+            return None
+        return {key: value for key, value in item.items() if key in model.model_fields}
+
+    @classmethod
+    def _fit_vehicle(cls, item: Any) -> Optional[Dict[str, Any]]:
+        return cls._known(ExtractionVehicle, item)
+
+    @classmethod
+    def _fit_lines(cls, items: Any) -> list:
+        lines = []
+        for index, item in enumerate(items if isinstance(items, list) else []):
+            line = cls._known(ExtractionLine, item)
+            # A line has to name a part; "son traseras" alone is a position, not a piece
+            if not line or not isinstance(line.get("part_name"), str) or not line["part_name"].strip():
+                continue
+            if not isinstance(line.get("local_id"), str) or not line["local_id"].strip():
+                line["local_id"] = f"line_{index + 1}"
+            if isinstance(line.get("quantity"), (int, float)) and not isinstance(line["quantity"], bool) and line["quantity"] < 1:
+                line["quantity"] = 1
+            if line.get("unit") is None:
+                line.pop("unit", None)
+            lines.append(line)
+        return lines
+
+    @classmethod
+    def _fit_proposal(cls, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Trim the model's JSON to the extraction schema.
+
+        A field the schema doesn't know, a line without a part or an unknown
+        intent would otherwise throw away the whole reply.
+        """
+        fitted = cls._known(WhatsappExtractionProposal, data) or {}
+        intents = {item.value for item in ExtractionIntent}
+        if fitted.get("intent") not in intents:
+            fitted["intent"] = ExtractionIntent.UNKNOWN.value
+        if "vehicle" in fitted:
+            fitted["vehicle"] = cls._fit_vehicle(fitted["vehicle"])
+        if "lines" in fitted:
+            fitted["lines"] = cls._fit_lines(fitted["lines"])
+        if "additional_requests" in fitted:
+            requests_ = []
+            for item in fitted["additional_requests"] if isinstance(fitted["additional_requests"], list) else []:
+                if not isinstance(item, dict):
+                    continue
+                lines = cls._fit_lines(item.get("lines"))
+                if lines:
+                    requests_.append({"vehicle": cls._fit_vehicle(item.get("vehicle")), "lines": lines})
+            fitted["additional_requests"] = requests_
+        for key, model, required in (
+            ("uncertainties", ExtractionUncertainty, ("path", "reason")),
+            ("evidence", ExtractionEvidence, ("path", "raw")),
+        ):
+            if key in fitted:
+                kept = []
+                for item in fitted[key] if isinstance(fitted[key], list) else []:
+                    row = cls._known(model, item)
+                    if row and all(isinstance(row.get(field), str) for field in required):
+                        kept.append(row)
+                fitted[key] = kept
+        if "warnings" in fitted:
+            fitted["warnings"] = [item for item in fitted["warnings"] or [] if isinstance(item, str)]
+        if "schema_version" in fitted and not isinstance(fitted["schema_version"], str):
+            fitted.pop("schema_version")
+        return fitted
+
     @classmethod
     def _proposal_from_message(cls, message: Dict[str, Any]) -> WhatsappExtractionProposal:
         texts = cls._candidate_texts(message)
         if not texts:
             raise ValueError("GLM response was empty")
-        last_error: Optional[Exception] = None
+        json_error: Optional[Exception] = None
+        schema_error: Optional[Exception] = None
         for text in texts:
             try:
-                return WhatsappExtractionProposal.model_validate(cls._extract_json(text))
+                data = cls._extract_json(text)
             except Exception as exc:
-                last_error = exc
-        raise last_error or ValueError("GLM response was not JSON")
+                json_error = json_error or exc
+                continue
+            try:
+                return WhatsappExtractionProposal.model_validate(cls._fit_proposal(data))
+            except Exception as exc:
+                schema_error = schema_error or exc
+        # JSON that didn't fit the schema says more than reasoning text that wasn't JSON at all
+        raise schema_error or json_error or ValueError("GLM response was not JSON")
 
     def extract(
         self,
