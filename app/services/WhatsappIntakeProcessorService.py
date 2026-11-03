@@ -4,7 +4,7 @@ import os
 import re
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -878,7 +878,9 @@ class WhatsappIntakeProcessorService:
         message_sids: List[str],
         known_vehicle: str = "",
         burst_id: Optional[str] = None,
+        on_failure: Optional[Callable[[], bool]] = None,
     ) -> Optional[WhatsappExtractionProposal]:
+        """on_failure: tried when the model's reply can't be read; True means it answered the seller."""
         model_started = time.perf_counter()
         try:
             try:
@@ -903,6 +905,10 @@ class WhatsappIntakeProcessorService:
             return None
         except Exception as exc:
             logger.error("GLM extraction failed during flush for %s: %s", from_number, exc)
+            if on_failure is not None and self._handled_after_failed_extraction(
+                on_failure, message_sids, error=str(exc), burst_id=burst_id
+            ):
+                return None
             self._send_extraction_failure(
                 from_number,
                 message_sids,
@@ -914,6 +920,25 @@ class WhatsappIntakeProcessorService:
                 ),
                 burst_id=burst_id,
             )
+            return None
+
+    def _quoted_folio(self, original_replied_message_sid: Optional[str]) -> Optional[dict]:
+        """Draft a quoted bot message belongs to: a clarification question or the draft message."""
+        if not original_replied_message_sid:
+            return None
+        folio = clarify.find_folio_by_clarify_sid(original_replied_message_sid)
+        if folio:
+            return folio
+        doc = self._inbound_doc(original_replied_message_sid)
+        folio_id = str(doc.get("folio_id") or "") if doc.get("direction") == "outbound" else ""
+        if not folio_id:
+            return None
+        try:
+            return folio_service.get(folio_id)
+        except HTTPException:
+            return None
+        except Exception:
+            logger.exception("Failed to load folio for quoted bot message")
             return None
 
     def _latest_original_reply_sid(self, message_sids: List[str]) -> Optional[str]:
@@ -1613,6 +1638,14 @@ class WhatsappIntakeProcessorService:
                     if question.get("asked_message_sid") == original_replied_message_sid:
                         return folio, question
                 return folio, None
+            quoted = self._quoted_folio(original_replied_message_sid)
+            if (
+                quoted
+                and clarify.open_questions(quoted)
+                and not self._is_new_vehicle_request(proposal, quoted)
+            ):
+                open_q = clarify.open_questions(quoted)
+                return quoted, open_q[0] if len(open_q) == 1 else None
 
         token = _extract_draft_token(bodies)
         if token:
@@ -2417,6 +2450,67 @@ class WhatsappIntakeProcessorService:
             from_number, user_message, burst_id=burst_id, kind="bot_error"
         )
 
+    def _handled_after_failed_extraction(
+        self,
+        on_failure: Callable[[], bool],
+        message_sids: List[str],
+        *,
+        error: str,
+        burst_id: Optional[str],
+    ) -> bool:
+        fields: Dict[str, Any] = {"extraction_status": "failed", "extraction_error": error[:500]}
+        if burst_id:
+            fields["burst_id"] = burst_id
+        for sid in message_sids:
+            if sid:
+                inbound_repo.update_fields(sid, fields)
+        try:
+            return bool(on_failure())
+        except _FlushSuperseded:
+            raise
+        except Exception:
+            logger.exception("Fallback after failed extraction also failed")
+            return False
+
+    def _answer_quoted_draft(
+        self,
+        *,
+        from_number: str,
+        bodies: List[str],
+        message_sids: List[str],
+        group_id: str,
+        creator_uid: Optional[str],
+        burst_id: Optional[str],
+        quoted_sid: Optional[str],
+    ) -> bool:
+        """A reply quoting one of our draft messages answers that draft's open questions.
+
+        Only for a quote of our own message: a loose message could be a new request.
+        """
+        quoted = self._inbound_doc(quoted_sid) if quoted_sid else {}
+        folio_id = str(quoted.get("folio_id") or "") if quoted.get("direction") == "outbound" else ""
+        if not folio_id:
+            return False
+        try:
+            folio = folio_service.get(folio_id)
+        except Exception:
+            return False
+        open_items = clarify.open_questions(folio or {})
+        if not open_items:
+            return False
+        answer_text = " ".join(_strip_draft_boilerplate(bodies)).strip() or " ".join(bodies).strip()
+        return self._handle_complement_or_answer(
+            from_number=from_number,
+            folio=folio,
+            question=open_items[0] if len(open_items) == 1 else None,
+            answer_text=answer_text,
+            message_sids=message_sids,
+            burst_id=burst_id,
+            group_id=group_id,
+            creator_uid=creator_uid,
+            quoted_sid=quoted_sid,
+        )
+
     def _flush_session(self, from_number: str, session: dict) -> None:
         token = str(session.get("flush_token") or "")
         state = {"replied": False, "token": token}
@@ -2540,6 +2634,15 @@ class WhatsappIntakeProcessorService:
             bodies=extract_bodies,
             message_sids=message_sids,
             burst_id=burst_id,
+            on_failure=lambda: self._answer_quoted_draft(
+                from_number=from_number,
+                bodies=extract_bodies,
+                message_sids=message_sids,
+                group_id=group_id or "",
+                creator_uid=creator_uid,
+                burst_id=burst_id,
+                quoted_sid=original_replied_message_sid,
+            ),
         )
         if proposal is None:
             return
@@ -2584,6 +2687,26 @@ class WhatsappIntakeProcessorService:
             return
 
         if self._is_full_new_request(proposal, extract_bodies):
+            quoted = self._quoted_folio(original_replied_message_sid)
+            if quoted and self._is_new_vehicle_request(proposal, quoted):
+                can_resume, _refuse = self._can_resume_folio(
+                    quoted, group_id=group_id or "", creator_uid=creator_uid
+                )
+                if can_resume:
+                    self._create_draft_from_proposal(
+                        from_number=from_number,
+                        group_id=group_id,
+                        creator_uid=creator_uid,
+                        store_name=store_name,
+                        proposal=proposal,
+                        message_sids=message_sids,
+                        primary_intake_id=primary_intake_id,
+                        bodies=extract_bodies,
+                        burst_id=burst_id,
+                        session=session,
+                        sibling_of=quoted,
+                    )
+                    return
             matched = self._find_resend_match_folio(
                 from_number=from_number,
                 proposal=proposal,
@@ -2627,10 +2750,13 @@ class WhatsappIntakeProcessorService:
             return
 
         if not self._proposal_has_vehicle(proposal):
-            last_token = self._latest_share_token(from_number)
-            resume_folio = (
-                self._load_folio_by_share_token(last_token) if last_token else None
-            )
+            resume_folio = self._quoted_folio(original_replied_message_sid)
+            from_quote = resume_folio is not None
+            if not resume_folio:
+                last_token = self._latest_share_token(from_number)
+                resume_folio = (
+                    self._load_folio_by_share_token(last_token) if last_token else None
+                )
             if resume_folio and self._bodies_name_other_year(
                 resume_folio, extract_bodies
             ):
@@ -2647,6 +2773,7 @@ class WhatsappIntakeProcessorService:
                     bodies=extract_bodies,
                     burst_id=burst_id,
                     session=session,
+                    sibling_of=resume_folio if from_quote else None,
                 )
                 return
             if resume_folio:

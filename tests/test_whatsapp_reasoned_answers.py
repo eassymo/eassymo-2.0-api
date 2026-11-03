@@ -259,3 +259,124 @@ def test_forwarded_answers_never_write_brand_or_model():
     status = {q["id"]: q["status"] for q in patch_["whatsapp_pending_questions"]}
     assert status == {"q-make": "open", "q-model": "open", "q-pos": "answered"}
 
+
+
+# --- GLM JSON that doesn't fit the schema (second Jetta reply, draft 310AE8) ---
+
+import json as _json
+
+_GOOD_EXTRACTION = {
+    "schema_version": "1.0",
+    "intent": "new_request",
+    "vehicle": {"make": "Volkswagen", "model": "Jetta", "year": None, "engine": None, "vin": None},
+    "lines": [],
+    "additional_requests": [],
+    "uncertainties": [],
+    "evidence": [],
+    "warnings": [],
+}
+_REASONING = 'Jetta → make inferred VW. "son traseras" — position trasera, but what part?'
+
+
+def _proposal(payload):
+    return llm_module.LlmExtractionService._proposal_from_message(
+        {"content": _json.dumps(payload), "reasoning_content": _REASONING}
+    )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {**_GOOD_EXTRACTION, "notes": "extra top-level field"},
+        {**_GOOD_EXTRACTION, "vehicle": {**_GOOD_EXTRACTION["vehicle"], "version": None}},
+        {**_GOOD_EXTRACTION, "lines": [{"local_id": "line_a", "quantity": 1, "position": "trasera"}]},
+        {**_GOOD_EXTRACTION, "uncertainties": [{"path": "lines", "reason": "¿Qué pieza?", "severity": "high"}, "loose text"]},
+    ],
+)
+def test_small_schema_slips_keep_the_extraction(payload):
+    proposal = _proposal(payload)
+    assert (proposal.vehicle.make, proposal.vehicle.model) == ("Volkswagen", "Jetta")
+    assert proposal.lines == []
+
+
+def test_unknown_intent_becomes_unknown():
+    assert _proposal({**_GOOD_EXTRACTION, "intent": "clarification"}).intent.value == "unknown"
+
+
+def test_lines_keep_their_part_and_get_an_id():
+    proposal = _proposal({**_GOOD_EXTRACTION, "lines": [{"part_name": "balatas", "position": "trasera", "confidence": 0.9, "unit": None, "quantity": 0}]})
+    line = proposal.lines[0]
+    assert (line.local_id, line.part_name, line.position, line.quantity, line.unit) == ("line_1", "balatas", "trasera", 1, "pieza")
+
+
+def test_the_real_schema_error_is_reported_not_the_reasoning_text():
+    with pytest.raises(Exception) as excinfo:
+        _proposal({**_GOOD_EXTRACTION, "lines": [{"part_name": "x", "quantity": "muchas"}]})
+    assert "quantity" in str(excinfo.value)
+    assert "Expecting value" not in str(excinfo.value)
+
+
+# --- falling back to the quoted draft when the extraction can't be read ---
+
+@pytest.fixture
+def flush_service(service):
+    service.llm_service.extract.side_effect = ValueError("unreadable")
+    return service
+
+
+def _extract(service, on_failure=None):
+    with patch.object(mod, "inbound_repo") as repo, \
+            patch.object(service, "_send_bot_message") as send, \
+            patch.object(mod, "_record_stage"):
+        result = service._extract_proposal_or_fail(
+            from_number="+52", store_name="Tienda", bodies=[REPLY], message_sids=["wamid.r"],
+            burst_id="b1", on_failure=on_failure,
+        )
+    return result, repo, send
+
+
+def test_fallback_that_answers_skips_the_error_message(flush_service):
+    result, repo, send = _extract(flush_service, on_failure=lambda: True)
+    assert result is None
+    send.assert_not_called()
+    repo.update_fields.assert_called_with("wamid.r", {"extraction_status": "failed", "extraction_error": "unreadable", "burst_id": "b1"})
+
+
+@pytest.mark.parametrize("on_failure", [None, lambda: False, MagicMock(side_effect=RuntimeError("boom"))])
+def test_without_a_usable_fallback_the_seller_gets_the_error(flush_service, on_failure):
+    _result, _repo, send = _extract(flush_service, on_failure=on_failure)
+    assert "no pudimos interpretarlo" in send.call_args.args[1]
+
+
+def test_quoted_draft_reply_goes_to_its_open_questions(service):
+    folio = _folio()
+    with patch.object(service, "_inbound_doc", return_value={"direction": "outbound", "folio_id": "folio-1"}), \
+            patch.object(mod.folio_service, "get", return_value=folio), \
+            patch.object(service, "_handle_complement_or_answer", return_value=True) as handle:
+        assert service._answer_quoted_draft(
+            from_number="+52", bodies=["Es un Jetta y son traseras"], message_sids=["wamid.r"],
+            group_id="g1", creator_uid="u1", burst_id="b1", quoted_sid="wamid.q",
+        ) is True
+    kwargs = handle.call_args.kwargs
+    assert kwargs["folio"] is folio and kwargs["question"] is None
+    assert kwargs["answer_text"] == "Es un Jetta y son traseras" and kwargs["quoted_sid"] == "wamid.q"
+
+
+@pytest.mark.parametrize(
+    "quoted_doc, folio",
+    [
+        ({}, None),  # not a quote
+        ({"direction": "inbound", "folio_id": "folio-1"}, None),  # quoting the seller's own message
+        ({"direction": "outbound"}, None),  # bot message with no draft
+        ({"direction": "outbound", "folio_id": "folio-1"}, {"_id": "folio-1", "whatsapp_pending_questions": []}),
+    ],
+)
+def test_quoted_draft_fallback_only_for_our_drafts_with_open_questions(service, quoted_doc, folio):
+    with patch.object(service, "_inbound_doc", return_value=quoted_doc), \
+            patch.object(mod.folio_service, "get", return_value=folio), \
+            patch.object(service, "_handle_complement_or_answer") as handle:
+        assert service._answer_quoted_draft(
+            from_number="+52", bodies=[REPLY], message_sids=["wamid.r"], group_id="g1",
+            creator_uid="u1", burst_id="b1", quoted_sid="wamid.q" if quoted_doc else None,
+        ) is False
+    handle.assert_not_called()
