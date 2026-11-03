@@ -4,7 +4,7 @@ import os
 import re
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -878,7 +878,9 @@ class WhatsappIntakeProcessorService:
         message_sids: List[str],
         known_vehicle: str = "",
         burst_id: Optional[str] = None,
+        on_failure: Optional[Callable[[], bool]] = None,
     ) -> Optional[WhatsappExtractionProposal]:
+        """on_failure: tried when the model's reply can't be read; True means it answered the seller."""
         model_started = time.perf_counter()
         try:
             try:
@@ -903,6 +905,10 @@ class WhatsappIntakeProcessorService:
             return None
         except Exception as exc:
             logger.error("GLM extraction failed during flush for %s: %s", from_number, exc)
+            if on_failure is not None and self._handled_after_failed_extraction(
+                on_failure, message_sids, error=str(exc), burst_id=burst_id
+            ):
+                return None
             self._send_extraction_failure(
                 from_number,
                 message_sids,
@@ -2417,6 +2423,67 @@ class WhatsappIntakeProcessorService:
             from_number, user_message, burst_id=burst_id, kind="bot_error"
         )
 
+    def _handled_after_failed_extraction(
+        self,
+        on_failure: Callable[[], bool],
+        message_sids: List[str],
+        *,
+        error: str,
+        burst_id: Optional[str],
+    ) -> bool:
+        fields: Dict[str, Any] = {"extraction_status": "failed", "extraction_error": error[:500]}
+        if burst_id:
+            fields["burst_id"] = burst_id
+        for sid in message_sids:
+            if sid:
+                inbound_repo.update_fields(sid, fields)
+        try:
+            return bool(on_failure())
+        except _FlushSuperseded:
+            raise
+        except Exception:
+            logger.exception("Fallback after failed extraction also failed")
+            return False
+
+    def _answer_quoted_draft(
+        self,
+        *,
+        from_number: str,
+        bodies: List[str],
+        message_sids: List[str],
+        group_id: str,
+        creator_uid: Optional[str],
+        burst_id: Optional[str],
+        quoted_sid: Optional[str],
+    ) -> bool:
+        """A reply quoting one of our draft messages answers that draft's open questions.
+
+        Only for a quote of our own message: a loose message could be a new request.
+        """
+        quoted = self._inbound_doc(quoted_sid) if quoted_sid else {}
+        folio_id = str(quoted.get("folio_id") or "") if quoted.get("direction") == "outbound" else ""
+        if not folio_id:
+            return False
+        try:
+            folio = folio_service.get(folio_id)
+        except Exception:
+            return False
+        open_items = clarify.open_questions(folio or {})
+        if not open_items:
+            return False
+        answer_text = " ".join(_strip_draft_boilerplate(bodies)).strip() or " ".join(bodies).strip()
+        return self._handle_complement_or_answer(
+            from_number=from_number,
+            folio=folio,
+            question=open_items[0] if len(open_items) == 1 else None,
+            answer_text=answer_text,
+            message_sids=message_sids,
+            burst_id=burst_id,
+            group_id=group_id,
+            creator_uid=creator_uid,
+            quoted_sid=quoted_sid,
+        )
+
     def _flush_session(self, from_number: str, session: dict) -> None:
         token = str(session.get("flush_token") or "")
         state = {"replied": False, "token": token}
@@ -2540,6 +2607,15 @@ class WhatsappIntakeProcessorService:
             bodies=extract_bodies,
             message_sids=message_sids,
             burst_id=burst_id,
+            on_failure=lambda: self._answer_quoted_draft(
+                from_number=from_number,
+                bodies=extract_bodies,
+                message_sids=message_sids,
+                group_id=group_id or "",
+                creator_uid=creator_uid,
+                burst_id=burst_id,
+                quoted_sid=original_replied_message_sid,
+            ),
         )
         if proposal is None:
             return
