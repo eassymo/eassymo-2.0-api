@@ -10,6 +10,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 from app.schemas.PartRequest import PartRequest
 from app.schemas.Groups import GroupSchema
+from app.utils.datetime_utils import serialize_datetime
 
 
 class DeliveryAssignmentType(str, Enum):
@@ -28,7 +29,7 @@ class DeliveryAssignment(BaseModel):
     def toJson(self):
         data = self.model_dump()
         data["type"] = self.type.value
-        data["assigned_at"] = str(self.assigned_at)
+        data["assigned_at"] = serialize_datetime(self.assigned_at)
         return data
 
 
@@ -64,7 +65,7 @@ class StatusChange(BaseModel):
 
         status = self.status
         data["status"] = status.value if isinstance(status, OrderStatus) else status
-        data["timestamp"] = str(self.timestamp)
+        data["timestamp"] = serialize_datetime(self.timestamp)
 
         return data
 
@@ -138,11 +139,11 @@ class Order(BaseModel):
         data["status_history"] = historical_status
         status = self.status
         data["status"] = status.value if isinstance(status, OrderStatus) else status
-        data["updated_at"] = str(self.updated_at)
-        data["created_at"] = str(self.created_at)
+        data["updated_at"] = serialize_datetime(self.updated_at)
+        data["created_at"] = serialize_datetime(self.created_at)
 
         if self.to_be_delivered_time != None:
-            data["to_be_delivered_time"] = str(self.to_be_delivered_time)
+            data["to_be_delivered_time"] = serialize_datetime(self.to_be_delivered_time)
 
         if self.delivery_assignment is not None:
             data["delivery_assignment"] = self.delivery_assignment.toJson()

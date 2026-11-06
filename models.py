@@ -335,7 +335,8 @@ class Tiposparte(Base):
         Index('ITIPOSPARTE1', 'SubCategoriaId', 'CategoriaId'),
         Index('UTIPOSPARTE', 'TipoParteDescripcion'),
         Index('UTIPOSPARTE1', 'TipoParteId'),
-        Index('UTIPOSPARTE2', 'TipoParteId')
+        Index('UTIPOSPARTE2', 'TipoParteId'),
+        Index('ft_tiposparte_descripcion', 'TipoParteDescripcion', mysql_prefix='FULLTEXT'),
     )
 
     CategoriaId: Mapped[int] = mapped_column(BigInteger, primary_key=True)
@@ -354,7 +355,6 @@ class Tiposparte(Base):
     TipoParteFechaCreacion: Mapped[Optional[datetime.date]] = mapped_column(Date)
     TipoParteActivo: Mapped[Optional[int]] = mapped_column(TINYINT(1))
     TipoParteTags: Mapped[Optional[str]] = mapped_column(CHAR(100))
-    claveProdServ: Mapped[Optional[str]] = mapped_column(String(100))
 
     atributos: Mapped[list['Atributos']] = relationship('Atributos', secondary='cnfatributos', back_populates='tiposparte')
     subcategorias: Mapped['Subcategorias'] = relationship('Subcategorias', back_populates='tiposparte')
@@ -594,6 +594,11 @@ class Tipospartetag(Base):
     __tablename__ = 'tipospartetag'
     __table_args__ = (
         ForeignKeyConstraint(['CategoriaId', 'SubCategoriaId', 'TipoParteId'], ['tiposparte.CategoriaId', 'tiposparte.SubCategoriaId', 'tiposparte.TipoParteId'], name='ITIPOSPARTETAG1'),
+        Index(
+            'ft_tipospartetag_descripcion',
+            'TipoParteTagDescripcion',
+            mysql_prefix='FULLTEXT',
+        ),
     )
 
     TipoParteId: Mapped[int] = mapped_column(BigInteger, primary_key=True)
