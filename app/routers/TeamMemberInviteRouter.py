@@ -9,6 +9,7 @@ teamMemberInviteRouter = APIRouter(prefix="/team-member-invite")
 
 
 @teamMemberInviteRouter.post("", tags=["Team Member Invite"])
+@teamMemberInviteRouter.post("/", include_in_schema=False)
 def insert(payload: TeamMemberInvite = Body()):
     try:
         response = teamMemberInviteService.insert(payload)

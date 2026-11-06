@@ -8,6 +8,10 @@ from zoneinfo import ZoneInfo
 class WhatsappTemplate(BaseModel):
     name: str = Field(..., description="Name of the template")
     variables: List[str] = Field(default=[], description="List of variables in order")
+    language: Optional[str] = Field(
+        default=None,
+        description="WhatsApp template language code, e.g. es_MX",
+    )
 
 
 class WhatsappMessage(BaseModel):
@@ -20,18 +24,3 @@ class WhatsappMessage(BaseModel):
         if self.timestamp != None:
             data["timestamp"] = str(self.timestamp)
         return data
-
-    def to_twilio_format(self, from_number: str):
-        return {
-            "from": f"whatsapp: {from_number}",
-            "to": f"whatsapp: {self.to}",
-            "content": {
-                "template": {
-                    "name": self.template.name,
-                    "language": {
-                        "code": "MEX",
-                    },
-                    "components": self.template.components
-                }
-            }
-        }

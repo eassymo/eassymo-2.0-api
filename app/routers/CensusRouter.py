@@ -5,7 +5,7 @@ from app.services import CensusService as censusService
 from fastapi.responses import JSONResponse
 from app.schemas.Census import CensusSchema
 from fastapi_pagination import Params
-from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response
+from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response, error_json_response
 from fastapi.encoders import jsonable_encoder
 
 
@@ -13,6 +13,7 @@ censusRouter = APIRouter(prefix="/census")
 
 
 @censusRouter.get("", response_description="Service for listing the census items", response_model=List[CensusSchema], tags=["Census", "list"])
+@censusRouter.get("/", include_in_schema=False)
 def find(
     request: Request,
     params: Params = Depends(),
@@ -44,6 +45,14 @@ def find(
         None, title="lng", description="Longitude for geospatial search"),
     range_km: Optional[float] = Query(
         None, title="range_km", description="Search radius in kilometers"),
+    min_lat: Optional[float] = Query(
+        None, title="min_lat", description="South edge of the visible map area. With min_lng, max_lat and max_lng, only census items inside the box are returned (overrides range_km)"),
+    min_lng: Optional[float] = Query(
+        None, title="min_lng", description="West edge of the visible map area"),
+    max_lat: Optional[float] = Query(
+        None, title="max_lat", description="North edge of the visible map area"),
+    max_lng: Optional[float] = Query(
+        None, title="max_lng", description="East edge of the visible map area"),
     limit: Optional[int] = Query(50, title="limit")
 ):
     user = request.state._state.get('user')
@@ -63,6 +72,10 @@ def find(
         "lat": lat,
         "lng": lng,
         "range_km": range_km,
+        "min_lat": min_lat,
+        "min_lng": min_lng,
+        "max_lat": max_lat,
+        "max_lng": max_lng,
         "limit": limit,
         "page":  params.dict()["page"]
     }
@@ -79,7 +92,7 @@ def text_search(request: Request, search_argument: str, parent_request_id: Optio
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
 
     except (HTTPException, Exception) as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)
 
 
 @censusRouter.get("/states", response_description="", response_model=List[str], tags=["Census"])
@@ -103,4 +116,4 @@ def verify_by_similitudes(
 
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except HTTPException as e:
-        return JSONResponse(content=get_unsuccessful_response(e))
+        return error_json_response(e)
