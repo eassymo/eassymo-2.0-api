@@ -21,6 +21,68 @@ def _text_expr(field: str) -> dict:
         }
     }
 
+# Characters that don't carry meaning when comparing vehicle names ("NP 300" == "NP300" == "np-300").
+_SEPARATORS = " -._,()/'"
+MIN_TOKEN_LENGTH = 3
+
+# Same vehicle sold under different catalog names depending on the year. Keys/values are "squashed"
+# (lowercase, no separators). The NP300 Frontier is listed as «NP 300» until 2018 and as
+# «Navara (Frontier)» from 2019 on.
+SEARCH_ALIASES: Dict[str, List[str]] = {
+    "np300": ["navarafrontier"],
+    "np300frontier": ["navarafrontier"],
+    "nissannp300": ["nissannavarafrontier"],
+}
+
+
+def squash_text(text: str) -> str:
+    """Lowercase and drop separators so spacing/punctuation differences don't matter."""
+    out = (text or "").lower()
+    for ch in _SEPARATORS:
+        out = out.replace(ch, "")
+    return out
+
+
+def search_tokens(text: str) -> List[str]:
+    out = (text or "").lower()
+    for ch in _SEPARATORS:
+        out = out.replace(ch, " ")
+    return [t for t in out.split() if t]
+
+
+def _squash_expr(parts: List[dict]) -> dict:
+    """Mongo expression equivalent of `squash_text` over the concatenation of `parts`."""
+    expr: dict = {"$toLower": {"$concat": parts}}
+    for ch in _SEPARATORS:
+        expr = {"$replaceAll": {"input": expr, "find": ch, "replacement": ""}}
+    return expr
+
+
+def _blob_contains(field: str, needle: str) -> dict:
+    return {"$gte": [{"$indexOfCP": [f"${field}", needle]}, 0]}
+
+
+def build_name_match(search_argument: str):
+    """
+    Separator-insensitive, token-aware matching on top of the plain regex match.
+
+    Returns (match_conditions, squashed_query, alias_needles): conditions evaluated against the
+    `search_blob` field (make+model+generation+trim, squashed).
+    """
+    squashed = squash_text(search_argument[:MAX_SEARCH_LENGTH])
+    # Very short tokens ("np", "x", "1") match inside unrelated words, so they only count through the
+    # squashed full-phrase match above, never as independent AND-ed tokens.
+    tokens = [t for t in search_tokens(search_argument[:MAX_SEARCH_LENGTH]) if len(t) >= MIN_TOKEN_LENGTH]
+    conditions: List[dict] = []
+    if squashed:
+        conditions.append(_blob_contains("search_blob", squashed))
+    if len(tokens) > 1:
+        conditions.append({"$and": [_blob_contains("search_blob", t) for t in tokens]})
+    aliases = SEARCH_ALIASES.get(squashed, [])
+    for alias in aliases:
+        conditions.append(_blob_contains("search_blob", alias))
+    return conditions, squashed, aliases
+
 
 def find_distinct_makes() -> List[str]:
     makes = database.db["NonAcesVehicles"].distinct(
@@ -73,6 +135,8 @@ def find_non_aces_by_name(search_argument: str, year: int) -> List[StandarizedVe
         generation_text = _text_expr("generation")
         trim_text = _text_expr("trim")
 
+        blob_conditions, squashed_query, alias_needles = build_name_match(search_argument)
+
         pipeline = [
             {
                 "$match": {
@@ -88,7 +152,10 @@ def find_non_aces_by_name(search_argument: str, year: int) -> List[StandarizedVe
                     "trim": trim_text,
                     "make_model_combined": {
                         "$concat": [make_text, " ", model_text]
-                    }
+                    },
+                    "search_blob": _squash_expr(
+                        [make_text, model_text, generation_text, trim_text]),
+                    "make_model_blob": _squash_expr([make_text, model_text]),
                 }
             },
             {
@@ -98,7 +165,8 @@ def find_non_aces_by_name(search_argument: str, year: int) -> List[StandarizedVe
                         {"model": search_pattern},
                         {"make_model_combined": search_pattern},
                         {"generation": search_pattern},
-                        {"trim": search_pattern}
+                        {"trim": search_pattern},
+                        *([{"$expr": {"$or": blob_conditions}}] if blob_conditions else []),
                     ]
                 }
             },
@@ -115,7 +183,11 @@ def find_non_aces_by_name(search_argument: str, year: int) -> List[StandarizedVe
                             # Model starts with search gets medium score
                             {"$cond": [{"$regexMatch": {"input": "$model", "regex": f"^{safe_search}", "options": "i"}}, 45, 0]},
                             # Contains match gets low score
-                            {"$cond": [{"$regexMatch": {"input": "$make_model_combined", "regex": safe_search, "options": "i"}}, 10, 0]}
+                            {"$cond": [{"$regexMatch": {"input": "$make_model_combined", "regex": safe_search, "options": "i"}}, 10, 0]},
+                            # Same name ignoring spaces/punctuation (np300 == NP 300)
+                            *([{"$cond": [_blob_contains("make_model_blob", squashed_query), 40, 0]}] if squashed_query else []),
+                            # Known catalog rename (NP 300 -> Navara (Frontier))
+                            *[{"$cond": [_blob_contains("make_model_blob", a), 30, 0]} for a in alias_needles],
                         ]
                     }
                 }
