@@ -2,6 +2,7 @@
 
 from typing import Optional
 
+from bson import ObjectId
 from fastapi import HTTPException, Request, status
 
 from app.repositories import GroupRepository as groupRepository
@@ -62,10 +63,16 @@ def user_belongs_to_group(user_uid: str, group_id: str) -> bool:
 
 
 def assert_group_membership(caller_uid: str, group_id: str) -> None:
-    if not group_id:
+    # Routers call str(groupselected), so a missing header arrives as "None".
+    if not group_id or str(group_id).strip() in ("", "None", "null", "undefined"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="GroupSelected header or group_id is required",
+        )
+    if not ObjectId.is_valid(str(group_id).strip()):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="GroupSelected header is not a valid group id",
         )
     if not user_belongs_to_group(caller_uid, group_id):
         raise HTTPException(

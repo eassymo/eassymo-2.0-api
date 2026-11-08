@@ -108,6 +108,10 @@ def insert_list(list: ListsSchema):
 
         payload.pop('_id')
 
+        # A priority list can never be a favorite.
+        if payload.get("is_priority"):
+            payload["is_favorite"] = False
+
         inserted_id = listsRepository.insert(payload).inserted_id
 
         return str(inserted_id)
@@ -260,7 +264,34 @@ def update(user_info: Dict[str, Any], list_id: str, payload: ListsSchema):
         json_payload.pop('_id')
         if prev_name_norm == "Comisionistas":
             json_payload["is_favorite"] = False
+
+        was_priority = prev.get("is_priority") is True
+        wants_priority = bool(payload.is_priority)
+
+        if prev_name_norm == "Comisionistas" and wants_priority:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="La lista «Comisionistas» no puede ser prioritaria.",
+            )
+
+        if was_priority and not wants_priority:
+            # Only one list is priority and connections need a destination:
+            # the way to change it is to promote another list.
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Elige otra lista como prioritaria para reemplazar a esta.",
+            )
+
+        if wants_priority:
+            # Priority lists can't be favorites.
+            json_payload["is_favorite"] = False
+
         listsRepository.update(list_id, json_payload)
+
+        if wants_priority and not was_priority:
+            # Promotion: the previous priority list is demoted (single priority per scope).
+            listsRepository.unset_priority_except(
+                prev.get("user_uid"), prev.get("group_id"), list_id)
 
         filters = {"_id": ObjectId(list_id)}
 

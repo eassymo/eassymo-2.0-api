@@ -135,3 +135,16 @@ def update(list_id: str, payload: Dict[str, Any]) -> UpdateResult:
     utc_date = datetime.now(ZoneInfo('UTC'))
     payload["last_modified"] = utc_date
     return database.db["Lists"].find_one_and_update({"_id": id}, {"$set": payload}, return_document=True)
+
+
+def unset_priority_except(user_uid: str, group_id: str, keep_list_id: str):
+    """Make `keep_list_id` the only priority list of this user+group scope."""
+    return database.db["Lists"].update_many(
+        {
+            "user_uid": user_uid,
+            "group_id": group_id,
+            "is_priority": True,
+            "_id": {"$ne": ObjectId(keep_list_id)},
+        },
+        {"$set": {"is_priority": False, "last_modified": datetime.now(ZoneInfo('UTC'))}},
+    )
