@@ -19,6 +19,10 @@ class ExtractionVehicle(BaseModel):
     year: Optional[str] = None
     engine: Optional[str] = None
     vin: Optional[str] = None
+    # Set by the catalog mapper, never by the model: what to confirm with the seller, and what the
+    # seller wrote when the catalog corrected it silently ("hilus" -> Toyota Hilux).
+    suggestion: Optional[dict] = None
+    corrected_from: Optional[str] = None
 
     @field_validator("make", "model", "year", "engine", "vin", mode="before")
     @classmethod
@@ -68,6 +72,8 @@ class ExtractionUncertainty(BaseModel):
 
     path: str
     reason: str
+    # A concrete answer the seller can confirm with "sí" (e.g. {"make": "Toyota", "model": "Hilux"}).
+    suggestion: Optional[dict] = None
 
 
 class ExtractionEvidence(BaseModel):

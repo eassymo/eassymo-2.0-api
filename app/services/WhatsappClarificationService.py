@@ -212,9 +212,10 @@ def _alert(
     severity: str,
     source: str,
     piece_id: Optional[str] = None,
+    extra: Optional[dict] = None,
 ) -> dict:
     text = copy_text.strip()
-    return {
+    alert = {
         "id": _question_id(),
         "path": path,
         "piece_id": piece_id,
@@ -225,6 +226,9 @@ def _alert(
         "asked_message_sid": None,
         "source": source,
     }
+    if extra:
+        alert.update({k: v for k, v in extra.items() if v})
+    return alert
 
 
 def derive_pending_questions(
@@ -248,6 +252,12 @@ def derive_pending_questions(
         if (item.path or "").strip() and (item.reason or "").strip()
     }
 
+    uncertainty_suggestion = {
+        (item.path or "").strip(): item.suggestion
+        for item in (proposal.uncertainties or [])
+        if item.suggestion
+    }
+
     def add(question: dict) -> None:
         path = question["path"]
         if path in seen_paths:
@@ -264,6 +274,7 @@ def derive_pending_questions(
                 copy_text=_identity_copy(vehicle, field, uncertainty_reason.get(field, "")),
                 severity="critical",
                 source="vehicle_field",
+                extra={"suggestion": uncertainty_suggestion.get(field)},
             )
         )
 
@@ -319,13 +330,50 @@ def derive_pending_questions(
             continue
         name = piece_label(piece)
         if not piece.get("tipoParteId"):
+            choices = piece.get("catalog_suggestions") or []
+            if len(choices) == 1:
+                add(
+                    _alert(
+                        path=f"piece:{piece_id}.catalog_choice",
+                        piece_id=piece_id,
+                        copy_text=f"¿«{name}» es {choices[0].get('tipoParteDescripcion')}?",
+                        severity="warning",
+                        source="catalog_suggestion",
+                        extra={"choices": choices},
+                    )
+                )
+            elif choices:
+                options = " · ".join(
+                    f"{i}) {c.get('tipoParteDescripcion')}" for i, c in enumerate(choices, 1)
+                )
+                add(
+                    _alert(
+                        path=f"piece:{piece_id}.catalog_choice",
+                        piece_id=piece_id,
+                        copy_text=f"¿Cuál es «{name}»? {options}",
+                        severity="warning",
+                        source="catalog_suggestion",
+                        extra={"choices": choices},
+                    )
+                )
+            else:
+                add(
+                    _alert(
+                        path=f"piece:{piece_id}.catalog",
+                        piece_id=piece_id,
+                        copy_text=f"No encontramos «{name}» en el catálogo.",
+                        severity="info",
+                        source="catalog_miss",
+                    )
+                )
+        elif piece.get("catalog_corrected_from"):
             add(
                 _alert(
-                    path=f"piece:{piece_id}.catalog",
+                    path=f"piece:{piece_id}.catalog_corrected",
                     piece_id=piece_id,
-                    copy_text=f"No encontramos «{name}» en el catálogo.",
+                    copy_text=f"Entendimos «{piece.get('catalog_corrected_from')}» como {name}.",
                     severity="info",
-                    source="catalog_miss",
+                    source="catalog_corrected",
                 )
             )
         if piece.get("position_required") and _position_missing(piece):
@@ -575,18 +623,25 @@ def fill_open_questions(folio: dict, answer_text: str) -> Optional[Tuple[dict, L
     for question in questions:
         if question.get("status") != "open":
             continue
-        if str(question.get("path") or "").endswith(".catalog"):
-            continue
-        if question.get("path") in FREE_TEXT_VEHICLE_PATHS:
-            # A bare year/position reply would land here verbatim as a brand or model
-            continue
         trial = {
             **folio,
             "pieces": pieces,
             "vehicle": vehicle,
             "whatsapp_pending_questions": questions,
         }
-        patch, ok, detail = apply_answer_to_folio(trial, question, answer_text)
+        if question.get("choices") or (question.get("suggestion") and str(question.get("path") or "").startswith("vehicle.")):
+            patch, ok, detail = _apply_suggestion_answer(trial, question, answer_text)
+            if not ok and question.get("path") in FREE_TEXT_VEHICLE_PATHS:
+                continue
+            if not ok:
+                patch, ok, detail = apply_answer_to_folio(trial, question, answer_text)
+        else:
+            if str(question.get("path") or "").endswith(".catalog"):
+                continue
+            if question.get("path") in FREE_TEXT_VEHICLE_PATHS:
+                # A bare year/position reply would land here verbatim as a brand or model
+                continue
+            patch, ok, detail = apply_answer_to_folio(trial, question, answer_text)
         if not ok:
             continue
         if "pieces" in patch:
@@ -607,6 +662,80 @@ def fill_open_questions(folio: dict, answer_text: str) -> Optional[Tuple[dict, L
         },
         details,
     )
+
+
+_AFFIRMATIVE = {
+    "si", "sii", "siii", "sip", "simon", "claro", "correcto", "exacto", "asi", "ese", "esa", "eso", "ok",
+    "okey", "va", "dale", "yes", "afirmativo", "efectivamente", "es", "son", "ajá", "aja", "sale",
+}
+_NEGATIVE = {"no", "nel", "nop", "nope", "negativo", "otro", "otra", "otros", "otras"}
+
+
+def is_affirmative(text: str) -> bool:
+    """A short "sí"-style confirmation ("sí", "sí, ese", "correcto"). Longer text is a real answer."""
+    tokens = _tokenize(text)
+    if not tokens or len(tokens) > 5:
+        return False
+    return bool(set(tokens) & _AFFIRMATIVE) and not (set(tokens) & _NEGATIVE)
+
+
+def _pick_choice(choices: List[dict], answer_text: str) -> Optional[dict]:
+    """The catalog part the seller meant: a number ("2"), a "sí" for a single option, or its name."""
+    if not choices:
+        return None
+    tokens = _tokenize(answer_text)
+    if len(choices) == 1 and is_affirmative(answer_text):
+        return choices[0]
+    for token in tokens:
+        if token.isdigit() and 1 <= int(token) <= len(choices):
+            return choices[int(token) - 1]
+    from app.utils import part_fuzzy
+
+    ranked = part_fuzzy.rank_parts(
+        answer_text, [{"tipoParteDescripcion": c.get("tipoParteDescripcion"), "tags": [], **c} for c in choices], limit=2
+    )
+    if ranked and ranked[0].score >= 0.8 and (len(ranked) == 1 or ranked[1].score <= ranked[0].score - 0.1):
+        wanted = ranked[0].part.get("tipoParteId")
+        return next((c for c in choices if c.get("tipoParteId") == wanted), None)
+    return None
+
+
+def _apply_suggestion_answer(folio: dict, question: dict, answer_text: str):
+    """Confirm a bot suggestion (car, year or catalog part). Returns (patch, ok, detail)."""
+    path = question.get("path") or ""
+    pieces = [dict(p) for p in (folio.get("pieces") or [])]
+    vehicle = dict(folio.get("vehicle") or {})
+
+    choices = question.get("choices")
+    if choices and question.get("piece_id"):
+        choice = _pick_choice(choices, answer_text)
+        if not choice:
+            return folio, False, None
+        for piece in pieces:
+            if str(piece.get("piece_id")) == str(question.get("piece_id")):
+                piece.update(
+                    tipoParteId=str(choice.get("tipoParteId")),
+                    tipoParteDescripcion=choice.get("tipoParteDescripcion"),
+                    name=choice.get("tipoParteDescripcion"),
+                    categoriaId=choice.get("categoriaId"),
+                    subCategoriaId=choice.get("subCategoriaId"),
+                    position_required=bool(choice.get("tipoParteSensiblePosicion")),
+                    catalog_suggestions=None,
+                )
+                return {"pieces": pieces}, True, str(choice.get("tipoParteDescripcion"))
+        return folio, False, None
+
+    suggestion = question.get("suggestion") or {}
+    if suggestion and path.startswith("vehicle.") and is_affirmative(answer_text):
+        if suggestion.get("make"):
+            vehicle["maker"] = suggestion["make"]
+        if suggestion.get("model"):
+            vehicle["model"] = suggestion["model"]
+        if suggestion.get("year") and not str(vehicle.get("year") or "").strip():
+            vehicle["year"] = suggestion["year"]
+        detail = " ".join(str(vehicle.get(k)) for k in ("maker", "model", "year") if vehicle.get(k))
+        return {"vehicle": vehicle}, True, detail
+    return folio, False, None
 
 
 def resolve_position(text: str) -> Optional[str]:

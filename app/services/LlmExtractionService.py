@@ -8,6 +8,8 @@ from typing import Any, Dict, Iterator, Optional, Sequence, Union
 
 import requests
 
+from app.utils import part_fuzzy
+
 from app.schemas.WhatsappExtraction import (
     ClarificationAnswers,
     ExtractionEvidence,
@@ -67,6 +69,24 @@ Reglas estrictas:
 - Si el mensaje es solo para otro auto, usa vehicle + lines de ese auto y additional_requests [].
 - additional_requests es [] cuando no hay un segundo auto.
 - En cada line.raw copia el globo del vendedor que pide esa pieza, incluyendo el auto si lo dijo.
+- Los mensajes suelen venir mal escritos: faltas de ortografía, voz a texto, mayúsculas, emojis, abreviaturas
+  ("amort del" = amortiguadores delanteros), jerga ("pastillas", "clutch", "ocupo", "pa"). Corrige solo errores
+  de ortografía OBVIOS del nombre de la pieza o del auto en part_name/model; nunca cambies a otra pieza o auto distinto.
+- part_name es el nombre completo de la pieza SIN posición, cantidad ni relleno: "terminal de dirección",
+  "bomba de agua", "rótula inferior" (aquí "inferior" es parte del nombre), no "terminal" ni "bomba".
+  Si el cliente solo dice una palabra genérica ("filtro", "foco") déjala tal cual: NO elijas por él.
+- Si el cliente solo dice la marca ("toyota 2012 filtro de aceite"), make es la marca y model queda null.
+  Nunca elijas un modelo por él.
+- year solo si el cliente lo escribió: con cuatro dígitos o en palabras completas ("dos mil quince" -> "2015").
+  Un año de dos dígitos o a medias ("08", "doce") NO lo conviertas: deja year null y agrega uncertainties[]
+  en vehicle.year preguntando el año.
+- El relleno no es una pieza ni un auto: saludos, "ok", "jaja", "gracias", "luego te aviso", emojis, precios o
+  preguntas ("cuánto sale"). Si el mensaje es solo relleno, intent "not_commercial" y lines [].
+  Si el cliente pide algo que no es una refacción de auto (ej. "una cafetera"), no lo inventes como pieza:
+  agrégalo a warnings[] y no lo pongas en lines.
+- Un nombre de persona no es un auto ("Mariano", "Lupita", "Marcos"): no lo uses como make/model ni lo "decodifiques"
+  como un auto. Solo interpreta apodos o diminutivos que CONTENGAN el nombre del modelo o la marca
+  (Jettita, Tsurito, Chevito, Vochito). "Estatus" u otros nombres que no conozcas: copia el texto tal cual en model.
 - Responde SOLO con JSON, sin markdown ni texto extra.
 """
 
@@ -410,7 +430,12 @@ class LlmExtractionService:
 
     @classmethod
     def _fit_vehicle(cls, item: Any) -> Optional[Dict[str, Any]]:
-        return cls._known(ExtractionVehicle, item)
+        fitted = cls._known(ExtractionVehicle, item)
+        if fitted:
+            # Filled in by the catalog mapper only; never trust them from the model
+            fitted.pop("suggestion", None)
+            fitted.pop("corrected_from", None)
+        return fitted
 
     @classmethod
     def _fit_lines(cls, items: Any) -> list:
@@ -490,7 +515,27 @@ class LlmExtractionService:
         # JSON that didn't fit the schema says more than reasoning text that wasn't JSON at all
         raise schema_error or json_error or ValueError("GLM response was not JSON")
 
+    @staticmethod
+    def drop_noise_lines(proposal: WhatsappExtractionProposal) -> WhatsappExtractionProposal:
+        """Chat filler or a bare symbol that came back as a "part" is not a part request."""
+        kept = [line for line in proposal.lines if not part_fuzzy.is_noise_part_name(line.part_name)]
+        if len(kept) != len(proposal.lines):
+            proposal.warnings = [*proposal.warnings, "Se ignoraron líneas que no eran piezas."]
+            proposal.lines = kept
+        for request in proposal.additional_requests:
+            request.lines = [l for l in request.lines if not part_fuzzy.is_noise_part_name(l.part_name)]
+        proposal.additional_requests = [r for r in proposal.additional_requests if r.lines]
+        return proposal
+
     def extract(
+        self,
+        body: Union[str, Sequence[str]],
+        store_name: str = "",
+        known_vehicle: str = "",
+    ) -> WhatsappExtractionProposal:
+        return self.drop_noise_lines(self._extract(body, store_name, known_vehicle))
+
+    def _extract(
         self,
         body: Union[str, Sequence[str]],
         store_name: str = "",
