@@ -118,6 +118,15 @@ def test_limit_is_capped():
     assert search("kia", limit=500, page=[vehicle("Kia", "Rio")]).limit == 50
 
 
+def test_find_aces_vehicles_is_strict_by_default_so_callers_never_get_guesses():
+    # The WhatsApp mapper auto-accepts a lone hit: a typo must stay "not found", not become a guess.
+    with patch.object(service_module, "search_non_aces_models_page", return_value=([], 0)), \
+         patch.object(service_module, "list_non_aces_models", return_value=VOCAB):
+        assert AcesVehiclesService.find_aces_vehicles(MagicMock(), "nisan sentr", "2019") == []
+        guessed = AcesVehiclesService.find_aces_vehicles(MagicMock(), "nisan sentr", "2019", allow_fuzzy=True)
+    assert [(v.VehiculoFabricante, v.VehiculoModelo) for v in guessed] == [("Nissan", "Sentra")]
+
+
 def test_find_aces_vehicles_still_returns_a_plain_list_for_other_callers():
     with patch.object(service_module, "search_non_aces_models_page", return_value=([vehicle("Kia", "Rio")], 1)), \
          patch.object(service_module, "list_non_aces_models", return_value=VOCAB):

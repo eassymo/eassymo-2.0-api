@@ -145,11 +145,24 @@ class AcesVehiclesService:
             )
     
     @staticmethod
-    def find_aces_vehicles(mysql_db: Session, search_argument: str, year: str) -> Union[List[Vehiculos], List[StandarizedVehicles]]:
-        """Matching vehicles (first page, typo-tolerant). Kept for callers that only need a list."""
-        return AcesVehiclesService.search_vehicles(
+    def find_aces_vehicles(
+        mysql_db: Session,
+        search_argument: str,
+        year: str,
+        allow_fuzzy: bool = False,
+    ) -> Union[List[Vehiculos], List[StandarizedVehicles]]:
+        """Vehicles that match what was typed (first page), for callers that only need a list.
+
+        Strict by default: when nothing matches it returns [] instead of the closest vehicles.
+        Callers that auto-accept a lone hit (the WhatsApp catalog mapper) must not receive guesses;
+        pass allow_fuzzy=True only when a human will confirm the result.
+        """
+        result = AcesVehiclesService.search_vehicles(
             mysql_db, search_argument, year, 0, MAX_PAGE_SIZE
-        ).vehicles
+        )
+        if result.match == "fuzzy" and not allow_fuzzy:
+            return []
+        return result.vehicles
 
     @staticmethod
     def find_vehicle_by_id(mysql_db: Session, id: str) -> Vehiculos:
