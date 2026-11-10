@@ -14,6 +14,8 @@ AcesVehiclesRouter = APIRouter(prefix="/AcesVehicles")
 def find(
     search_argument: Optional[str] = Query(None, title="search_argument"),
     year: Optional[str] = Query(None, title="year"),
+    skip: int = Query(0, ge=0, title="skip", description="Results to skip (infinite scroll)"),
+    limit: int = Query(20, ge=1, le=50, title="limit", description="Page size"),
     mysql_db: Session = Depends(get_mysql_db)
 ) -> JSONResponse:
     try:
@@ -23,8 +25,9 @@ def find(
                 detail="Please provide a search argument",
             )
 
-        vehicles = AcesVehiclesService.find_aces_vehicles(
-            mysql_db, search_argument, year)
+        result = AcesVehiclesService.search_vehicles(
+            mysql_db, search_argument, year, skip, limit)
+        vehicles = result.vehicles
 
         vehicles_data = []
         for vehicle in vehicles:
@@ -42,7 +45,8 @@ def find(
             }
             vehicles_data.append(vehicle_dict)
 
-        return get_successful_response(vehicles_data)
+        # `body` stays a plain list (older clients); paging and typo hints live in `meta`.
+        return {**get_successful_response(vehicles_data), "meta": result.meta()}
 
     except HTTPException as e:
         raise e

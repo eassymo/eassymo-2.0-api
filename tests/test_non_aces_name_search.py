@@ -30,3 +30,12 @@ def test_np300_is_aliased_to_navara_frontier():
 
 def test_empty_query_builds_no_conditions():
     assert repo.build_name_match("   ")[0] == []
+
+
+def test_numeric_catalog_fields_become_strings():
+    vehicle = repo._doc_to_standarized(
+        {"trim_id": 1, "make_id": 2, "year": 2019, "make": "Mazda", "model": 6, "generation": 5, "trim": 2.5, "gearbox": "AT"}
+    )
+    assert vehicle.VehiculoModelo == "6"
+    assert vehicle.VehiculoSubModelo == "5"
+    assert vehicle.VehiculoFabricante == "Mazda"

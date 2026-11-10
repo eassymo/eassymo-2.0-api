@@ -1,4 +1,5 @@
-from typing import Dict, List
+import time
+from typing import Dict, List, Tuple
 
 from app.config import database
 from app.schemas.StandarizedVehicles import StandarizedVehicles
@@ -111,6 +112,89 @@ def find_distinct_makes() -> List[str]:
     return sorted(canonical_by_key.values(), key=normalize_armadora_name)
 
 
+def _name_search_stages(search_argument: str, year: int):
+    """Aggregation stages (match + relevance score + sort) shared by the list and paged searches.
+
+    Returns None when the search term is empty after sanitising.
+"""
+    safe_search = sanitize_search_term(search_argument)
+    if not safe_search:
+        return None
+
+    search_pattern = {"$regex": safe_search, "$options": "i"}
+    make_text = _text_expr("make")
+    model_text = _text_expr("model")
+    generation_text = _text_expr("generation")
+    trim_text = _text_expr("trim")
+
+    blob_conditions, squashed_query, alias_needles = build_name_match(search_argument)
+
+    stages = [
+        {
+            "$match": {
+                "year": year,
+                "is_active": 1
+            }
+        },
+        {
+            "$addFields": {
+                "make": make_text,
+                "model": model_text,
+                "generation": generation_text,
+                "trim": trim_text,
+                "make_model_combined": {
+                    "$concat": [make_text, " ", model_text]
+                },
+                "search_blob": _squash_expr(
+                    [make_text, model_text, generation_text, trim_text]),
+                "make_model_blob": _squash_expr([make_text, model_text]),
+            }
+        },
+        {
+            "$match": {
+                "$or": [
+                    {"make": search_pattern},
+                    {"model": search_pattern},
+                    {"make_model_combined": search_pattern},
+                    {"generation": search_pattern},
+                    {"trim": search_pattern},
+                    *([{"$expr": {"$or": blob_conditions}}] if blob_conditions else []),
+                ]
+            }
+        },
+        {
+            "$addFields": {
+                "relevance_score": {
+                    "$add": [
+                        # Exact make match gets highest score
+                        {"$cond": [{"$eq": [{"$toLower": "$make"}, search_argument.lower()[:MAX_SEARCH_LENGTH]]}, 100, 0]},
+                        # Exact model match gets high score
+                        {"$cond": [{"$eq": [{"$toLower": "$model"}, search_argument.lower()[:MAX_SEARCH_LENGTH]]}, 90, 0]},
+                        # Make starts with search gets medium score
+                        {"$cond": [{"$regexMatch": {"input": "$make", "regex": f"^{safe_search}", "options": "i"}}, 50, 0]},
+                        # Model starts with search gets medium score
+                        {"$cond": [{"$regexMatch": {"input": "$model", "regex": f"^{safe_search}", "options": "i"}}, 45, 0]},
+                        # Contains match gets low score
+                        {"$cond": [{"$regexMatch": {"input": "$make_model_combined", "regex": safe_search, "options": "i"}}, 10, 0]},
+                        # Same name ignoring spaces/punctuation (np300 == NP 300)
+                        *([{"$cond": [_blob_contains("make_model_blob", squashed_query), 40, 0]}] if squashed_query else []),
+                        # Known catalog rename (NP 300 -> Navara (Frontier))
+                        *[{"$cond": [_blob_contains("make_model_blob", a), 30, 0]} for a in alias_needles],
+                    ]
+                }
+            }
+        },
+        {
+            "$sort": {
+                "relevance_score": -1,
+                "make": 1,
+                "model": 1
+            }
+        },
+    ]
+    return stages
+
+
 def find_non_aces_by_name(search_argument: str, year: int) -> List[StandarizedVehicles]:
     """
     Find NonAces vehicles by searching make and model fields with regex
@@ -125,80 +209,12 @@ def find_non_aces_by_name(search_argument: str, year: int) -> List[StandarizedVe
     try:
         standarized_vehicles: List[StandarizedVehicles] = []
 
-        safe_search = sanitize_search_term(search_argument)
-        if not safe_search:
+        stages = _name_search_stages(search_argument, year)
+        if stages is None:
             return []
 
-        search_pattern = {"$regex": safe_search, "$options": "i"}
-        make_text = _text_expr("make")
-        model_text = _text_expr("model")
-        generation_text = _text_expr("generation")
-        trim_text = _text_expr("trim")
-
-        blob_conditions, squashed_query, alias_needles = build_name_match(search_argument)
-
         pipeline = [
-            {
-                "$match": {
-                    "year": year,
-                    "is_active": 1
-                }
-            },
-            {
-                "$addFields": {
-                    "make": make_text,
-                    "model": model_text,
-                    "generation": generation_text,
-                    "trim": trim_text,
-                    "make_model_combined": {
-                        "$concat": [make_text, " ", model_text]
-                    },
-                    "search_blob": _squash_expr(
-                        [make_text, model_text, generation_text, trim_text]),
-                    "make_model_blob": _squash_expr([make_text, model_text]),
-                }
-            },
-            {
-                "$match": {
-                    "$or": [
-                        {"make": search_pattern},
-                        {"model": search_pattern},
-                        {"make_model_combined": search_pattern},
-                        {"generation": search_pattern},
-                        {"trim": search_pattern},
-                        *([{"$expr": {"$or": blob_conditions}}] if blob_conditions else []),
-                    ]
-                }
-            },
-            {
-                "$addFields": {
-                    "relevance_score": {
-                        "$add": [
-                            # Exact make match gets highest score
-                            {"$cond": [{"$eq": [{"$toLower": "$make"}, search_argument.lower()[:MAX_SEARCH_LENGTH]]}, 100, 0]},
-                            # Exact model match gets high score
-                            {"$cond": [{"$eq": [{"$toLower": "$model"}, search_argument.lower()[:MAX_SEARCH_LENGTH]]}, 90, 0]},
-                            # Make starts with search gets medium score
-                            {"$cond": [{"$regexMatch": {"input": "$make", "regex": f"^{safe_search}", "options": "i"}}, 50, 0]},
-                            # Model starts with search gets medium score
-                            {"$cond": [{"$regexMatch": {"input": "$model", "regex": f"^{safe_search}", "options": "i"}}, 45, 0]},
-                            # Contains match gets low score
-                            {"$cond": [{"$regexMatch": {"input": "$make_model_combined", "regex": safe_search, "options": "i"}}, 10, 0]},
-                            # Same name ignoring spaces/punctuation (np300 == NP 300)
-                            *([{"$cond": [_blob_contains("make_model_blob", squashed_query), 40, 0]}] if squashed_query else []),
-                            # Known catalog rename (NP 300 -> Navara (Frontier))
-                            *[{"$cond": [_blob_contains("make_model_blob", a), 30, 0]} for a in alias_needles],
-                        ]
-                    }
-                }
-            },
-            {
-                "$sort": {
-                    "relevance_score": -1,
-                    "make": 1,
-                    "model": 1
-                }
-            },
+            *stages,
             {
                 "$limit": 100
             },
@@ -234,28 +250,100 @@ def find_non_aces_by_name(search_argument: str, year: int) -> List[StandarizedVe
         # Execute aggregation pipeline
         result = list(database.db["NonAcesVehicles"].aggregate(pipeline))
 
-        for non_aces_vehicle in result:
-            standarized_vehicles.append(
-                StandarizedVehicles(
-                    VehicleId=non_aces_vehicle.get("trim_id", 0),
-                    BaseId=non_aces_vehicle.get("make_id", 0),
-                    VehiculoAno=non_aces_vehicle.get("year", 0),
-                    VehiculoComentarios="",
-                    VehiculoDescripcion=f'{non_aces_vehicle.get("year")}, {non_aces_vehicle.get("make")}, {non_aces_vehicle.get("model")}, {non_aces_vehicle.get("generation")}, {non_aces_vehicle.get("trim")}, {non_aces_vehicle.get("gearbox")}',
-                    VehiculoFabricante=non_aces_vehicle.get("make", ""),
-                    VehiculoInternalId=non_aces_vehicle.get("trim_id", 0),
-                    VehiculoModelo=non_aces_vehicle.get("model", ""),
-                    VehiculoSubModelo=non_aces_vehicle.get("generation", ""),
-                    VehiculoTipo="Carro",
-                    nonAcesVehicle=True
-                )
-            )
+        standarized_vehicles = [_doc_to_standarized(doc) for doc in result]
 
         return standarized_vehicles
         
     except Exception as e:
         print(f"MongoDB aggregation error: {str(e)}")
         raise Exception(f"Error searching NonAces vehicles: {str(e)}")
+
+
+def _text(value) -> str:
+    """Catalog rows sometimes hold numbers (generation 5, Mazda 6): always hand out strings."""
+    return "" if value is None else str(value)
+
+
+def _doc_to_standarized(doc: dict) -> StandarizedVehicles:
+    return StandarizedVehicles(
+        VehicleId=doc.get("trim_id", 0),
+        BaseId=doc.get("make_id", 0),
+        VehiculoAno=doc.get("year", 0),
+        VehiculoComentarios="",
+        VehiculoDescripcion=f'{doc.get("year")}, {doc.get("make")}, {doc.get("model")}, {doc.get("generation")}, {doc.get("trim")}, {doc.get("gearbox")}',
+        VehiculoFabricante=_text(doc.get("make")),
+        VehiculoInternalId=doc.get("trim_id", 0),
+        VehiculoModelo=_text(doc.get("model")),
+        VehiculoSubModelo=_text(doc.get("generation")),
+        VehiculoTipo="Carro",
+        nonAcesVehicle=True,
+    )
+
+
+def search_non_aces_models_page(
+    search_argument: str, year: int, skip: int = 0, limit: int = 20
+) -> Tuple[List[StandarizedVehicles], int]:
+    """One vehicle per make+model (best-ranked trim), paged in the database.
+
+    Returns (page, total_models). Deduplicating before paging is what makes infinite scroll
+    consistent: the old flow cut at 100 trims first, which silently dropped whole models.
+    """
+    stages = _name_search_stages(search_argument, year)
+    if stages is None:
+        return [], 0
+
+    pipeline = [
+        *stages,
+        {"$group": {
+            "_id": {"make": {"$toLower": "$make"}, "model": {"$toLower": "$model"}},
+            "doc": {"$first": "$$ROOT"},
+            "score": {"$max": "$relevance_score"},
+        }},
+        {"$sort": {"score": -1, "doc.make": 1, "doc.model": 1}},
+        {"$facet": {
+            "items": [{"$skip": max(0, skip)}, {"$limit": max(1, limit)}],
+            "total": [{"$count": "n"}],
+        }},
+    ]
+    try:
+        facet = list(database.db["NonAcesVehicles"].aggregate(pipeline))
+    except Exception as e:
+        print(f"MongoDB aggregation error: {str(e)}")
+        raise Exception(f"Error searching NonAces vehicles: {str(e)}")
+
+    if not facet:
+        return [], 0
+    items = [_doc_to_standarized(row["doc"]) for row in facet[0].get("items", [])]
+    total = (facet[0].get("total") or [{"n": 0}])[0]["n"]
+    return items, total
+
+
+_MODEL_CACHE: Dict[int, Tuple[float, List[StandarizedVehicles]]] = {}
+_MODEL_CACHE_TTL_SECONDS = 600
+
+
+def list_non_aces_models(year: int) -> List[StandarizedVehicles]:
+    """One representative vehicle per make+model for the year (cached): the fuzzy-match vocabulary."""
+    now = time.monotonic()
+    cached = _MODEL_CACHE.get(year)
+    if cached and now - cached[0] < _MODEL_CACHE_TTL_SECONDS:
+        return cached[1]
+
+    make_text = _text_expr("make")
+    model_text = _text_expr("model")
+    pipeline = [
+        {"$match": {"year": year, "is_active": 1}},
+        {"$addFields": {"make": make_text, "model": model_text}},
+        {"$group": {
+            "_id": {"make": {"$toLower": "$make"}, "model": {"$toLower": "$model"}},
+            "doc": {"$first": "$$ROOT"},
+        }},
+        {"$sort": {"doc.make": 1, "doc.model": 1}},
+    ]
+    rows = list(database.db["NonAcesVehicles"].aggregate(pipeline))
+    vehicles = [_doc_to_standarized(row["doc"]) for row in rows]
+    _MODEL_CACHE[year] = (now, vehicles)
+    return vehicles
 
 
 def find_non_aces_by_name_simple(search_argument: str, year: int):

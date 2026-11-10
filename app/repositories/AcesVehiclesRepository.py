@@ -1,13 +1,109 @@
 from models import Vehiculos
-from typing import List
+from app.schemas.StandarizedVehicles import StandarizedVehicles
+import time
+from typing import Dict, List, Tuple
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, func
+from sqlalchemy import and_, case, func, or_
 
 from app.config.database import db
 from app.utils.regex_sanitize import MAX_SEARCH_LENGTH
 
 
+_MODEL_CACHE: Dict[int, Tuple[float, List[StandarizedVehicles]]] = {}
+_MODEL_CACHE_TTL_SECONDS = 600
+
+
+def _to_standarized(vehicle: Vehiculos) -> StandarizedVehicles:
+    return StandarizedVehicles(
+        VehiculoInternalId=vehicle.VehiculoInternalId,
+        VehicleId=vehicle.VehicleId or 0,
+        BaseId=vehicle.BaseId or 0,
+        VehiculoDescripcion=vehicle.VehiculoDescripcion or "",
+        VehiculoFabricante=vehicle.VehiculoFabricante or "",
+        VehiculoModelo=vehicle.VehiculoModelo or "",
+        VehiculoSubModelo=vehicle.VehiculoSubModelo or "",
+        VehiculoAno=vehicle.VehiculoAno,
+        VehiculoTipo=vehicle.VehiculoTipo or "",
+        VehiculoComentarios=vehicle.VehiculoComentarios or "",
+        nonAcesVehicle=False,
+    )
+
+
 class AcesVehiclesRepository:
+
+    @staticmethod
+    def search_models_page(
+        mysql_db: Session, search_argument: str, year: int, skip: int = 0, limit: int = 20
+    ) -> Tuple[List[Vehiculos], int]:
+        """One vehicle per make+model, ranked and paged in SQL. Returns (page, total_models)."""
+        term = search_argument.strip().lower()
+        if not term or len(term) > MAX_SEARCH_LENGTH:
+            return [], 0
+
+        description = func.lower(Vehiculos.VehiculoDescripcion)
+        maker = func.lower(Vehiculos.VehiculoFabricante)
+        model = func.lower(Vehiculos.VehiculoModelo)
+
+        words = term.split()
+        word_match = and_(*[description.contains(w, autoescape=True) for w in words])
+        matches = or_(description.contains(term, autoescape=True), word_match)
+
+        rank = case(
+            (or_(maker == term, model == term), 0),
+            (or_(maker.startswith(term, autoescape=True), model.startswith(term, autoescape=True)), 1),
+            else_=2,
+        )
+
+        grouped = (
+            mysql_db.query(
+                func.min(Vehiculos.VehiculoInternalId).label("vid"),
+                func.min(rank).label("rank"),
+                Vehiculos.VehiculoFabricante.label("maker"),
+                Vehiculos.VehiculoModelo.label("model"),
+            )
+            .filter(Vehiculos.VehiculoAno == year, matches)
+            .group_by(Vehiculos.VehiculoFabricante, Vehiculos.VehiculoModelo)
+        )
+
+        total = grouped.count()
+        rows = (
+            grouped.order_by("rank", "maker", "model").offset(max(0, skip)).limit(max(1, limit)).all()
+        )
+        if not rows:
+            return [], total
+
+        ids = [row.vid for row in rows]
+        by_id = {
+            v.VehiculoInternalId: v
+            for v in mysql_db.query(Vehiculos).filter(Vehiculos.VehiculoInternalId.in_(ids)).all()
+        }
+        return [by_id[i] for i in ids if i in by_id], total
+
+    @staticmethod
+    def list_models(mysql_db: Session, year: int) -> List[StandarizedVehicles]:
+        """One representative vehicle per make+model for the year (cached): fuzzy vocabulary."""
+        now = time.monotonic()
+        cached = _MODEL_CACHE.get(year)
+        if cached and now - cached[0] < _MODEL_CACHE_TTL_SECONDS:
+            return cached[1]
+
+        ids = [
+            row.vid
+            for row in mysql_db.query(func.min(Vehiculos.VehiculoInternalId).label("vid"))
+            .filter(Vehiculos.VehiculoAno == year)
+            .group_by(Vehiculos.VehiculoFabricante, Vehiculos.VehiculoModelo)
+            .all()
+        ]
+        vehicles: List[StandarizedVehicles] = []
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            vehicles.extend(
+                _to_standarized(v)
+                for v in mysql_db.query(Vehiculos).filter(Vehiculos.VehiculoInternalId.in_(chunk)).all()
+            )
+        vehicles.sort(key=lambda v: (v.VehiculoFabricante.lower(), v.VehiculoModelo.lower()))
+        _MODEL_CACHE[year] = (now, vehicles)
+        return vehicles
 
     @staticmethod
     def find_vehicle_by_description(mysql_db: Session, search_argument: str, year: int) -> List[Vehiculos]:
