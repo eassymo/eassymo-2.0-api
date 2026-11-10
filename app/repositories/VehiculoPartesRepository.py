@@ -53,6 +53,32 @@ def _escape_boolean_word(w: str) -> str:
 class VehiculoPartesRepository:
 
     @staticmethod
+    def list_active_parts_with_tags(mysql_db: Session) -> List[dict]:
+        """Every active part with its tags: the vocabulary for typo-tolerant part matching."""
+
+        def run() -> List[dict]:
+            tags_by_key: dict = {}
+            for tag in mysql_db.query(Tipospartetag).all():
+                key = (tag.CategoriaId, tag.SubCategoriaId, tag.TipoParteId)
+                if tag.TipoParteTagDescripcion:
+                    tags_by_key.setdefault(key, []).append(tag.TipoParteTagDescripcion.strip())
+            rows = mysql_db.query(Tiposparte).filter(Tiposparte.TipoParteActivo == 1).all()
+            return [
+                {
+                    "tipoParteId": row.TipoParteId,
+                    "tipoParteDescripcion": (row.TipoParteDescripcion or "").strip(),
+                    "categoriaId": row.CategoriaId,
+                    "subCategoriaId": row.SubCategoriaId,
+                    "tipoParteSensiblePosicion": bool(row.TipoParteSensiblePosicion),
+                    "tags": tags_by_key.get((row.CategoriaId, row.SubCategoriaId, row.TipoParteId), []),
+                }
+                for row in rows
+                if (row.TipoParteDescripcion or "").strip()
+            ]
+
+        return _call_with_reconnect(mysql_db, run)
+
+    @staticmethod
     def _base_filter_query(mysql_db: Session, regex: str):
         desc_match = func.lower(Tiposparte.TipoParteDescripcion).op("REGEXP")(regex)
         tag_exists = exists(

@@ -28,7 +28,9 @@ from app.schemas.WhatsappExtraction import (
 from app.services import MostradorFolioService as folio_service
 from app.services.LlmExtractionService import LlmExtractionService, LlmRateLimitError
 from app.services.WhatsappCatalogMapper import (
+    VEHICLE_CORRECTED,
     VEHICLE_MATCHED,
+    VEHICLE_SUGGESTED,
     VEHICLE_UNCHECKED,
     VEHICLE_UNRECOGNIZED,
     _normalize_text as _normalize_catalog_text,
@@ -353,10 +355,11 @@ class WhatsappIntakeProcessorService:
         ]
         return proposal
 
-    def _map_catalog_vehicle(self, mysql_db, proposal, bodies):
+    def _map_catalog_vehicle(self, mysql_db, proposal, bodies, ground_year=True):
         catalog_started = time.perf_counter()
         try:
-            return self.catalog_mapper.map_vehicle_result(mysql_db, proposal, bodies)
+            kwargs = {} if ground_year else {"ground_year": False}
+            return self.catalog_mapper.map_vehicle_result(mysql_db, proposal, bodies, **kwargs)
         finally:
             _record_stage("catalog_ms", catalog_started)
 
@@ -366,9 +369,12 @@ class WhatsappIntakeProcessorService:
         resolved_vehicle,
         status: str,
     ) -> None:
-        """Adopt the catalog's vehicle; flag a named car the catalog lacks."""
+        """Adopt the catalog's vehicle; flag a named car the catalog lacks; offer close matches."""
         if resolved_vehicle:
-            proposal.vehicle = resolved_vehicle
+            suggestion = resolved_vehicle.suggestion
+            corrected_from = resolved_vehicle.corrected_from
+            # Mapper-only fields never travel with the vehicle once they have been turned into questions
+            proposal.vehicle = resolved_vehicle.model_copy(update={"suggestion": None, "corrected_from": None})
             proposal.uncertainties = [
                 item
                 for item in (proposal.uncertainties or [])
@@ -376,6 +382,42 @@ class WhatsappIntakeProcessorService:
                 or not resolved_vehicle.make
                 or not resolved_vehicle.model
             ]
+            car = " ".join(
+                x for x in ((suggestion or {}).get("make"), (suggestion or {}).get("model")) if x
+            )
+            if status == VEHICLE_SUGGESTED and suggestion and car:
+                year = suggestion.get("year") or ""
+                path = "vehicle.model" if suggestion.get("model") else "vehicle.make"
+                proposal.uncertainties = [
+                    item for item in (proposal.uncertainties or []) if item.path not in {"vehicle.make", "vehicle.model"}
+                ]
+                proposal.uncertainties.append(
+                    ExtractionUncertainty(
+                        path=path,
+                        reason=f"¿Es un {car} {year}?".replace("  ", " ").strip() if year else f"¿Es un {car}?",
+                        suggestion={k: v for k, v in suggestion.items() if k in {"make", "model", "year"}},
+                    )
+                )
+            elif status == VEHICLE_CORRECTED and corrected_from:
+                shown = " ".join(x for x in (resolved_vehicle.make, resolved_vehicle.model) if x)
+                proposal.uncertainties = [
+                    *(proposal.uncertainties or []),
+                    ExtractionUncertainty(
+                        path="note.vehicle_corrected",
+                        reason=f"Entendimos «{corrected_from}» como {shown}.",
+                    ),
+                ]
+            elif suggestion and suggestion.get("year") and not resolved_vehicle.year:
+                guess = suggestion["year"]
+                label = " ".join(x for x in (resolved_vehicle.make, resolved_vehicle.model) if x) or "vehículo"
+                proposal.uncertainties = [
+                    *(proposal.uncertainties or []),
+                    ExtractionUncertainty(
+                        path="vehicle.year",
+                        reason=f"¿El {label} es {guess}?",
+                        suggestion={"year": guess},
+                    ),
+                ]
         if status == VEHICLE_UNRECOGNIZED:
             proposal.uncertainties = [
                 *(proposal.uncertainties or []),
@@ -408,7 +450,7 @@ class WhatsappIntakeProcessorService:
             comments_parts: List[str] = []
             if line.raw:
                 comments_parts.append(line.raw)
-            if not mapped.catalog_matched:
+            if not mapped.catalog_matched and not mapped.suggestions:
                 comments_parts.append("Sin match de catálogo automático")
             if uncertainty_notes:
                 comments_parts.extend(uncertainty_notes[:2])
@@ -427,6 +469,8 @@ class WhatsappIntakeProcessorService:
                 "position_required": mapped.position_required,
                 "position_standardized": mapped.position_standardized,
                 "unit_standardized": mapped.unit_standardized,
+                "catalog_suggestions": mapped.suggestions or None,
+                "catalog_corrected_from": mapped.corrected_from,
                 "comments": " · ".join(comments_parts) if comments_parts else None,
                 "status": "pendiente",
                 "options": [],
@@ -1963,14 +2007,14 @@ class WhatsappIntakeProcessorService:
                 intent=ExtractionIntent.NEW_REQUEST,
                 vehicle=ExtractionVehicle(make=make or None, model=model or None, year=year or None),
             )
-            resolved, status = self._map_catalog_vehicle(mysql_db, proposal, [answer_text])
+            resolved, status = self._map_catalog_vehicle(mysql_db, proposal, [answer_text], ground_year=False)
         except Exception:
             logger.exception("Catalog lookup failed while applying answers")
             return VEHICLE_UNCHECKED, None
         finally:
             if mysql_db is not None:
                 mysql_db.close()
-        if status != VEHICLE_MATCHED or not resolved or not resolved.make or not resolved.model:
+        if status not in (VEHICLE_MATCHED, VEHICLE_CORRECTED) or not resolved or not resolved.make or not resolved.model:
             return status, None
         return status, (resolved.make, resolved.model)
 

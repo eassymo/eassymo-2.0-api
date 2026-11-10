@@ -125,6 +125,12 @@ class MostradorPiece(BaseModel):
     unit_standardized: bool = Field(
         True, description="Unit of measure is a catalog unit"
     )
+    catalog_suggestions: Optional[List[dict]] = Field(
+        None, description="WhatsApp bot: close catalog parts the seller can confirm (no match was made)"
+    )
+    catalog_corrected_from: Optional[str] = Field(
+        None, description="WhatsApp bot: what the seller wrote when the catalog fixed an obvious typo"
+    )
     comments: Optional[str] = Field(None)
     note: bool = Field(False)
     sample: bool = Field(False)
@@ -188,6 +194,12 @@ class WhatsappPendingQuestion(BaseModel):
     status: str = Field("open", description="open or answered")
     asked_message_sid: Optional[str] = Field(None)
     source: Optional[str] = Field(None, description="llm, catalog_position, vehicle_field")
+    suggestion: Optional[dict] = Field(
+        None, description="A concrete answer the seller can confirm with «sí» (car, year)"
+    )
+    choices: Optional[List[dict]] = Field(
+        None, description="Catalog parts the seller can pick from (by number, name or «sí» for one)"
+    )
     acknowledged_at: Optional[datetime] = Field(
         None,
         description="Seller accepted this warning/info when enabling the draft for the buyer",

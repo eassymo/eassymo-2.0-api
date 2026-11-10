@@ -472,7 +472,7 @@ def test_map_vehicle_result_statuses(mock_find):
         MagicMock(VehiculoFabricante="Renault", VehiculoModelo="Koleos"),
         MagicMock(VehiculoFabricante="Nissan", VehiculoModelo="Koleos"),
     ]
-    _, status = mapper.map_vehicle_result(MagicMock(), named, ["koleos"])
+    _, status = mapper.map_vehicle_result(MagicMock(), named, ["koleos 2005"])
     assert status == VEHICLE_AMBIGUOUS
 
     mock_find.return_value = []
