@@ -65,7 +65,7 @@ def _append_created_group_to_lists(census_id: str, inviter_groups: List[str], in
         modified_lists: int = 0
         for inviter_group_id in inviter_groups:
             lists = list(listRepository.find(
-                {"group_id": inviter_group_id, "name": "Mi Red", "is_priority": True}))
+                {"group_id": inviter_group_id, "name": "Mi Red"}))
 
             for group_list in lists:
                 userList = ListsSchema(**group_list)
