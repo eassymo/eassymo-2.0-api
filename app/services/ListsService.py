@@ -23,18 +23,23 @@ def deprecated(func):
 
 
 def _resolve_priority_list_id(user_lists: List[Dict[str, Any]], data: ListsSchema) -> str:
-    """Return the list id used for «Mi Red» / priority connections for this user+group scope."""
-    priority_lists = [
-        user_list for user_list in user_lists if user_list.get("is_priority") is True
-    ]
-    if priority_lists:
-        return str(priority_lists[0].get("_id"))
+    """Return the list id new connections go to by default for this user+group scope.
 
+    «Mi Red» is the system list and always the default destination, even when the user made
+    another list «Prioritaria» (which only moves the is_priority flag). Falls back to the
+    priority list, then creates «Mi Red».
+    """
     mi_red_lists = [
         user_list for user_list in user_lists if (user_list.get("name") or "").strip() == "Mi Red"
     ]
     if mi_red_lists:
         return str(mi_red_lists[0].get("_id"))
+
+    priority_lists = [
+        user_list for user_list in user_lists if user_list.get("is_priority") is True
+    ]
+    if priority_lists:
+        return str(priority_lists[0].get("_id"))
 
     created_list = listsRepository.insert({
         "user_uid": data.user_uid,
@@ -261,6 +266,12 @@ def update(user_info: Dict[str, Any], list_id: str, payload: ListsSchema):
         if prev_name_norm == "Comisionistas":
             json_payload["is_favorite"] = False
         listsRepository.update(list_id, json_payload)
+
+        if payload.is_priority is True:
+            # Only one «Prioritaria» per user+group: the previous one loses the status.
+            listsRepository.unset_priority_except(
+                str(prev.get("user_uid")), str(prev.get("group_id")), list_id
+            )
 
         filters = {"_id": ObjectId(list_id)}
 

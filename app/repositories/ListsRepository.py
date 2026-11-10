@@ -129,6 +129,19 @@ def find_all_groups_in_user_lists(user_uid: str | None, group_id: str):
     return database.db["Lists"].aggregate(pipeline)
 
 
+def unset_priority_except(user_uid: str, group_id: str, keep_list_id: str):
+    """Clear is_priority on every other list of this user+group (only one list may be «Prioritaria»)."""
+    return database.db["Lists"].update_many(
+        {
+            "user_uid": user_uid,
+            "group_id": group_id,
+            "is_priority": True,
+            "_id": {"$ne": ObjectId(keep_list_id)},
+        },
+        {"$set": {"is_priority": False, "last_modified": datetime.now(ZoneInfo('UTC'))}},
+    )
+
+
 def update(list_id: str, payload: Dict[str, Any]) -> UpdateResult:
     id = ObjectId(list_id)
 
