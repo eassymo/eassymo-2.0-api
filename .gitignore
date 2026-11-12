@@ -151,3 +151,8 @@ temp_interactive_push.bat
 # Note: .env.example and docs/ remain tracked.
 config.bat
 node_modules
+
+# Local secrets: never commit. Keep the template tracked.
+.env
+.env.*
+!.env.example
