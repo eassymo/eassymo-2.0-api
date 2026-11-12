@@ -75,7 +75,9 @@ def migrate(apply: bool) -> Dict[str, Any]:
                 )
                 continue
             if not apply:
-                report["created"] += 1
+                # Read-only check so a dry run reports would-create/would-exist.
+                key = "existing" if link_repo.find(uid, group_id) else "created"
+                report[key] += 1
                 continue
             if link_repo.insert_if_absent(uid, group_id, phone, verified_at):
                 report["created"] += 1

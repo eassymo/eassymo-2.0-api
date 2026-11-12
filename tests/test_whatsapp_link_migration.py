@@ -31,6 +31,7 @@ def env():
             (f["user_uid"], f["group"]), []
         )
         lr.insert_if_absent.return_value = True
+        lr.find.return_value = None
         yield {
             "users": users, "groups": groups, "state": state,
             "ur": ur, "lr": lr, "can": can_,
@@ -122,3 +123,16 @@ def test_missing_verified_at_defaults_to_now(env):
 def test_all_users_are_scanned_beyond_default_limit(env):
     svc.migrate(apply=False)
     assert env["ur"].find.call_args.kwargs.get("limit") == 0
+
+
+def test_dry_run_reports_existing_links_without_writing(env):
+    g1, g2 = _g(), _g()
+    env["users"].append(_user("u1", "7779313704"))
+    env["groups"]["u1"] = [g1, g2]
+    existing_gid = str(g1["_id"])
+    env["lr"].find.side_effect = lambda uid, gid: (
+        {"uid": uid, "group_id": gid} if gid == existing_gid else None
+    )
+    r = svc.migrate(apply=False)
+    assert r["created"] == 1 and r["existing"] == 1
+    env["lr"].insert_if_absent.assert_not_called()

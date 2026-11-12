@@ -21,8 +21,8 @@ def main() -> None:
 
     report = migrate(apply=args.apply)
     mode = "APPLY" if args.apply else "DRY RUN"
-    created_label = "created" if args.apply else "would_create"
-    print(f"[{mode}] {created_label}={report['created']} existing={report['existing']}")
+    c, e = ("created", "existing") if args.apply else ("would_create", "would_exist")
+    print(f"[{mode}] {c}={report['created']} {e}={report['existing']}")
     print(f"invalid_phones={len(report['invalid_phones'])}: {report['invalid_phones']}")
     print(f"phone_conflicts={len(report['phone_conflicts'])}: {report['phone_conflicts']}")
     print(f"skipped_no_access={len(report['skipped_no_access'])}")
