@@ -282,3 +282,17 @@ def test_status_reports_disabled_link(mocks):
     }
     result = _service().get_status("uid-1", "g1")
     assert result["link_status"] == "disabled"
+
+
+@pytest.mark.parametrize("method", ["preview", "confirm"])
+def test_token_without_group_id_is_treated_as_expired(mocks, method):
+    pending = _pending("tok", "g1")
+    del pending["group_id"]
+    mocks.verify_repo.find_by_token_hash.return_value = pending
+
+    with pytest.raises(HTTPException) as exc:
+        getattr(_service(), method)("uid-1", "tok")
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail == "Esta confirmación venció. Pide un nuevo mensaje."
+    mocks.link_repo.upsert.assert_not_called()

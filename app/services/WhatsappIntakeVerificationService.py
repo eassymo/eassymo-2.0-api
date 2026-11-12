@@ -26,6 +26,7 @@ PENDING_TTL = timedelta(hours=24)
 
 ROLE_DENIED_COPY = "Tu rol en esta tienda no permite usar WhatsApp POS."
 LINK_DISABLED_COPY = "El dueño desactivó tu WhatsApp en esta tienda."
+EXPIRED_COPY = "Esta confirmación venció. Pide un nuevo mensaje."
 PHONE_TAKEN_COPY = "Este WhatsApp ya está vinculado a otra cuenta."
 
 
@@ -296,11 +297,11 @@ class WhatsappIntakeVerificationService:
                 detail="Esta confirmación fue reemplazada. Pide un nuevo mensaje.",
             )
         if self._is_expired(pending, datetime.now(timezone.utc)):
-            raise HTTPException(
-                status_code=400,
-                detail="Esta confirmación venció. Pide un nuevo mensaje.",
-            )
-        if not group_auth.user_belongs_to_group(uid, str(pending.get("group_id") or "")):
+            raise HTTPException(status_code=400, detail=EXPIRED_COPY)
+        if not pending.get("group_id"):
+            # Issued before per-group links existed: cannot be honoured.
+            raise HTTPException(status_code=400, detail=EXPIRED_COPY)
+        if not group_auth.user_belongs_to_group(uid, str(pending.get("group_id"))):
             raise HTTPException(status_code=403, detail="No perteneces a esta tienda.")
         return pending
 

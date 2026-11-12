@@ -67,4 +67,5 @@ def test_garbage_group_header_is_4xx_not_500(mock_service, _member):
     with pytest.raises(HTTPException) as exc:
         whatsapp_intake_status(_request(group="not-an-objectid"))
     assert 400 <= exc.value.status_code < 500
+    assert exc.value.detail == "La tienda seleccionada no es válida."
     mock_service.return_value.get_status.assert_not_called()

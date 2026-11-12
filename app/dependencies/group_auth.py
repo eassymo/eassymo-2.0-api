@@ -130,7 +130,7 @@ def require_group_membership_from_header(request: Request) -> str:
     except InvalidId:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="GroupSelected header is not a valid group id",
+            detail="La tienda seleccionada no es válida.",
         )
     return group_id
 
