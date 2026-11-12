@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import MagicMock, call, patch
 
 import pytest
@@ -23,6 +24,24 @@ _skip_missing_verify = pytest.mark.skipif(
     WhatsappIntakeVerificationService is None,
     reason="WhatsappIntakeVerificationService is not in this tree",
 )
+
+
+@pytest.fixture
+def verify_env():
+    """Patch group-scoped collaborators of WhatsappIntakeVerificationService."""
+    mod = "app.services.WhatsappIntakeVerificationService"
+    with patch(f"{mod}.link_repo") as link_repo, patch(f"{mod}.can") as can, patch(
+        f"{mod}.group_auth"
+    ) as group_auth, patch(f"{mod}.groupRepository") as group_repo:
+        link_repo.find.return_value = None
+        link_repo.find_any_by_phone.return_value = []
+        link_repo.list_by_uid.return_value = []
+        can.return_value = True
+        group_auth.user_belongs_to_group.return_value = True
+        group_repo.find_by_id.return_value = {"name": "Tienda A"}
+        yield SimpleNamespace(
+            link_repo=link_repo, can=can, group_auth=group_auth, group_repo=group_repo
+        )
 
 
 def _collecting_session(
@@ -553,9 +572,9 @@ def test_identity_resolves_single_group(mock_pending, mock_user_repo, mock_group
 @patch("app.services.WhatsappIntakeVerificationService.verify_repo")
 @patch("app.services.WhatsappIntakeVerificationService.userRepository")
 @patch("app.services.WhatsappIntakeVerificationService.WhatsappService")
-def test_start_sends_template_with_name_and_token(mock_whatsapp_service, mock_user_repo, mock_verify_repo):
+def test_start_sends_template_with_name_and_token(mock_whatsapp_service, mock_user_repo, mock_verify_repo, verify_env):
     mock_user_repo.find_one.return_value = {"uid": "uid-1", "name": "Ian"}
-    mock_verify_repo.find_open_by_uid.return_value = None
+    mock_verify_repo.find_open.return_value = None
     mock_verify_repo.count_distinct_phones.return_value = 0
     mock_verify_repo.list_starts_since.return_value = []
     mock_whatsapp_service.return_value.send_template_message.return_value = {
@@ -564,7 +583,7 @@ def test_start_sends_template_with_name_and_token(mock_whatsapp_service, mock_us
 
     service = WhatsappIntakeVerificationService()
     service.template_sid = "HXtest"
-    service.start("uid-1", "7779313704")
+    service.start("uid-1", "g1", "7779313704")
 
     sent_message = mock_whatsapp_service.return_value.send_template_message.call_args[0][0]
     assert sent_message.template.variables[0] == "Ian"
@@ -575,10 +594,11 @@ def test_start_sends_template_with_name_and_token(mock_whatsapp_service, mock_us
 @patch("app.services.WhatsappIntakeVerificationService.verify_repo")
 @patch("app.services.WhatsappIntakeVerificationService.userRepository")
 @patch("app.services.WhatsappIntakeVerificationService.WhatsappService")
-def test_confirm_writes_user_pos_whatsapp(mock_whatsapp_service, mock_user_repo, mock_verify_repo):
+def test_confirm_upserts_group_link(mock_whatsapp_service, mock_user_repo, mock_verify_repo, verify_env):
     token = "abc123token"
     pending = {
         "uid": "uid-1",
+        "group_id": "g1",
         "phone": "+5217779313704",
         "token_hash": _hash_token(token),
         "expires_at": datetime.now(timezone.utc) + timedelta(minutes=5),
@@ -592,17 +612,19 @@ def test_confirm_writes_user_pos_whatsapp(mock_whatsapp_service, mock_user_repo,
     result = service.confirm("uid-1", token)
 
     assert result["pos_whatsapp"] == "+5217779313704"
-    mock_user_repo.update_user.assert_called_once()
+    assert verify_env.link_repo.upsert.call_args.args[:3] == ("uid-1", "g1", "+5217779313704")
+    mock_user_repo.update_user.assert_not_called()
     mock_verify_repo.mark_consumed.assert_called_once()
 
 
 @_skip_missing_verify
 @patch("app.services.WhatsappIntakeVerificationService.verify_repo")
 @patch("app.services.WhatsappIntakeVerificationService.userRepository")
-def test_confirm_rejects_wrong_uid(mock_user_repo, mock_verify_repo):
+def test_confirm_rejects_wrong_uid(mock_user_repo, mock_verify_repo, verify_env):
     token = "abc123token"
     pending = {
         "uid": "uid-owner",
+        "group_id": "g1",
         "phone": "+5217779313704",
         "token_hash": _hash_token(token),
         "expires_at": datetime.now(timezone.utc) + timedelta(minutes=5),
@@ -619,7 +641,7 @@ def test_confirm_rejects_wrong_uid(mock_user_repo, mock_verify_repo):
 @_skip_missing_verify
 @patch("app.services.WhatsappIntakeVerificationService.verify_repo")
 @patch("app.services.WhatsappIntakeVerificationService.userRepository")
-def test_get_status_returns_open_pending(mock_user_repo, mock_verify_repo):
+def test_get_status_returns_open_pending(mock_user_repo, mock_verify_repo, verify_env):
     now = datetime.now(timezone.utc)
     open_pending = {
         "phone": "+527779313704",
@@ -628,11 +650,11 @@ def test_get_status_returns_open_pending(mock_user_repo, mock_verify_repo):
         "last_sent_at": now - timedelta(minutes=3),
     }
     mock_user_repo.find_one.return_value = {"uid": "uid-1", "pos_whatsapp": None}
-    mock_verify_repo.find_open_by_uid.return_value = open_pending
+    mock_verify_repo.find_open.return_value = open_pending
     mock_verify_repo.count_distinct_phones.return_value = 1
 
     service = WhatsappIntakeVerificationService()
-    result = service.get_status("uid-1")
+    result = service.get_status("uid-1", "g1")
 
     assert result["verified"] is False
     assert result["pending"]["phone"] == "+527779313704"
@@ -643,10 +665,10 @@ def test_get_status_returns_open_pending(mock_user_repo, mock_verify_repo):
 
 @_skip_missing_verify
 @patch("app.services.WhatsappIntakeVerificationService.userRepository")
-def test_start_rejects_short_phone_with_400(mock_user_repo):
+def test_start_rejects_short_phone_with_400(mock_user_repo, verify_env):
     mock_user_repo.find_one.return_value = {"uid": "uid-1", "name": "Ian"}
     with pytest.raises(HTTPException) as exc:
-        WhatsappIntakeVerificationService().start("uid-1", "12345")
+        WhatsappIntakeVerificationService().start("uid-1", "g1", "12345")
     assert exc.value.status_code == 400
     assert exc.value.detail == "Ingresa un WhatsApp válido de 10 dígitos."
 
@@ -655,10 +677,10 @@ def test_start_rejects_short_phone_with_400(mock_user_repo):
 @patch("app.services.WhatsappIntakeVerificationService.verify_repo")
 @patch("app.services.WhatsappIntakeVerificationService.userRepository")
 @patch("app.services.WhatsappIntakeVerificationService.WhatsappService")
-def test_start_allows_second_distinct_phone(mock_whatsapp_service, mock_user_repo, mock_verify_repo):
+def test_start_allows_second_distinct_phone(mock_whatsapp_service, mock_user_repo, mock_verify_repo, verify_env):
     now = datetime.now(timezone.utc)
     mock_user_repo.find_one.return_value = {"uid": "uid-1", "name": "Ian"}
-    mock_verify_repo.find_open_by_uid.return_value = {
+    mock_verify_repo.find_open.return_value = {
         "phone": "+527779111111",
         "created_at": now - timedelta(minutes=5),
         "last_sent_at": now - timedelta(minutes=5),
@@ -669,7 +691,7 @@ def test_start_allows_second_distinct_phone(mock_whatsapp_service, mock_user_rep
 
     service = WhatsappIntakeVerificationService()
     service.template_sid = "HXtest"
-    service.start("uid-1", "7779222222")
+    service.start("uid-1", "g1", "7779222222")
 
     mock_verify_repo.supersede_open.assert_called_once()
     mock_whatsapp_service.return_value.send_template_message.assert_called_once()
@@ -679,10 +701,10 @@ def test_start_allows_second_distinct_phone(mock_whatsapp_service, mock_user_rep
 @patch("app.services.WhatsappIntakeVerificationService.verify_repo")
 @patch("app.services.WhatsappIntakeVerificationService.userRepository")
 @patch("app.services.WhatsappIntakeVerificationService.WhatsappService")
-def test_start_blocks_third_distinct_phone(mock_whatsapp_service, mock_user_repo, mock_verify_repo):
+def test_start_blocks_third_distinct_phone(mock_whatsapp_service, mock_user_repo, mock_verify_repo, verify_env):
     now = datetime.now(timezone.utc)
     mock_user_repo.find_one.return_value = {"uid": "uid-1", "name": "Ian"}
-    mock_verify_repo.find_open_by_uid.return_value = None
+    mock_verify_repo.find_open.return_value = None
     mock_verify_repo.count_distinct_phones.return_value = 2
     mock_verify_repo.list_starts_since.return_value = [
         {"phone": "+527779111111", "created_at": now - timedelta(minutes=20)},
@@ -692,7 +714,7 @@ def test_start_blocks_third_distinct_phone(mock_whatsapp_service, mock_user_repo
     service = WhatsappIntakeVerificationService()
     service.template_sid = "HXtest"
     with pytest.raises(HTTPException) as exc:
-        service.start("uid-1", "7779333333")
+        service.start("uid-1", "g1", "7779333333")
     assert exc.value.status_code == 429
     mock_whatsapp_service.return_value.send_template_message.assert_not_called()
 
@@ -701,9 +723,9 @@ def test_start_blocks_third_distinct_phone(mock_whatsapp_service, mock_user_repo
 @patch("app.services.WhatsappIntakeVerificationService.verify_repo")
 @patch("app.services.WhatsappIntakeVerificationService.userRepository")
 @patch("app.services.WhatsappIntakeVerificationService.WhatsappService")
-def test_start_marks_failed_when_send_raises(mock_whatsapp_service, mock_user_repo, mock_verify_repo):
+def test_start_marks_failed_when_send_raises(mock_whatsapp_service, mock_user_repo, mock_verify_repo, verify_env):
     mock_user_repo.find_one.return_value = {"uid": "uid-1", "name": "Ian"}
-    mock_verify_repo.find_open_by_uid.return_value = None
+    mock_verify_repo.find_open.return_value = None
     mock_verify_repo.count_distinct_phones.return_value = 0
     mock_whatsapp_service.return_value.send_template_message.side_effect = HTTPException(
         status_code=500,
@@ -713,7 +735,7 @@ def test_start_marks_failed_when_send_raises(mock_whatsapp_service, mock_user_re
     service = WhatsappIntakeVerificationService()
     service.template_sid = "HXtest"
     with pytest.raises(HTTPException) as exc:
-        service.start("uid-1", "7779313704")
+        service.start("uid-1", "g1", "7779313704")
     assert exc.value.status_code == 500
     mock_verify_repo.mark_failed.assert_called_once()
     mock_verify_repo.supersede_open.assert_called_once()
@@ -2584,10 +2606,10 @@ def test_flush_vehicle_less_extras_resume_last_draft(
 @patch("app.services.WhatsappIntakeVerificationService.verify_repo")
 @patch("app.services.WhatsappIntakeVerificationService.userRepository")
 @patch("app.services.WhatsappIntakeVerificationService.WhatsappService")
-def test_start_same_number_resend_does_not_hit_change_cap(mock_whatsapp_service, mock_user_repo, mock_verify_repo):
+def test_start_same_number_resend_does_not_hit_change_cap(mock_whatsapp_service, mock_user_repo, mock_verify_repo, verify_env):
     now = datetime.now(timezone.utc)
     mock_user_repo.find_one.return_value = {"uid": "uid-1", "name": "Ian"}
-    mock_verify_repo.find_open_by_uid.return_value = {
+    mock_verify_repo.find_open.return_value = {
         "phone": "+527779313704",
         "created_at": now - timedelta(minutes=5),
         "last_sent_at": now - timedelta(minutes=5),
@@ -2601,7 +2623,7 @@ def test_start_same_number_resend_does_not_hit_change_cap(mock_whatsapp_service,
 
     service = WhatsappIntakeVerificationService()
     service.template_sid = "HXtest"
-    service.start("uid-1", "7779313704")
+    service.start("uid-1", "g1", "7779313704")
 
     mock_verify_repo.supersede_open.assert_called_once()
     mock_whatsapp_service.return_value.send_template_message.assert_called_once()

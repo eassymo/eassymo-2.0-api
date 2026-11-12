@@ -22,17 +22,20 @@ def ensure_indexes() -> None:
     global _indexes_ready
     if _indexes_ready or database.db is None:
         return
-    _col().create_index([("uid", ASCENDING), ("status", ASCENDING)])
+    _col().create_index(
+        [("uid", ASCENDING), ("group_id", ASCENDING), ("status", ASCENDING)]
+    )
     _col().create_index([("token_hash", ASCENDING)], unique=True)
     _col().create_index([("uid", ASCENDING), ("created_at", ASCENDING)])
     _indexes_ready = True
 
 
-def find_open_by_uid(uid: str) -> Optional[dict]:
+def find_open(uid: str, group_id: str) -> Optional[dict]:
     ensure_indexes()
     return _col().find_one(
         {
             "uid": uid,
+            "group_id": group_id,
             "status": "open",
             "consumed_at": None,
             "expires_at": {"$gt": _now()},
@@ -41,29 +44,29 @@ def find_open_by_uid(uid: str) -> Optional[dict]:
     )
 
 
-def count_distinct_phones(uid: str, since: datetime) -> int:
+def count_distinct_phones(uid: str, group_id: str, since: datetime) -> int:
     keys = set()
-    for doc in list_starts_since(uid, since):
+    for doc in list_starts_since(uid, group_id, since):
         digits = "".join(ch for ch in (doc.get("phone") or "") if ch.isdigit())
         keys.add(digits[-10:] if len(digits) >= 10 else digits)
     keys.discard("")
     return len(keys)
 
 
-def list_starts_since(uid: str, since: datetime) -> List[dict]:
+def list_starts_since(uid: str, group_id: str, since: datetime) -> List[dict]:
     ensure_indexes()
     return list(
         _col().find(
-            {"uid": uid, "created_at": {"$gte": since}},
+            {"uid": uid, "group_id": group_id, "created_at": {"$gte": since}},
             {"phone": 1, "created_at": 1},
         )
     )
 
 
-def supersede_open(uid: str) -> None:
+def supersede_open(uid: str, group_id: str) -> None:
     now = _now()
     _col().update_many(
-        {"uid": uid, "status": "open"},
+        {"uid": uid, "group_id": group_id, "status": "open"},
         {"$set": {"status": "superseded", "superseded_at": now, "updated_at": now}},
     )
 
