@@ -117,6 +117,21 @@ def test_public_get_filters_for_the_customer(monkeypatch):
     assert _options(seller)[0]["price"] == 120.0
 
 
+def test_public_get_keeps_piece_names_for_a_draft_still_preparing(monkeypatch):
+    doc = _folio(customer_ready=False, share_token="tok", source="whatsapp")
+    monkeypatch.setattr(svc.folioRepository, "find_by_share_token", lambda t: doc)
+    monkeypatch.setattr(svc.folioRepository, "find_by_id", lambda i: doc)
+    monkeypatch.setattr(svc, "_ensure_mostrador_orders_materialized", lambda *a, **k: None)
+    monkeypatch.setattr(svc, "_hydrate", lambda d: {**d, "preparing": True})
+    monkeypatch.setattr(svc, "sibling_draft_summaries", lambda *a, **k: [])
+
+    customer = svc.get_by_share_token("tok", for_customer=True)
+    # The pieces stay hidden from the buyer...
+    assert customer["pieces"] == []
+    # ...but the draft card sent to the seller still needs their names and quantities.
+    assert customer["piece_rows"] == [{"label": "Bujías", "qty_label": "1 pieza"}]
+
+
 def test_public_order_response_is_filtered(monkeypatch):
     from app.routers import MostradorFolioRouter as router
 

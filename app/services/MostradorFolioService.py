@@ -280,6 +280,8 @@ def get_by_share_token(
     if summaries:
         hydrated["sibling_drafts"] = summaries
     if for_customer and hydrated.get("preparing"):
+        # Names and quantities only, like the sibling summaries: the WhatsApp draft card needs them.
+        hydrated["piece_rows"] = _piece_rows(hydrated.get("pieces") or [])
         hydrated["pieces"] = []
         hydrated["customer_editions"] = []
     if for_customer:
