@@ -642,6 +642,16 @@ def test_get_status_returns_open_pending(mock_user_repo, mock_verify_repo):
 
 
 @_skip_missing_verify
+@patch("app.services.WhatsappIntakeVerificationService.userRepository")
+def test_start_rejects_short_phone_with_400(mock_user_repo):
+    mock_user_repo.find_one.return_value = {"uid": "uid-1", "name": "Ian"}
+    with pytest.raises(HTTPException) as exc:
+        WhatsappIntakeVerificationService().start("uid-1", "12345")
+    assert exc.value.status_code == 400
+    assert exc.value.detail == "Ingresa un WhatsApp válido de 10 dígitos."
+
+
+@_skip_missing_verify
 @patch("app.services.WhatsappIntakeVerificationService.verify_repo")
 @patch("app.services.WhatsappIntakeVerificationService.userRepository")
 @patch("app.services.WhatsappIntakeVerificationService.WhatsappService")

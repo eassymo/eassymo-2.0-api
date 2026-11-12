@@ -11,7 +11,7 @@ from app.repositories import UserRepository as userRepository
 from app.repositories import WhatsappIntakeVerificationRepository as verify_repo
 from app.schemas.WhatasppMessage import WhatsappMessage, WhatsappTemplate
 from app.services.WhatsappService import WhatsappService
-from app.utils.phone_normalize import normalize_phone_e164, phone_lookup_variants, phones_match
+from app.utils.phone_normalize import canonical_pos_phone, phone_lookup_variants, phones_match
 
 logger = logging.getLogger(__name__)
 
@@ -53,21 +53,6 @@ def _phone_key(phone: str) -> str:
     return digits[-10:] if len(digits) >= 10 else digits
 
 
-def _canonical_pos_phone(phone: str) -> str:
-    normalized = normalize_phone_e164(phone)
-    digits = "".join(ch for ch in normalized if ch.isdigit())
-    if len(digits) < 10:
-        raise HTTPException(
-            status_code=400,
-            detail="Ingresa un WhatsApp válido de 10 dígitos.",
-        )
-    if len(digits) == 10:
-        return f"+521{digits}"
-    if digits.startswith("52") and not digits.startswith("521") and len(digits) == 12:
-        return f"+521{digits[2:]}"
-    return f"+{digits}"
-
-
 class WhatsappIntakeVerificationService:
     def __init__(self) -> None:
         self.template_sid = os.getenv(
@@ -82,7 +67,10 @@ class WhatsappIntakeVerificationService:
         if not user:
             raise HTTPException(status_code=404, detail="Usuario no encontrado.")
 
-        canonical = _canonical_pos_phone(phone)
+        try:
+            canonical = canonical_pos_phone(phone)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
         self._assert_phone_available(canonical, uid)
 
         now = datetime.now(timezone.utc)

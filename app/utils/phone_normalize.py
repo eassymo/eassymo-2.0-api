@@ -39,3 +39,16 @@ def phone_lookup_variants(phone: str) -> list[str]:
 
 def phones_match(left: str, right: str) -> bool:
     return bool(set(phone_lookup_variants(left)) & set(phone_lookup_variants(right)))
+
+
+def canonical_pos_phone(phone: str) -> str:
+    """Canonical Mexican mobile form +521XXXXXXXXXX used for WhatsApp POS links."""
+    normalized = normalize_phone_e164(phone)
+    digits = "".join(ch for ch in normalized if ch.isdigit())
+    if len(digits) < 10:
+        raise ValueError("Ingresa un WhatsApp válido de 10 dígitos.")
+    if len(digits) == 10:
+        return f"+521{digits}"
+    if digits.startswith("52") and not digits.startswith("521") and len(digits) == 12:
+        return f"+521{digits[2:]}"
+    return f"+{digits}"
