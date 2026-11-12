@@ -526,7 +526,7 @@ class WhatsappIntakeProcessorService:
     def _draft_card_image_url(
         self, share_token: str, *, version: Optional[str] = None
     ) -> Optional[str]:
-        """Public PNG Twilio can attach. Empty when the host is not public HTTPS."""
+        """Public PNG Meta downloads for the image message. Empty when the host is not public HTTPS."""
         if not share_token:
             return None
         base = self.whatsapp_public_base_url or ""

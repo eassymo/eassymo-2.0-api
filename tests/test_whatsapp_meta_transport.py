@@ -280,22 +280,64 @@ def test_send_text_message_builds_graph_json(mock_post, monkeypatch):
     assert payload["text"]["preview_url"] is True
 
 
+DRAFT_BODY = "Borrador listo en Eassymo POS.\nhttps://www.eassymo.mx/whatsapp-draft/abc"
+DRAFT_IMAGE = "https://www.eassymo.mx/api/og/whatsapp-draft?token=abc"
+
+
+def _graph_error(status=400, message="Media download failed"):
+    response = MagicMock()
+    response.status_code = status
+    response.json.return_value = {"error": {"message": message}}
+    response.text = json.dumps({"error": {"message": message}})
+    return response
+
+
 @patch("app.services.WhatsappService.requests.get")
 @patch("app.services.WhatsappService.requests.post")
-def test_send_text_message_does_not_wait_for_draft_card(mock_post, mock_get, monkeypatch):
+def test_send_text_message_sends_draft_card_as_image_with_caption(mock_post, mock_get, monkeypatch):
+    mock_post.return_value = _graph_ok("wamid.IMG")
+    service = _cloud_service(monkeypatch)
+    result = service.send_text_message("+5217779313704", DRAFT_BODY, media_url=DRAFT_IMAGE)
+    # Meta downloads the image itself: we never fetch it, so the reply is not delayed.
+    mock_get.assert_not_called()
+    assert mock_post.call_count == 1
+    assert result["message_sid"] == "wamid.IMG"
+    payload = mock_post.call_args.kwargs["json"]
+    assert payload["type"] == "image"
+    assert payload["image"] == {"link": DRAFT_IMAGE, "caption": DRAFT_BODY}
+    assert "text" not in payload
+
+
+@patch("app.services.WhatsappService.requests.post")
+def test_send_text_message_falls_back_to_text_when_image_is_rejected(mock_post, monkeypatch):
+    mock_post.side_effect = [_graph_error(), _graph_ok("wamid.TXT")]
+    service = _cloud_service(monkeypatch)
+    result = service.send_text_message("+5217779313704", DRAFT_BODY, media_url=DRAFT_IMAGE)
+    assert result["message_sid"] == "wamid.TXT"
+    assert mock_post.call_count == 2
+    fallback = mock_post.call_args_list[1].kwargs["json"]
+    assert fallback["type"] == "text"
+    assert fallback["text"] == {"body": DRAFT_BODY, "preview_url": True}
+
+
+@patch("app.services.WhatsappService.requests.post")
+def test_send_text_message_skips_image_when_caption_exceeds_whatsapp_limit(mock_post, monkeypatch):
     mock_post.return_value = _graph_ok("wamid.TXT")
     service = _cloud_service(monkeypatch)
-    result = service.send_text_message(
-        "+5217779313704",
-        "Borrador listo en Eassymo POS.\nhttps://www.eassymo.mx/whatsapp-draft/abc",
-        media_url="https://www.eassymo.mx/api/og/whatsapp-draft?token=abc",
-    )
-    mock_get.assert_not_called()
-    assert result["message_sid"] == "wamid.TXT"
+    long_body = "x" * 1025
+    service.send_text_message("+5217779313704", long_body, media_url=DRAFT_IMAGE)
+    assert mock_post.call_count == 1
     payload = mock_post.call_args.kwargs["json"]
     assert payload["type"] == "text"
-    assert payload["text"]["body"].startswith("Borrador listo")
-    assert "whatsapp-draft/abc" in payload["text"]["body"]
+    assert payload["text"]["body"] == long_body
+
+
+@patch("app.services.WhatsappService.requests.post")
+def test_send_text_message_raises_when_text_fallback_also_fails(mock_post, monkeypatch):
+    mock_post.side_effect = [_graph_error(), _graph_error(500, "down")]
+    service = _cloud_service(monkeypatch)
+    with pytest.raises(HTTPException):
+        service.send_text_message("+5217779313704", DRAFT_BODY, media_url=DRAFT_IMAGE)
 
 
 @patch("app.services.WhatsappService.requests.post")

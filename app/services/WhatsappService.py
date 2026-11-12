@@ -19,6 +19,10 @@ DELIVERY_INVITE_FREEFORM = (
 )
 
 
+# WhatsApp rejects image captions longer than this.
+IMAGE_CAPTION_MAX_CHARS = 1024
+
+
 class WhatsappService:
     def __init__(self):
         self.cloud_token = os.getenv("WHATSAPP_CLOUD_TOKEN", "").strip()
@@ -223,12 +227,22 @@ class WhatsappService:
     ) -> Dict[str, Any]:
         """Send a freeform WhatsApp message (requires an open 24h session window).
 
-        media_url names the draft card, but this call does not download it.
-        That GET waited up to 20 seconds before the seller saw the link, and
-        the link is already in the body.
+        With media_url the draft card goes out as a real image message and body
+        becomes its caption. A link preview would only get WhatsApp's small,
+        recompressed thumbnail. Meta downloads the image itself, so this call
+        never fetches it and the reply is not delayed. If Meta rejects the
+        image (unreachable host, slow render) the same body goes out as text so
+        the seller still gets the link.
         """
-        if media_url:
-            logger.info("Draft card skipped so the text reply is not blocked")
+        if media_url and len(body or "") <= IMAGE_CAPTION_MAX_CHARS:
+            try:
+                return self._create_session_message(to, body, media_url)
+            except HTTPException as exc:
+                logger.warning(
+                    "Draft card image rejected, falling back to text: %s", exc.detail
+                )
+        elif media_url:
+            logger.info("Draft body exceeds the image caption limit; sending text")
         return self._create_session_message(to, body, None)
 
     def _create_session_message(
