@@ -37,6 +37,14 @@ def upsert_pending(
     )
 
 
+def set_candidates(from_number: str, candidates: List[Dict[str, str]]) -> None:
+    """Rewrite the stored candidates. Never touches `last_inbound_at` (sticky expiry clock)."""
+    _col().update_one(
+        {"from_number": from_number},
+        {"$set": {"candidates": candidates, "updated_at": datetime.now(timezone.utc)}},
+    )
+
+
 def set_selected_store(from_number: str, group_id: str, creator_uid: Optional[str]) -> None:
     now = datetime.now(timezone.utc)
     _col().update_one(
