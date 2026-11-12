@@ -41,6 +41,7 @@ from app.routers import MostradorFolioRouter as mostradorFolioRouter
 from app.routers import RelationshipRouter as relationshipRouter
 from app.routers import PushRouter as pushRouter
 from app.routers import NotificationRouter as notificationRouter
+from app.routers import WhatsappLinksRouter as whatsappLinksRouter
 
 
 import app.utils.firebase_admin
@@ -197,6 +198,7 @@ app.include_router(rolesRouter.rolesRouter)
 app.include_router(censusRouter.censusRouter)
 app.include_router(networkRouter.networkRouter)
 app.include_router(groupRouter.groupRouter)
+app.include_router(whatsappLinksRouter.whatsappLinksRouter)
 app.include_router(listRouter.listRouter)
 app.include_router(groupCarRouter.groupCarRouter)
 app.include_router(partRequestRouter.partRequestRouter)

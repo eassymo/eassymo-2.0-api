@@ -17,6 +17,16 @@ from app.schemas.WhatsappExtraction import (
 from app.services import WhatsappClarificationService as clarify
 
 
+@pytest.fixture(autouse=True)
+def _entitled_seller():
+    """Flush re-checks access; these tests exercise drafting for entitled sellers."""
+    with patch(
+        "app.services.WhatsappSellerIdentityService.WhatsappSellerIdentityService.is_entitled",
+        return_value=True,
+    ):
+        yield
+
+
 def test_derive_position_question_for_catalog_piece_without_position():
     folio = {
         "folio_code": "ABC123",

@@ -46,6 +46,7 @@ from app.services.WhatsappIntakeCommands import (
 )
 from app.services.WhatsappSellerIdentityService import (
     CHANGE_STORE_COMMANDS,
+    NO_ACCESS_MESSAGE,
     WhatsappSellerIdentityService,
 )
 from app.services.WhatsappService import WhatsappService
@@ -2611,6 +2612,16 @@ class WhatsappIntakeProcessorService:
                     primary_intake_id = first_sid
 
         self._ensure_flush_owner(from_number)
+        # Access may have been revoked while the burst was buffering.
+        if not self.identity_service.is_entitled(creator_uid, group_id):
+            self._send_bot_message(
+                from_number,
+                NO_ACCESS_MESSAGE,
+                burst_id=burst_id,
+                kind="bot_error",
+            )
+            self._clear_session(from_number)
+            return
         if self._replay_linked_draft(from_number, message_sids, burst_id):
             return
 

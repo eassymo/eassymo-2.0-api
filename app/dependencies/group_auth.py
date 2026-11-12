@@ -2,6 +2,7 @@
 
 from typing import Optional
 
+from bson.errors import InvalidId
 from fastapi import HTTPException, Request, status
 
 from app.repositories import GroupRepository as groupRepository
@@ -123,8 +124,15 @@ def require_group_membership_from_header(request: Request) -> str:
     group_id = getattr(request.state, "groupSelected", None)
     if not group_id:
         group_id = request.headers.get("groupselected")
-    assert_group_membership(caller_uid, str(group_id))
-    return str(group_id)
+    group_id = str(group_id) if group_id else ""
+    try:
+        assert_group_membership(caller_uid, group_id)
+    except InvalidId:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La tienda seleccionada no es válida.",
+        )
+    return group_id
 
 
 def require_authenticated_uid(request: Request) -> str:

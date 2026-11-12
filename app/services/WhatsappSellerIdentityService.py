@@ -7,9 +7,10 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from app.repositories import GroupRepository as groupRepository
-from app.repositories import UserRepository as userRepository
+from app.repositories import WhatsappLinkRepository as link_repo
 from app.repositories import WhatsappPendingAssociationRepository as pending_repo
-from app.utils.phone_normalize import normalize_phone_e164, phone_lookup_variants, phones_match
+from app.services.access_policy import PERMISSION_WHATSAPP_CREATE_DRAFT, can
+from app.utils.phone_normalize import normalize_phone_e164
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,16 @@ class SellerIdentityResult:
 
 CHANGE_STORE_COMMANDS = frozenset({"CAMBIAR", "MENU", "ATRAS"})
 
+UNLINKED_MESSAGE = (
+    "No encontramos tu WhatsApp en Eassymo. En la app ve a Mi cuenta → WhatsApp para POS, "
+    "elige tu tienda, confirma tu número y reenvía tu mensaje."
+)
+NO_ACCESS_MESSAGE = (
+    "Tu WhatsApp está vinculado, pero no tienes acceso a WhatsApp POS en ninguna tienda. "
+    "Pide acceso al dueño de la tienda."
+)
+AMBIGUOUS_MESSAGE = "No pudimos identificar tu cuenta. Contacta a soporte."
+
 
 class WhatsappSellerIdentityService:
     def __init__(self) -> None:
@@ -35,29 +46,27 @@ class WhatsappSellerIdentityService:
             15, int(os.getenv("WHATSAPP_SELECTION_PROMPT_SECONDS", "60"))
         )
 
-    def _find_user_by_verified_whatsapp(self, from_number: str) -> Optional[dict]:
-        normalized = normalize_phone_e164(from_number)
-        for variant in phone_lookup_variants(normalized):
-            user = userRepository.find_one({"pos_whatsapp": variant})
-            if user:
-                return user
-
-        users = list(
-            userRepository.find(
-                {"pos_whatsapp": {"$exists": True, "$nin": [None, ""]}},
-                limit=500,
-            )
+    @staticmethod
+    def _link_allowed(link: dict) -> bool:
+        return link.get("status") == "active" and can(
+            link.get("uid"), link.get("group_id"), PERMISSION_WHATSAPP_CREATE_DRAFT
         )
-        for user in users:
-            stored = user.get("pos_whatsapp") or ""
-            if phones_match(normalized, stored):
-                return user
-        return None
 
-    def _groups_for_user(self, uid: str) -> List[dict]:
-        if not uid:
+    def is_entitled(self, uid: str, group_id: str) -> bool:
+        """True when (uid, group_id) has an active WhatsApp link and the role allows drafts."""
+        link = link_repo.find(uid, group_id)
+        return bool(link) and self._link_allowed(link)
+
+    def _allowed_candidates(self, links: List[dict]) -> List[Dict[str, str]]:
+        """Active, permitted links whose group still exists, in link order."""
+        allowed_ids = [str(link.get("group_id")) for link in links if self._link_allowed(link)]
+        if not allowed_ids:
             return []
-        return list(groupRepository.find_by_user(uid))
+        groups = {
+            str(g.get("_id")): g
+            for g in groupRepository.find_many_by_string_ids(allowed_ids, {"name": 1})
+        }
+        return [self._candidate_payload(groups[gid]) for gid in allowed_ids if gid in groups]
 
     @staticmethod
     def _candidate_payload(group: dict) -> Dict[str, str]:
@@ -159,102 +168,125 @@ class WhatsappSellerIdentityService:
         self, from_number: str, body: str = "", inbound_id: Optional[str] = None
     ) -> SellerIdentityResult:
         normalized = normalize_phone_e164(from_number)
+        links = link_repo.find_any_by_phone(normalized)
+
+        uids = {link.get("uid") for link in links}
+        if len(uids) > 1:
+            logger.error(
+                "WhatsApp number %s is linked to %d accounts; refusing to route",
+                normalized,
+                len(uids),
+            )
+            return SellerIdentityResult(status="ambiguous", message=AMBIGUOUS_MESSAGE)
+
         pending = pending_repo.get_by_phone(normalized)
 
-        if pending and self._is_change_store_command(body):
-            candidates = pending.get("candidates") or []
-            if pending.get("selected_group_id"):
-                pending_repo.clear_selected_store(normalized)
-            if candidates:
-                return SellerIdentityResult(
-                    status="pending_selection",
-                    candidates=candidates,
-                    creator_uid=pending.get("creator_uid"),
-                    message=self._selection_prompt(normalized, candidates, force=True),
-                )
-
-        if pending and pending.get("selected_group_id"):
-            if self._is_sticky_store_stale(pending):
-                candidates = pending.get("candidates") or []
-                pending_repo.clear_selected_store(normalized)
-                if candidates:
-                    return SellerIdentityResult(
-                        status="pending_selection",
-                        candidates=candidates,
-                        creator_uid=pending.get("creator_uid"),
-                        message=self._selection_prompt(normalized, candidates),
-                    )
-
-            group_id = pending.get("selected_group_id")
-            group_name = None
-            for candidate in pending.get("candidates") or []:
-                if candidate.get("group_id") == group_id:
-                    group_name = candidate.get("name")
-                    break
-            pending_repo.touch_last_inbound(normalized)
-            return SellerIdentityResult(
-                status="resolved",
-                group_id=group_id,
-                group_name=group_name,
-                creator_uid=pending.get("creator_uid"),
-            )
-
-        if pending and (pending.get("candidates") or []):
-            selected = self._resolve_from_pending_selection(normalized, body, pending)
-            if selected:
-                return selected
-            return SellerIdentityResult(
-                status="pending_selection",
-                candidates=pending.get("candidates"),
-                creator_uid=pending.get("creator_uid"),
-                message=self._selection_prompt(normalized, pending.get("candidates") or []),
-            )
-
-        user = self._find_user_by_verified_whatsapp(normalized)
-        if not user:
+        if not links:
             if not pending:
                 pending_repo.upsert_pending(normalized, [], inbound_id)
             return SellerIdentityResult(
-                status="pending_link",
-                message=(
-                    "No encontramos tu WhatsApp en Eassymo. En la app ve a "
-                    "Mi cuenta → WhatsApp para POS, confirma tu número y reenvía tu mensaje."
-                    if pending_repo.claim_identity_prompt(
-                        normalized,
-                        cooldown_seconds=self.selection_prompt_cooldown_seconds,
-                    )
-                    else None
-                ),
+                status="pending_link", message=self._throttled(normalized, UNLINKED_MESSAGE)
             )
 
-        creator_uid = user.get("uid")
-        groups = self._groups_for_user(creator_uid)
+        creator_uid = links[0].get("uid")
+        candidates = self._allowed_candidates(links)
 
-        if len(groups) == 1:
-            group = groups[0]
+        if not candidates:
+            if not pending:
+                pending_repo.upsert_pending(normalized, [], inbound_id)
+            else:
+                if pending.get("selected_group_id"):
+                    pending_repo.clear_selected_store(normalized)
+                if pending.get("candidates"):
+                    pending_repo.set_candidates(normalized, [])
+            return SellerIdentityResult(
+                status="pending_link", message=self._throttled(normalized, NO_ACCESS_MESSAGE)
+            )
+
+        if len(candidates) == 1:
+            chosen = candidates[0]
             pending_repo.clear(normalized)
             return SellerIdentityResult(
                 status="resolved",
-                group_id=str(group["_id"]),
-                group_name=group.get("name"),
+                group_id=chosen["group_id"],
+                group_name=chosen["name"],
                 creator_uid=creator_uid,
             )
 
-        if len(groups) > 1:
-            candidates = [self._candidate_payload(g) for g in groups]
+        if not pending:
             pending_repo.upsert_pending(normalized, candidates, inbound_id)
+            return self._pending_selection(normalized, candidates, creator_uid)
+
+        if (pending.get("candidates") or []) != candidates:
+            pending_repo.set_candidates(normalized, candidates)
+        candidate_ids = {c["group_id"] for c in candidates}
+        selected_group_id = pending.get("selected_group_id")
+        if selected_group_id and selected_group_id not in candidate_ids:
+            pending_repo.clear_selected_store(normalized)
+            selected_group_id = None
+        pending = {
+            **pending,
+            "candidates": candidates,
+            "creator_uid": creator_uid,
+            "selected_group_id": selected_group_id,
+        }
+        return self._resolve_among_candidates(normalized, body, pending)
+
+    def _throttled(self, normalized: str, message: str) -> Optional[str]:
+        claimed = pending_repo.claim_identity_prompt(
+            normalized, cooldown_seconds=self.selection_prompt_cooldown_seconds
+        )
+        return message if claimed else None
+
+    def _pending_selection(
+        self,
+        normalized: str,
+        candidates: List[Dict[str, str]],
+        creator_uid: Optional[str],
+        *,
+        force: bool = False,
+    ) -> SellerIdentityResult:
+        return SellerIdentityResult(
+            status="pending_selection",
+            candidates=candidates,
+            creator_uid=creator_uid,
+            message=self._selection_prompt(normalized, candidates, force=force),
+        )
+
+    def _resolve_among_candidates(
+        self, normalized: str, body: str, pending: dict
+    ) -> SellerIdentityResult:
+        """Change-store command, sticky selection and picker over fresh candidates.
+
+        `pending` carries the fresh `candidates` and `creator_uid`, and a
+        `selected_group_id` already known to be among them (or None).
+        """
+        candidates = pending["candidates"]
+        creator_uid = pending["creator_uid"]
+        selected_group_id = pending.get("selected_group_id")
+
+        if self._is_change_store_command(body):
+            if selected_group_id:
+                pending_repo.clear_selected_store(normalized)
+            return self._pending_selection(normalized, candidates, creator_uid, force=True)
+
+        if selected_group_id:
+            if self._is_sticky_store_stale(pending):
+                pending_repo.clear_selected_store(normalized)
+                return self._pending_selection(normalized, candidates, creator_uid)
+
+            group_name = next(
+                (c["name"] for c in candidates if c["group_id"] == selected_group_id), None
+            )
+            pending_repo.touch_last_inbound(normalized)
             return SellerIdentityResult(
-                status="pending_selection",
-                candidates=candidates,
+                status="resolved",
+                group_id=selected_group_id,
+                group_name=group_name,
                 creator_uid=creator_uid,
-                message=self._selection_prompt(normalized, candidates),
             )
 
-        pending_repo.upsert_pending(normalized, [], inbound_id)
-        return SellerIdentityResult(
-            status="pending_link",
-            message=(
-                "Tu WhatsApp está vinculado pero no tienes tienda activa. "
-                "Crea o únete a una tienda en Eassymo y reenvía tu mensaje."
-            ),
-        )
+        selected = self._resolve_from_pending_selection(normalized, body, pending)
+        if selected:
+            return selected
+        return self._pending_selection(normalized, candidates, creator_uid)
