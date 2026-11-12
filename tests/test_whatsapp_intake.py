@@ -2770,7 +2770,9 @@ def test_recovery_of_due_session_sends_a_follow_up(
 @patch("app.services.WhatsappIntakeProcessorService.inbound_repo")
 @patch("app.services.WhatsappIntakeProcessorService.WhatsappService")
 @patch("app.services.WhatsappIntakeProcessorService.LlmExtractionService")
+@patch("app.services.WhatsappIntakeProcessorService.WhatsappSellerIdentityService")
 def test_recovery_resends_an_existing_draft_without_a_second_extract(
+    _mock_identity_cls,
     mock_llm_cls,
     mock_whatsapp_cls,
     mock_inbound_repo,
