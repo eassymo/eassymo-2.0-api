@@ -1,6 +1,6 @@
 # WhatsApp links per group — design
 
-Status: draft for review · Date: 2026-11-12 · Project 1 of 2 (project 2: permissions and My Team, separate spec)
+Status: approved; implemented on branch feat/whatsapp-group-links (pre-deploy checks in 5.7 and 8 remain) · Date: 2026-11-12 · Project 1 of 2 (project 2: permissions and My Team, separate spec)
 
 ## 1. Goal
 
@@ -162,8 +162,8 @@ and a role change in the middle of a buffered burst.
 
 New router `WhatsappLinksRouter` registered in `main.py`:
 
-- `POST /groups/{group_id}/whatsapp-links/{uid}/disable`
-- `POST /groups/{group_id}/whatsapp-links/{uid}/enable`
+- `POST /group/{group_id}/whatsapp-links/{uid}/disable`
+- `POST /group/{group_id}/whatsapp-links/{uid}/enable`
 
 Both require `assert_group_owner`. Disable sets `status=disabled`, `disabled_by`, `disabled_at`.
 Enable sets `status=active` and clears them. A disabled link cannot be reactivated by the member
@@ -178,7 +178,7 @@ Enable sets `status=active` and clears them. A disabled link cannot be reactivat
   states: role not allowed (explanation, no form), disabled by owner (explanation, no form),
   and instant link (success without the waiting-for-confirmation UI). Pre-fills the form from
   `suggested_phone` when present.
-- `whatsapp-verify-confirm.tsx`: uses `group_name` from the preview ("Vincular a <Tienda>").
+- `whatsapp-verify-confirm.tsx`: uses `group_name` from the preview (confirm screen copy: "Se vinculará en {group_name}.").
 - Reuse existing components and the current type scale and colours; no new visual language.
 - Legacy `pos_whatsapp` fields on `useCreateUser` and `Group` types are left untouched.
 
@@ -207,6 +207,15 @@ collection is new.
 Cutover: `--apply`, deploy, `--apply` again (idempotent, catches users who linked on the old code
 in between). Rollback: redeploy the previous version; `users.pos_whatsapp` is untouched. Links
 created after cutover are not visible to the old code, which is accepted.
+
+Cutover notes:
+
+- The second `--apply` only inserts missing links. A user who changed their number on the old
+  code between the first apply and the deploy keeps the old number on their link (re-link in
+  the app if so).
+- The migration iterates groups by `groups.users`, so an owner not listed in their group's
+  `users` gets no link. Check the dry run.
+- Human gate before deploy: review the dry run on the real DB and confirm spec 8 items 1 and 2.
 
 ## 6. Error handling and edge cases
 
