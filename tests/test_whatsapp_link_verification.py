@@ -97,24 +97,6 @@ def test_start_rejects_disabled_link(mocks):
     mocks.WhatsappService.return_value.send_template_message.assert_not_called()
 
 
-def test_start_instant_links_number_verified_in_other_group(mocks):
-    mocks.link_repo.list_by_uid.return_value = [
-        {"uid": "uid-1", "group_id": "g2", "phone": "+5217779313704", "status": "disabled"}
-    ]
-    mocks.link_repo.upsert.return_value = {}
-
-    result = _service().start("uid-1", "g1", "7779313704")
-
-    assert result["linked"] is True
-    assert result["pos_whatsapp"] == "+5217779313704"
-    assert result["pos_whatsapp_verified_at"]
-    assert result["message"]
-    upsert_args = mocks.link_repo.upsert.call_args.args
-    assert upsert_args[:3] == ("uid-1", "g1", "+5217779313704")
-    mocks.WhatsappService.return_value.send_template_message.assert_not_called()
-    mocks.verify_repo.insert.assert_not_called()
-
-
 def test_start_conflicts_when_number_linked_to_other_uid(mocks):
     mocks.link_repo.find_any_by_phone.return_value = [
         {"uid": "uid-2", "group_id": "g9", "phone": "+5217779313704"}
@@ -137,12 +119,14 @@ def test_start_conflicts_with_legacy_pos_whatsapp_of_other_uid(mocks):
     assert exc.value.status_code == 409
 
 
-def test_start_allows_same_number_for_same_user_in_second_group(mocks):
+def test_start_same_number_in_second_group_still_requires_confirmation(mocks):
     own = {"uid": "uid-1", "group_id": "g2", "phone": "+5217779313704"}
     mocks.link_repo.find_any_by_phone.return_value = [own]
     mocks.link_repo.list_by_uid.return_value = [own]
     result = _service().start("uid-1", "g1", "7779313704")
-    assert result["linked"] is True
+    assert result["linked"] is False
+    mocks.link_repo.upsert.assert_not_called()
+    assert mocks.WhatsappService.return_value.send_template_message.called
 
 
 def test_start_unknown_user_is_404(mocks):
