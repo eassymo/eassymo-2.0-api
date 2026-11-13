@@ -2,12 +2,53 @@ from fastapi import APIRouter, Body, Request, status, Query, Header
 from app.schemas.Chat import Chat
 from app.schemas.Message import Message
 from app.services import ChatService as chatService
+from app.services import ConversationService as conversationService
+from app.services.ConversationService import FILTERS as CONVERSATION_FILTERS
+from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 from app.dependencies.group_auth import assert_group_membership, require_authenticated_uid
 from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response, error_json_response
 
 chatRouter = APIRouter(prefix="/chat")
+
+
+@chatRouter.get("/conversations", response_description="Messages inbox for the selected group", tags=["Chat"])
+def list_conversations(
+    request: Request,
+    filter: str = Query("all"),
+    q: str = Query(""),
+    cursor: str = Query(None),
+    limit: int = Query(20),
+    groupselected: str = Header(None),
+):
+    try:
+        caller_uid = require_authenticated_uid(request)
+        assert_group_membership(caller_uid, str(groupselected))
+        if filter not in CONVERSATION_FILTERS:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid filter")
+        response = conversationService.list_conversations(
+            str(groupselected),
+            caller_uid,
+            filter=filter,
+            q=q,
+            cursor=cursor,
+            limit=max(1, min(int(limit), 50)),
+        )
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
+    except Exception as e:
+        return error_json_response(e)
+
+
+@chatRouter.get("/unread-summary", response_description="Unread conversations count", tags=["Chat"])
+def unread_summary(request: Request, groupselected: str = Header(None)):
+    try:
+        caller_uid = require_authenticated_uid(request)
+        assert_group_membership(caller_uid, str(groupselected))
+        response = conversationService.unread_summary(str(groupselected), caller_uid)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
+    except Exception as e:
+        return error_json_response(e)
 
 
 @chatRouter.post("", response_description="", tags=["Chat"])
