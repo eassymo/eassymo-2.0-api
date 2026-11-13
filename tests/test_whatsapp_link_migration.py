@@ -18,8 +18,8 @@ def _user(uid, phone, verified=None):
 def env():
     groups = {}
     users = []
-    state = {"can": {}, "roles": {}}
-    with patch.object(svc, "userRepository") as ur, patch.object(
+    state = {"can": {}, "roles": {}, "used": {}}
+    with patch.object(svc, "inbound_repo") as ib, patch.object(svc, "userRepository") as ur, patch.object(
         svc, "groupRepository"
     ) as gr, patch.object(svc, "link_repo") as lr, patch.object(
         svc, "can"
@@ -32,6 +32,7 @@ def env():
         )
         lr.insert_if_absent.return_value = True
         lr.find.return_value = None
+        ib.used_group_ids_by_creator.side_effect = lambda uid: state["used"].get(uid, [])
         yield {
             "users": users, "groups": groups, "state": state,
             "ur": ur, "lr": lr, "can": can_,
@@ -55,6 +56,7 @@ def test_apply_creates_link_per_allowed_group(env):
     g1, g2 = _g(), _g()
     env["users"].append(_user("u1", "7779313704", "2026-01-02T03:04:05+00:00"))
     env["groups"]["u1"] = [g1, g2]
+    env["state"]["used"]["u1"] = [str(g1["_id"]), str(g2["_id"])]
     r = svc.migrate(apply=True)
     assert r["created"] == 2
     calls = env["lr"].insert_if_absent.call_args_list
@@ -129,10 +131,61 @@ def test_dry_run_reports_existing_links_without_writing(env):
     g1, g2 = _g(), _g()
     env["users"].append(_user("u1", "7779313704"))
     env["groups"]["u1"] = [g1, g2]
+    env["state"]["used"]["u1"] = [str(g1["_id"]), str(g2["_id"])]
     existing_gid = str(g1["_id"])
     env["lr"].find.side_effect = lambda uid, gid: (
         {"uid": uid, "group_id": gid} if gid == existing_gid else None
     )
     r = svc.migrate(apply=False)
     assert r["created"] == 1 and r["existing"] == 1
+    env["lr"].insert_if_absent.assert_not_called()
+
+
+def test_only_used_groups_are_linked(env):
+    g1, g2, g3 = _g(), _g(), _g()
+    env["users"].append(_user("u1", "7779313704"))
+    env["groups"]["u1"] = [g1, g2, g3]
+    env["state"]["used"]["u1"] = [str(g2["_id"])]
+    r = svc.migrate(apply=True)
+    assert r["created"] == 1
+    assert r["skipped_unused"] == 2
+    env["lr"].insert_if_absent.assert_called_once()
+    assert env["lr"].insert_if_absent.call_args.args[1] == str(g2["_id"])
+
+
+def test_single_group_user_without_usage_is_linked(env):
+    g = _g()
+    env["users"].append(_user("u1", "7779313704"))
+    env["groups"]["u1"] = [g]
+    r = svc.migrate(apply=True)
+    assert r["created"] == 1 and r["skipped_unused"] == 0
+
+
+def test_multi_group_user_without_usage_links_nothing(env):
+    env["users"].append(_user("u1", "7779313704"))
+    env["groups"]["u1"] = [_g(), _g()]
+    r = svc.migrate(apply=True)
+    assert r["created"] == 0 and r["skipped_unused"] == 2
+    env["lr"].insert_if_absent.assert_not_called()
+
+
+def test_used_group_without_access_is_still_reported(env):
+    g = _g()
+    gid = str(g["_id"])
+    env["users"].append(_user("u1", "7779313704"))
+    env["groups"]["u1"] = [g, _g()]
+    env["state"]["used"]["u1"] = [gid]
+    env["state"]["can"][("u1", gid)] = False
+    r = svc.migrate(apply=True)
+    assert r["created"] == 0
+    assert [x["group_id"] for x in r["skipped_no_access"]] == [gid]
+
+
+def test_dry_run_counts_unused_groups_without_writing(env):
+    g1, g2 = _g(), _g()
+    env["users"].append(_user("u1", "7779313704"))
+    env["groups"]["u1"] = [g1, g2]
+    env["state"]["used"]["u1"] = [str(g1["_id"])]
+    r = svc.migrate(apply=False)
+    assert r["created"] == 1 and r["skipped_unused"] == 1
     env["lr"].insert_if_absent.assert_not_called()

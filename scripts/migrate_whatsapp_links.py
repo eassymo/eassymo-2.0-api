@@ -25,6 +25,7 @@ def main() -> None:
     print(f"[{mode}] {c}={report['created']} {e}={report['existing']}")
     print(f"invalid_phones={len(report['invalid_phones'])}: {report['invalid_phones']}")
     print(f"phone_conflicts={len(report['phone_conflicts'])}: {report['phone_conflicts']}")
+    print(f"skipped_unused={report['skipped_unused']} (groups never used for WhatsApp; linked on demand)")
     print(f"skipped_no_access={len(report['skipped_no_access'])}")
     for item in report["skipped_no_access"]:
         print(f"  uid={item['uid']} group={item['group_id']} reason={item['reason']}")
