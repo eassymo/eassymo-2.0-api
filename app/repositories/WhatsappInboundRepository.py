@@ -200,3 +200,12 @@ def find_by_id(document_id: str) -> Optional[dict]:
     if not doc:
         return None
     return _serialize_doc(doc)
+
+
+def used_group_ids_by_creator(uid: str) -> List[str]:
+    """Group ids this user's WhatsApp messages were actually resolved to."""
+    groups = _col().distinct(
+        "resolved_group_id",
+        {"resolved_creator_uid": uid, "identity_status": "resolved"},
+    )
+    return [str(group) for group in groups if group]
