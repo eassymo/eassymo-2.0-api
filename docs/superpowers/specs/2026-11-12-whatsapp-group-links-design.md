@@ -254,8 +254,8 @@ this screen.
    the other way round. This spec follows the API. Confirm which codes are the parts-store side.
 2. **Legacy members.** Members listed in a group with no role row lose access under the role
    rule. The dry run quantifies this; decide then whether to backfill roles first.
-3. **Instant link.** Reusing a previously verified number in another group skips re-verification.
-   Confirm this is acceptable.
+3. **Instant link.** Resolved: re-using a number already verified in another group still sends the
+   confirmation template (no instant link), per product decision on 2026-11-13.
 4. **Spanish copy** in section 5.3 and 5.4, including the implemented instant-link message
    "Vinculamos este número a tu tienda." and the membership 403 "No perteneces a esta tienda."
    (to confirm).

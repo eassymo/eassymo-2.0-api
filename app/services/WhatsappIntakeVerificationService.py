@@ -85,24 +85,6 @@ class WhatsappIntakeVerificationService:
         self._assert_phone_available(canonical, uid)
 
         now = datetime.now(timezone.utc)
-        if any(
-            phones_match(link.get("phone") or "", canonical)
-            for link in link_repo.list_by_uid(uid)
-        ):
-            link_repo.upsert(uid, group_id, canonical, now)
-            logger.info(
-                "WhatsApp POS link reused uid=%s group=%s phone=%s",
-                uid,
-                group_id,
-                _mask_phone(canonical),
-            )
-            return {
-                "linked": True,
-                "pos_whatsapp": canonical,
-                "pos_whatsapp_verified_at": now.isoformat(),
-                "message": "Vinculamos este número a tu tienda.",
-            }
-
         since = now - CHANGE_WINDOW
         open_pending = verify_repo.find_open(uid, group_id)
         same_phone = bool(
