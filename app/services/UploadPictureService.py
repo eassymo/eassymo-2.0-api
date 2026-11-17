@@ -71,7 +71,8 @@ async def _upload_image_to_s3_with_prefix(session, file: UploadFile, prefix: str
     bucket = client.Bucket(bucket_name)
     formatted_name = os.path.basename(file.filename)
     object_name = f"{prefix}/{str(uuid4())}-{formatted_name}"
-    bucket.upload_fileobj(file.file, object_name)
+    extra = {"ContentType": file.content_type} if file.content_type else None
+    bucket.upload_fileobj(file.file, object_name, ExtraArgs=extra)
     return f"https://{bucket_name}.s3.amazonaws.com/{object_name}"
 
 

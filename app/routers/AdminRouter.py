@@ -1,10 +1,12 @@
-from fastapi import APIRouter, Body, Depends, Query, Request, status
+from fastapi import APIRouter, Body, Depends, File, Query, Request, UploadFile, status
 from fastapi.responses import JSONResponse
 from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.config.database import get_mysql_db
 from app.dependencies.super_admin import require_super_admin
+from app.services import AccessAdminService
+from app.services import FrameAdminService
 from app.services.AdminMetricsService import AdminMetricsService
 from app.services.AdminPartCatalogService import AdminPartCatalogService
 from app.services.AdminWriteService import AdminWriteService
@@ -837,5 +839,131 @@ def unlink_part_catalog_position(
         admin_uid = request.state.user.get("uid")
         result = AdminWriteService.unlink_part_position(mysql_db, admin_uid, data)
         return _ok(result)
+    except Exception as e:
+        return _err(e)
+
+
+# ── Accesos (grants & roles) ────────────────────────────────────────────────
+
+def _admin_uid(request: Request) -> str:
+    return request.state.user.get("uid")
+
+
+@adminRouter.get("/grants")
+def access_list_grants():
+    try:
+        return _ok(AccessAdminService.list_grants())
+    except Exception as e:
+        return _err(e)
+
+
+@adminRouter.put("/grants/{key}")
+def access_update_grant(request: Request, key: str, data: dict = Body(...)):
+    try:
+        return _ok(AccessAdminService.update_grant(_admin_uid(request), key, data))
+    except Exception as e:
+        return _err(e)
+
+
+@adminRouter.get("/grants/{key}/impact")
+def access_grant_impact(key: str):
+    try:
+        return _ok(AccessAdminService.grant_impact(key))
+    except Exception as e:
+        return _err(e)
+
+
+@adminRouter.get("/access-roles")
+def access_list_roles(
+    pov: Optional[str] = Query(None),
+    entity_type: Optional[str] = Query(None),
+    function: Optional[str] = Query(None),
+    kind: Optional[str] = Query(None, description="system | custom"),
+):
+    try:
+        return _ok(AccessAdminService.list_roles(
+            {"pov": pov, "entity_type": entity_type, "function": function, "kind": kind}))
+    except Exception as e:
+        return _err(e)
+
+
+@adminRouter.post("/access-roles")
+def access_create_role(request: Request, data: dict = Body(...)):
+    try:
+        return _ok(AccessAdminService.create_role(_admin_uid(request), data))
+    except Exception as e:
+        return _err(e)
+
+
+@adminRouter.put("/access-roles/{value}")
+def access_update_role(request: Request, value: str, data: dict = Body(...)):
+    try:
+        return _ok(AccessAdminService.update_role(_admin_uid(request), value, data))
+    except Exception as e:
+        return _err(e)
+
+
+@adminRouter.delete("/access-roles/{value}")
+def access_delete_role(request: Request, value: str):
+    try:
+        return _ok(AccessAdminService.delete_role(_admin_uid(request), value))
+    except Exception as e:
+        return _err(e)
+
+
+@adminRouter.post("/access-roles/{value}/duplicate")
+def access_duplicate_role(request: Request, value: str):
+    try:
+        return _ok(AccessAdminService.duplicate_role(_admin_uid(request), value))
+    except Exception as e:
+        return _err(e)
+
+
+@adminRouter.get("/access-roles/{value}/impact")
+def access_role_impact(value: str):
+    try:
+        return _ok(AccessAdminService.role_impact(value))
+    except Exception as e:
+        return _err(e)
+
+
+@adminRouter.get("/access-check")
+def access_check(uid: str = Query(...), group_id: str = Query(...)):
+    try:
+        return _ok(AccessAdminService.access_check(uid, group_id))
+    except Exception as e:
+        return _err(e)
+
+
+@adminRouter.get("/access/metrics")
+def access_metrics():
+    try:
+        return _ok(AccessAdminService.metrics())
+    except Exception as e:
+        return _err(e)
+
+
+# ── Accesos: frames ─────────────────────────────────────────────────────────
+
+@adminRouter.get("/frames")
+def access_list_frames():
+    try:
+        return _ok(FrameAdminService.list_frames())
+    except Exception as e:
+        return _err(e)
+
+
+@adminRouter.put("/frames/{code}")
+def access_update_frame(request: Request, code: str, data: dict = Body(...)):
+    try:
+        return _ok(FrameAdminService.update_frame(_admin_uid(request), code, data))
+    except Exception as e:
+        return _err(e)
+
+
+@adminRouter.post("/frames/{code}/screenshot")
+async def access_upload_frame_screenshot(request: Request, code: str, file: UploadFile = File(...)):
+    try:
+        return _ok(await FrameAdminService.upload_screenshot(_admin_uid(request), code, file))
     except Exception as e:
         return _err(e)

@@ -42,6 +42,7 @@ from app.routers import RelationshipRouter as relationshipRouter
 from app.routers import PushRouter as pushRouter
 from app.routers import NotificationRouter as notificationRouter
 from app.routers import WhatsappLinksRouter as whatsappLinksRouter
+from app.routers import MeRouter as meRouter
 
 
 import app.utils.firebase_admin
@@ -59,11 +60,24 @@ _IS_PROD = os.getenv("ENVIRONMENT", "").lower() in ("production", "prod") or os.
 ).lower() == "production"
 
 
+def _log_missing_grant_keys():
+    """Grant keys checked by code must exist in the `grants` collection (scripts/seed_grants.py)."""
+    try:
+        from app.services.authz import missing_catalog_keys
+
+        missing = missing_catalog_keys()
+        if missing:
+            print(f"ERROR: grant keys missing from the grants collection: {sorted(missing)}")
+    except Exception as exc:  # never block startup on this check
+        print(f"WARNING: could not check grant catalog: {exc}")
+
+
 @asynccontextmanager
 async def app_lifespan(_app: FastAPI):
     from app.routers.WhatsappRouter import inbound_service
 
     inbound_service.start_intake_recovery()
+    _log_missing_grant_keys()
     try:
         yield
     finally:
@@ -233,3 +247,4 @@ app.include_router(relationshipRouter.relationshipRouter)
 app.include_router(mostradorFolioRouter.mostradorRouter)
 app.include_router(pushRouter.pushRouter)
 app.include_router(notificationRouter.notificationRouter)
+app.include_router(meRouter.meRouter)

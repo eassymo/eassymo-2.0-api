@@ -1,0 +1,1005 @@
+[
+ {
+  "code": "C.WG.1",
+  "name": "Configurar tienda",
+  "description": "Datos del grupo: nombre, dirección, contacto",
+  "pov": "ambos",
+  "route": "/shop-creator-v3?uid={uid}&type=manual",
+  "sample": null,
+  "element": "Página completa",
+  "steps": null,
+  "grants": [
+   "store.edit_profile"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 0
+ },
+ {
+  "code": "C.WG.1.M",
+  "name": "Menú: Configurar tienda",
+  "description": "Opción del menú lateral que abre la configuración",
+  "pov": "ambos",
+  "route": "/dashboard-v2",
+  "sample": null,
+  "element": "Opción 'Configurar tienda' del menú",
+  "steps": "Abrir menú lateral",
+  "grants": [
+   "store.edit_profile"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 1
+ },
+ {
+  "code": "C.WG.2.S",
+  "name": "Sistemas que maneja la tienda",
+  "description": "Sistemas del vehículo que la tienda surte",
+  "pov": "vendedor",
+  "route": "/systems-configuration",
+  "sample": null,
+  "element": "Página completa",
+  "steps": null,
+  "grants": [
+   "store.configure_catalog"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 2
+ },
+ {
+  "code": "C.WG.2.A",
+  "name": "Armadoras que maneja la tienda",
+  "description": "Marcas de vehículo que la tienda surte",
+  "pov": "vendedor",
+  "route": "/manufacturers-configuration",
+  "sample": null,
+  "element": "Página completa",
+  "steps": null,
+  "grants": [
+   "store.configure_catalog"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 3
+ },
+ {
+  "code": "C.WG.4",
+  "name": "Filtros guardados",
+  "description": "Guardar un filtro para reutilizarlo al ver ofertas",
+  "pov": "comprador",
+  "route": "/multiple-offer-viewer/{request}",
+  "sample": "solicitud con ofertas",
+  "element": "Control 'Guardar filtro'",
+  "steps": "Abrir filtros",
+  "grants": [
+   "store.manage_filters"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 4
+ },
+ {
+  "code": "C.WG.5",
+  "name": "Call center",
+  "description": "Conexiones con call centers",
+  "pov": "ambos",
+  "route": "/shop-configuration/callcenter",
+  "sample": null,
+  "element": "Página completa",
+  "steps": null,
+  "grants": [
+   "store.manage_callcenter"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 5
+ },
+ {
+  "code": "C.WG.5.G",
+  "name": "Call center: grupos administrados",
+  "description": "Grupos que el call center atiende",
+  "pov": "ambos",
+  "route": "/shop-configuration/callcenter/managed-groups",
+  "sample": null,
+  "element": "Página completa",
+  "steps": null,
+  "grants": [
+   "store.manage_callcenter"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 6
+ },
+ {
+  "code": "C.WG.5.L",
+  "name": "Call center: listas de gestión",
+  "description": "Listas de tiendas del call center",
+  "pov": "ambos",
+  "route": "/shop-configuration/callcenter/management-lists",
+  "sample": null,
+  "element": "Página completa",
+  "steps": null,
+  "grants": [
+   "store.manage_callcenter"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 7
+ },
+ {
+  "code": "C.WG.6",
+  "name": "Comisionados",
+  "description": "Invitar y revocar comisionados",
+  "pov": "ambos",
+  "route": "/commissioner/comisionados",
+  "sample": "grupo comisionado",
+  "element": "Página completa",
+  "steps": null,
+  "grants": [
+   "store.manage_commissioners"
+  ],
+  "status": "active",
+  "notes": "Pantalla de grupos comisionado",
+  "sort_order": 8
+ },
+ {
+  "code": "C.WG.7",
+  "name": "Notificaciones del grupo",
+  "description": "Configurar las notificaciones del grupo",
+  "pov": "ambos",
+  "route": null,
+  "sample": null,
+  "element": null,
+  "steps": null,
+  "grants": [
+   "notifications.configure"
+  ],
+  "status": "pending",
+  "notes": "La pantalla aún no existe",
+  "sort_order": 9
+ },
+ {
+  "code": "C.WG.8",
+  "name": "Agrupador",
+  "description": "Configurar la función de agrupador",
+  "pov": "ambos",
+  "route": null,
+  "sample": null,
+  "element": null,
+  "steps": null,
+  "grants": [
+   "network.configure_agrupador"
+  ],
+  "status": "pending",
+  "notes": "Excel: TBD. La pantalla aún no existe",
+  "sort_order": 10
+ },
+ {
+  "code": "C.WG.3.L",
+  "name": "Mi equipo",
+  "description": "Lista de empleados del grupo",
+  "pov": "ambos",
+  "route": "/my-team",
+  "sample": null,
+  "element": "Lista de empleados",
+  "steps": null,
+  "grants": [
+   "team.view"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 11
+ },
+ {
+  "code": "C.WG.3",
+  "name": "Roles del empleado",
+  "description": "Agregar y quitar roles a un empleado",
+  "pov": "ambos",
+  "route": "/my-team",
+  "sample": "empleado con rol",
+  "element": "Sección Roles con 'Agregar rol'",
+  "steps": "Abrir un empleado",
+  "grants": [
+   "team.assign_roles"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 12
+ },
+ {
+  "code": "C.WG.3.D",
+  "name": "Quitar empleado",
+  "description": "Eliminar a un empleado del equipo",
+  "pov": "ambos",
+  "route": "/my-team",
+  "sample": "empleado",
+  "element": "Botón 'Eliminar del equipo'",
+  "steps": "Abrir un empleado",
+  "grants": [
+   "team.manage_members"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 13
+ },
+ {
+  "code": "SCC.I.1.M",
+  "name": "Invitar miembro al equipo",
+  "description": "Invitar a una persona al grupo con un rol",
+  "pov": "ambos",
+  "route": "/my-team",
+  "sample": null,
+  "element": "Diálogo de invitación",
+  "steps": "Clic en 'Invitar'",
+  "grants": [
+   "team.invite"
+  ],
+  "status": "active",
+  "notes": "Separado de SCC.I.1",
+  "sort_order": 14
+ },
+ {
+  "code": "C.N3.S7",
+  "name": "Mi red",
+  "description": "Tiendas con las que el grupo trabaja",
+  "pov": "ambos",
+  "route": "/profile/network-manager/{uid}",
+  "sample": null,
+  "element": "Página completa",
+  "steps": null,
+  "grants": [
+   "network.view"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 15
+ },
+ {
+  "code": "C.N3.S7.S",
+  "name": "Sugerencias de conexión",
+  "description": "Tiendas sugeridas para conectar",
+  "pov": "ambos",
+  "route": "/connection-suggestions",
+  "sample": null,
+  "element": "Página completa",
+  "steps": null,
+  "grants": [
+   "network.view"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 16
+ },
+ {
+  "code": "SCC.I.1.N",
+  "name": "Invitar negocios a la red",
+  "description": "Invitar una tienda a la red",
+  "pov": "ambos",
+  "route": "/profile/network-manager/{uid}",
+  "sample": null,
+  "element": "Diálogo de invitación",
+  "steps": "Abrir 'Invitar'",
+  "grants": [
+   "network.invite"
+  ],
+  "status": "active",
+  "notes": "Separado de SCC.I.1",
+  "sort_order": 17
+ },
+ {
+  "code": "C.N3.S6",
+  "name": "Mis listas",
+  "description": "Listas de tiendas",
+  "pov": "ambos",
+  "route": "/profile/my-lists/{uid}",
+  "sample": null,
+  "element": "Página completa",
+  "steps": null,
+  "grants": [
+   "network.manage_lists"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 18
+ },
+ {
+  "code": "C.N3.S8",
+  "name": "Relaciones",
+  "description": "Calificar relaciones y recordatorios",
+  "pov": "ambos",
+  "route": "/relaciones/inicio",
+  "sample": null,
+  "element": "Página completa",
+  "steps": null,
+  "grants": [
+   "relationships.manage"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 19
+ },
+ {
+  "code": "C.N3.S1",
+  "name": "Panel de solicitudes",
+  "description": "Solicitudes del grupo comprador",
+  "pov": "comprador",
+  "route": "/dashboard-v2",
+  "sample": "solicitud",
+  "element": "Lista de solicitudes",
+  "steps": null,
+  "grants": [
+   "requests.view",
+   "requests.view_all"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 20
+ },
+ {
+  "code": "C.N3.F1",
+  "name": "Crear solicitud",
+  "description": "Formulario de nueva solicitud",
+  "pov": "comprador",
+  "route": "/configure-request?new=1&tabId=0",
+  "sample": null,
+  "element": "Formulario",
+  "steps": null,
+  "grants": [
+   "requests.create"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 21
+ },
+ {
+  "code": "C.N3.F1.M",
+  "name": "Botón Crear solicitud",
+  "description": "Botón del menú lateral",
+  "pov": "comprador",
+  "route": "/dashboard-v2",
+  "sample": null,
+  "element": "Botón 'Crear solicitud'",
+  "steps": "Abrir menú lateral",
+  "grants": [
+   "requests.create"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 22
+ },
+ {
+  "code": "C.N3.F1.1",
+  "name": "Editar solicitud",
+  "description": "Editar o cancelar una solicitud",
+  "pov": "comprador",
+  "route": "/configure-request/{request}",
+  "sample": "solicitud",
+  "element": "Formulario",
+  "steps": null,
+  "grants": [
+   "requests.edit"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 23
+ },
+ {
+  "code": "C.N3.F1.2",
+  "name": "Aprobar solicitud",
+  "description": "Aprobar una solicitud antes de enviarla",
+  "pov": "comprador",
+  "route": null,
+  "sample": null,
+  "element": null,
+  "steps": null,
+  "grants": [
+   "requests.approve"
+  ],
+  "status": "pending",
+  "notes": "Excel: TBD. El flujo aún no existe",
+  "sort_order": 24
+ },
+ {
+  "code": "C.N3.S1.I",
+  "name": "Invitar refaccionarias a cotizar",
+  "description": "Invitar tiendas y enviar recordatorios",
+  "pov": "comprador",
+  "route": "/request-monitor/{vehicle}",
+  "sample": "vehículo con solicitud",
+  "element": "Botón 'Enviar recordatorio'",
+  "steps": null,
+  "grants": [
+   "requests.invite_sellers"
+  ],
+  "status": "active",
+  "notes": "Ruta corregida: el recordatorio vive en el monitor del vehículo",
+  "sort_order": 25
+ },
+ {
+  "code": "C.N3.S1.G",
+  "name": "Garage",
+  "description": "Vehículos del grupo",
+  "pov": "comprador",
+  "route": "/request-monitor/{vehicle}",
+  "sample": "vehículo",
+  "element": "Página completa",
+  "steps": null,
+  "grants": [
+   "store.manage_vehicles"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 26
+ },
+ {
+  "code": "C.N3.S2",
+  "name": "Ofertas recibidas",
+  "description": "Comparar ofertas de una solicitud",
+  "pov": "comprador",
+  "route": "/multiple-offer-viewer/{request}",
+  "sample": "solicitud con ofertas",
+  "element": "Lista de ofertas con precios",
+  "steps": null,
+  "grants": [
+   "offers.view_received",
+   "prices.view"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 27
+ },
+ {
+  "code": "C.N3.S2.A",
+  "name": "Elegir oferta",
+  "description": "Elegir ofertas y generar el pedido",
+  "pov": "comprador",
+  "route": "/dynamic-offer-selector/{parent_request}",
+  "sample": "solicitud con ofertas",
+  "element": "Selector y botón de confirmar",
+  "steps": null,
+  "grants": [
+   "offers.accept",
+   "prices.view"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 28
+ },
+ {
+  "code": "V.N3.S1",
+  "name": "Solicitudes por cotizar",
+  "description": "Bandeja de solicitudes del vendedor",
+  "pov": "vendedor",
+  "route": "/dashboard-v2",
+  "sample": "solicitud entrante",
+  "element": "Lista de solicitudes",
+  "steps": null,
+  "grants": [
+   "offers.view_incoming",
+   "offers.view_all"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 29
+ },
+ {
+  "code": "V.N3.F1.C",
+  "name": "Crear oferta",
+  "description": "Formulario para cotizar una solicitud",
+  "pov": "vendedor",
+  "route": "/offer-creator-v3/{request}",
+  "sample": "solicitud entrante",
+  "element": "Formulario de oferta",
+  "steps": null,
+  "grants": [
+   "offers.create",
+   "prices.view"
+  ],
+  "status": "active",
+  "notes": "Separado de V.N3.F1",
+  "sort_order": 30
+ },
+ {
+  "code": "V.N3.F1.E",
+  "name": "Editar oferta",
+  "description": "Editar o retirar una oferta",
+  "pov": "vendedor",
+  "route": "/edit-offer/{offer}",
+  "sample": "oferta",
+  "element": "Formulario de oferta",
+  "steps": null,
+  "grants": [
+   "offers.edit"
+  ],
+  "status": "active",
+  "notes": "Separado de V.N3.F1",
+  "sort_order": 31
+ },
+ {
+  "code": "V.N3.F1.A",
+  "name": "Aprobar oferta",
+  "description": "Aprobar una oferta antes de enviarla",
+  "pov": "vendedor",
+  "route": null,
+  "sample": null,
+  "element": null,
+  "steps": null,
+  "grants": [
+   "offers.approve"
+  ],
+  "status": "pending",
+  "notes": "Excel: TBD. El flujo aún no existe",
+  "sort_order": 32
+ },
+ {
+  "code": "V.N3.S3.1",
+  "name": "Captura de imágenes",
+  "description": "Subir fotos de entrega o empaque",
+  "pov": "comprador",
+  "route": "/order-management-v2/{order}",
+  "sample": "pedido",
+  "element": "Botón 'Agregar' fotos",
+  "steps": "Abrir confirmar recibido",
+  "grants": [
+   "media.capture_images"
+  ],
+  "status": "active",
+  "notes": "Fotos de recepción; las de empaque (vendedor) están en Asignar repartidor",
+  "sort_order": 33
+ },
+ {
+  "code": "C.N3.S4",
+  "name": "Mis pedidos / ventas",
+  "description": "Lista de pedidos y ventas",
+  "pov": "ambos",
+  "route": "/order-management-v2",
+  "sample": "pedido",
+  "element": "Lista",
+  "steps": null,
+  "grants": [
+   "orders.view",
+   "orders.view_all"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 34
+ },
+ {
+  "code": "C.N3.S4.M",
+  "name": "Menú: Mis pedidos / ventas",
+  "description": "Opción del menú lateral",
+  "pov": "ambos",
+  "route": "/dashboard-v2",
+  "sample": null,
+  "element": "Opción 'Mis pedidos / ventas'",
+  "steps": "Abrir menú lateral",
+  "grants": [
+   "orders.view"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 35
+ },
+ {
+  "code": "C.N3.S4.1",
+  "name": "Detalle de pedido: estado",
+  "description": "Confirmar, despachar o cancelar",
+  "pov": "ambos",
+  "route": "/order-management-v2/{order}",
+  "sample": "pedido",
+  "element": "Botones de estado",
+  "steps": null,
+  "grants": [
+   "orders.change_status",
+   "prices.view"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 36
+ },
+ {
+  "code": "C.N3.S4.R",
+  "name": "Confirmar recibido",
+  "description": "El comprador confirma que recibió",
+  "pov": "comprador",
+  "route": "/order-management-v2/{order}",
+  "sample": "pedido despachado",
+  "element": "Diálogo de confirmación",
+  "steps": "Clic en confirmar recibido",
+  "grants": [
+   "orders.receive"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 37
+ },
+ {
+  "code": "V.N3.S4.T",
+  "name": "Cambiar hora de entrega",
+  "description": "Mover la hora prometida",
+  "pov": "vendedor",
+  "route": "/order-management/{order}?currentRole=2",
+  "sample": "pedido confirmado",
+  "element": "Diálogo de fecha de entrega",
+  "steps": "Abrir confirmar fecha de entrega",
+  "grants": [
+   "orders.change_delivery_time"
+  ],
+  "status": "active",
+  "notes": "Pantalla anterior de pedidos",
+  "sort_order": 38
+ },
+ {
+  "code": "V.N3.S4.D",
+  "name": "Asignar repartidor",
+  "description": "Elegir quién entrega el pedido",
+  "pov": "vendedor",
+  "route": "/order-management-v2/{order}",
+  "sample": "pedido confirmado",
+  "element": "Diálogo 'Asignar repartidor'",
+  "steps": "Abrir asignar repartidor",
+  "grants": [
+   "orders.assign_delivery"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 39
+ },
+ {
+  "code": "V.N3.S4.P",
+  "name": "Preparar envío",
+  "description": "Preparar el paquete",
+  "pov": "vendedor",
+  "route": null,
+  "sample": null,
+  "element": null,
+  "steps": null,
+  "grants": [
+   "shipping.prepare"
+  ],
+  "status": "pending",
+  "notes": "Excel: TBD. La función aún no existe",
+  "sort_order": 40
+ },
+ {
+  "code": "V.N3.S4.K",
+  "name": "Kitting",
+  "description": "Configurar kits de piezas",
+  "pov": "vendedor",
+  "route": null,
+  "sample": null,
+  "element": null,
+  "steps": null,
+  "grants": [
+   "kitting.configure"
+  ],
+  "status": "pending",
+  "notes": "Excel: TBD. La función aún no existe",
+  "sort_order": 41
+ },
+ {
+  "code": "V.N3.S5",
+  "name": "Mis entregas",
+  "description": "Pedidos asignados al repartidor",
+  "pov": "ambos",
+  "route": "/deliveries",
+  "sample": "pedido asignado",
+  "element": "Lista de entregas",
+  "steps": null,
+  "grants": [
+   "deliveries.perform"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 42
+ },
+ {
+  "code": "V.N3.S5.M",
+  "name": "Menú: Mis entregas",
+  "description": "Opción del menú lateral",
+  "pov": "ambos",
+  "route": "/dashboard-v2",
+  "sample": null,
+  "element": "Opción 'Mis entregas'",
+  "steps": "Abrir menú lateral",
+  "grants": [
+   "deliveries.perform"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 43
+ },
+ {
+  "code": "V.N3.S5.1",
+  "name": "Detalle de entrega",
+  "description": "Recolección y entrega de un pedido",
+  "pov": "ambos",
+  "route": "/deliveries/{order}",
+  "sample": "pedido asignado",
+  "element": "Página completa",
+  "steps": null,
+  "grants": [
+   "deliveries.perform"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 44
+ },
+ {
+  "code": "V.N3.S6",
+  "name": "Mostrador / POS",
+  "description": "Captura y lista de folios",
+  "pov": "vendedor",
+  "route": "/pos",
+  "sample": "folio",
+  "element": "Página completa",
+  "steps": null,
+  "grants": [
+   "pos.view",
+   "pos.view_all",
+   "pos.create"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 45
+ },
+ {
+  "code": "V.N3.F2.Q",
+  "name": "Cotizar folio",
+  "description": "Capturar opciones de las piezas",
+  "pov": "vendedor",
+  "route": "/pos/offer-creator/{folio}",
+  "sample": "folio",
+  "element": "Formulario de opciones",
+  "steps": null,
+  "grants": [
+   "pos.quote",
+   "prices.view"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 46
+ },
+ {
+  "code": "V.N3.F2.S",
+  "name": "Compartir folio",
+  "description": "Compartir con el cliente o invitar a otra tienda",
+  "pov": "vendedor",
+  "route": "/pos",
+  "sample": "folio",
+  "element": "Diálogo 'Compartir folio'",
+  "steps": "Abrir compartir",
+  "grants": [
+   "pos.share"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 47
+ },
+ {
+  "code": "V.N3.F2.V",
+  "name": "Entrega en mostrador",
+  "description": "Firma y recolección en persona",
+  "pov": "vendedor",
+  "route": "/order-management-v2/{order}",
+  "sample": "pedido de mostrador",
+  "element": "Diálogo de recolección en persona",
+  "steps": "Abrir recolección",
+  "grants": [
+   "pos.close_sale"
+  ],
+  "status": "active",
+  "notes": "Por confirmar: también confirmar folio en /pos",
+  "sort_order": 48
+ },
+ {
+  "code": "V.N3.F2.K",
+  "name": "Vincular cliente",
+  "description": "Ligar el folio a un cliente o crearle cuenta",
+  "pov": "vendedor",
+  "route": "/pos",
+  "sample": "folio",
+  "element": "Control de cliente",
+  "steps": null,
+  "grants": [
+   "pos.manage_customer"
+  ],
+  "status": "pending",
+  "notes": "Por confirmar: no encontré el control para vincular cliente en /pos",
+  "sort_order": 49
+ },
+ {
+  "code": "SCC.M.1",
+  "name": "Chat de solicitud",
+  "description": "Chat público de la solicitud",
+  "pov": "ambos",
+  "route": "/part-request-chat/{request}",
+  "sample": "solicitud",
+  "element": "Página completa",
+  "steps": null,
+  "grants": [
+   "chat.public"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 50
+ },
+ {
+  "code": "SCC.M.2",
+  "name": "Chat de pedido",
+  "description": "Chat privado entre comprador y vendedor",
+  "pov": "ambos",
+  "route": "/order-chat/{order}",
+  "sample": "pedido",
+  "element": "Página completa",
+  "steps": null,
+  "grants": [
+   "chat.private"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 51
+ },
+ {
+  "code": "SCC.M.3",
+  "name": "Bandeja de mensajes",
+  "description": "Todas las conversaciones del grupo",
+  "pov": "ambos",
+  "route": "/messages",
+  "sample": null,
+  "element": "Página completa",
+  "steps": null,
+  "grants": [
+   "chat.public",
+   "chat.private"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 52
+ },
+ {
+  "code": "V.N3.S7",
+  "name": "Borrador de WhatsApp",
+  "description": "Revisar un borrador creado desde WhatsApp",
+  "pov": "vendedor",
+  "route": "/whatsapp-draft/{token}",
+  "sample": "borrador",
+  "element": "Página completa",
+  "steps": null,
+  "grants": [
+   "whatsapp.create_draft"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 53
+ },
+ {
+  "code": "SCC.W.1",
+  "name": "WhatsApp para POS",
+  "description": "Vincular WhatsApp para recibir solicitudes",
+  "pov": "vendedor",
+  "route": "/user-configuration/whatsapp-pos",
+  "sample": null,
+  "element": "Página completa",
+  "steps": null,
+  "grants": [
+   "whatsapp.pos_intake"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 54
+ },
+ {
+  "code": "SCC.R.1",
+  "name": "Transacciones",
+  "description": "Movimientos y métricas del grupo",
+  "pov": "ambos",
+  "route": "/user-configuration/transactions",
+  "sample": null,
+  "element": "Página completa",
+  "steps": null,
+  "grants": [
+   "reports.view"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 55
+ },
+ {
+  "code": "SCC.V.1",
+  "name": "Calificar transacción",
+  "description": "Reseña de una transacción terminada",
+  "pov": "ambos",
+  "route": null,
+  "sample": null,
+  "element": "Diálogo de reseña",
+  "steps": null,
+  "grants": [
+   "reviews.submit"
+  ],
+  "status": "pending",
+  "notes": "Por confirmar: el diálogo existe pero no está en ninguna pantalla",
+  "sort_order": 56
+ },
+ {
+  "code": "SCC.V.2",
+  "name": "Reseñas del grupo",
+  "description": "Ver y disputar reseñas",
+  "pov": "ambos",
+  "route": null,
+  "sample": null,
+  "element": "Lista de reseñas",
+  "steps": null,
+  "grants": [
+   "reviews.dispute"
+  ],
+  "status": "pending",
+  "notes": "Por confirmar: la sección existe pero no está en ninguna pantalla",
+  "sort_order": 57
+ },
+ {
+  "code": "E.A.1",
+  "name": "Unidades de medida",
+  "description": "Catálogo de unidades",
+  "pov": "eassymo",
+  "route": "/super-admin/measurement-units",
+  "sample": null,
+  "element": "Página completa",
+  "steps": null,
+  "grants": [
+   "eassymo.uom"
+  ],
+  "status": "active",
+  "notes": "Solo super admin",
+  "sort_order": 58
+ },
+ {
+  "code": "E.A.2",
+  "name": "Catálogo de partes",
+  "description": "Etiquetas y sinónimos de partes",
+  "pov": "eassymo",
+  "route": "/super-admin/part-catalog",
+  "sample": null,
+  "element": "Página completa",
+  "steps": null,
+  "grants": [
+   "eassymo.synonyms"
+  ],
+  "status": "active",
+  "notes": "Solo super admin",
+  "sort_order": 59
+ },
+ {
+  "code": "E.A.3",
+  "name": "Sensibilidades",
+  "description": "Configurar sensibilidades",
+  "pov": "eassymo",
+  "route": null,
+  "sample": null,
+  "element": null,
+  "steps": null,
+  "grants": [
+   "eassymo.sensitivities"
+  ],
+  "status": "pending",
+  "notes": "La pantalla aún no existe",
+  "sort_order": 60
+ },
+ {
+  "code": "E.A.4",
+  "name": "Pricing",
+  "description": "Configurar precios de la plataforma",
+  "pov": "eassymo",
+  "route": null,
+  "sample": null,
+  "element": null,
+  "steps": null,
+  "grants": [
+   "eassymo.pricing"
+  ],
+  "status": "pending",
+  "notes": "La pantalla aún no existe",
+  "sort_order": 61
+ }
+]

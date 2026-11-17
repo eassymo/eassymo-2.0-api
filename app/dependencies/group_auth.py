@@ -92,18 +92,33 @@ def authorize_role_mutation(
     request: Request,
     target_user_uid: str,
     group_id: Optional[str],
+    role_value: Optional[str] = None,
+    removing: bool = False,
 ) -> None:
     """
-    Group owner may manage roles for members; new shop owner may assign own first role.
+    With a role: the caller must be allowed to assign it (authz.can_assign_role: assignable,
+    right business type, no privilege escalation). The owner activating their own role
+    (onboarding) is always allowed, and the owner may always remove a role.
+    Without a role: group owner only.
+    A new shop owner may assign their own first pre-group role.
     """
     caller_uid = _caller_uid(request)
     target_user_uid = str(target_user_uid).strip()
     group_id_str = str(group_id).strip() if group_id else None
 
     if group_id_str:
-        if is_group_owner(caller_uid, group_id_str):
-            return
         if caller_uid == target_user_uid and is_group_owner(caller_uid, group_id_str):
+            return
+        if removing and is_group_owner(caller_uid, group_id_str):
+            return
+        if role_value:
+            from app.services import authz
+
+            ok, reason = authz.can_assign_role(caller_uid, group_id_str, str(role_value), request)
+            if ok:
+                return
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=reason)
+        if is_group_owner(caller_uid, group_id_str):
             return
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
