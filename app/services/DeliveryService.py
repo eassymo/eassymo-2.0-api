@@ -14,6 +14,8 @@ from app.repositories import (
 from app.schemas.Order import Order, DeliveryAssignment, DeliveryAssignmentType, OrderStatus
 from app.schemas.GuestDeliveryProfile import GuestDeliveryProfile, GuestDeliveryProfileStatus
 from app.schemas.Groups import GroupSchema
+from app.repositories import GroupRepository as groupRepository
+from app.services import authz
 
 # Role value for delivery persons (DEALER_SHOP in the UserRoles enum)
 DELIVERY_PERSON_ROLE_VALUE = "215"
@@ -42,7 +44,7 @@ def get_delivery_persons(group_id: str, requesting_user_uid: str) -> List[dict]:
     _assert_user_in_group(requesting_user_uid, group_id)
 
     role_records = userRolesRepository.find({
-        "role": DELIVERY_PERSON_ROLE_VALUE,
+        "role": {"$in": authz.delivery_role_variants()},
         "group": group_id,
         "active": True,
     })
@@ -92,7 +94,7 @@ def build_delivery_assignment(
 
         role_match = userRolesRepository.find({
             "user_uid": user_id,
-            "role": DELIVERY_PERSON_ROLE_VALUE,
+            "role": {"$in": authz.delivery_role_variants()},
             "group": group_id,
             "active": True,
         })
@@ -332,7 +334,7 @@ def _user_has_delivery_role_in_group(user_uid: str, group_id: str) -> bool:
         return False
     role_records = userRolesRepository.find({
         "user_uid": user_uid,
-        "role": DELIVERY_PERSON_ROLE_VALUE,
+        "role": {"$in": authz.delivery_role_variants()},
         "group": str(group_id),
         "active": True,
     })
@@ -548,11 +550,15 @@ def _assert_user_in_group(user_uid: str, group_id: str):
 def _assert_has_delivery_role(user_uid: str):
     role_records = userRolesRepository.find({
         "user_uid": user_uid,
-        "role": DELIVERY_PERSON_ROLE_VALUE,
+        "role": {"$in": authz.delivery_role_variants()},
         "active": True,
     })
-    if not role_records:
-        raise HTTPException(status_code=403, detail="User does not have the DELIVERY_PERSON role")
+    if role_records:
+        return
+    # Group owners hold every grant, deliveries.perform included, so the app shows them "Mis entregas".
+    if list(groupRepository.find({"owner": user_uid}, {"_id": 1})):
+        return
+    raise HTTPException(status_code=403, detail="User does not have the DELIVERY_PERSON role")
 
 
 def _assert_guest_token_active(token: str):

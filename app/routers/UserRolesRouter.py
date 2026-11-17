@@ -15,7 +15,7 @@ userRolesRouter = APIRouter(prefix="/userRoles")
 @userRolesRouter.post("/", include_in_schema=False)
 def insert(request: Request, payload: UserRoles = Body()):
     try:
-        authorize_role_mutation(request, payload.user_uid, payload.group)
+        authorize_role_mutation(request, payload.user_uid, payload.group, payload.role)
         response = userRolesService.insert(payload)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except HTTPException as e:
@@ -56,7 +56,7 @@ def activate_role(request: Request, payload=Body(...)):
         role = payload["role"]
         new_group_id = payload["new_group_id"]
 
-        authorize_role_mutation(request, user_uid, new_group_id)
+        authorize_role_mutation(request, user_uid, new_group_id, role)
 
         response = userRolesService.activate_role(user_uid, role, new_group_id)
 
@@ -72,7 +72,7 @@ def add_role_to_user(request: Request, payload=Body(...)):
         role = payload["role"]
         group = payload["group"]
 
-        authorize_role_mutation(request, user_uid, group)
+        authorize_role_mutation(request, user_uid, group, role)
 
         response = userRolesService.add_role_to_user(user_uid, role, group)
 
@@ -88,7 +88,7 @@ def remove(request: Request, payload=Body(...)):
         role = payload["role"]
         group = payload["group"]
 
-        authorize_role_mutation(request, user_uid, group)
+        authorize_role_mutation(request, user_uid, group, role, removing=True)
 
         response = userRolesService.remove_role_from_user(
             user_uid, role, group)

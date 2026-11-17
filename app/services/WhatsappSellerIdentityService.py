@@ -9,7 +9,8 @@ from typing import Any, Dict, List, Optional
 from app.repositories import GroupRepository as groupRepository
 from app.repositories import WhatsappLinkRepository as link_repo
 from app.repositories import WhatsappPendingAssociationRepository as pending_repo
-from app.services.access_policy import PERMISSION_WHATSAPP_CREATE_DRAFT, can
+from app.authz.grant_keys import WHATSAPP_CREATE_DRAFT as PERMISSION_WHATSAPP_CREATE_DRAFT
+from app.services.authz import can
 from app.utils.phone_normalize import normalize_phone_e164
 
 logger = logging.getLogger(__name__)

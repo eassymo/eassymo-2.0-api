@@ -12,7 +12,8 @@ from app.repositories import WhatsappInboundRepository as inbound_repo
 from app.repositories import UserRepository as userRepository
 from app.repositories import UserRolesRepository as userRolesRepository
 from app.repositories import WhatsappLinkRepository as link_repo
-from app.services.access_policy import can, PERMISSION_WHATSAPP_CREATE_DRAFT
+from app.authz.grant_keys import WHATSAPP_CREATE_DRAFT as PERMISSION_WHATSAPP_CREATE_DRAFT
+from app.services.authz import can
 from app.utils.phone_normalize import canonical_pos_phone
 
 
