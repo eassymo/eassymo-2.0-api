@@ -3,11 +3,37 @@ from fastapi import APIRouter, Body, status, Query, Request
 from app.schemas.Order import Order, OrderStatus
 from app.services import OrderService
 from app.services import DeliveryService
+from app.services import authz
 from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response, error_json_response
 from typing import Optional
 
 # Role value for delivery persons (DEALER_SHOP)
 _DELIVERY_PERSON_ROLE = "215"
+
+
+def _order_seller_group(order_id: Optional[str]) -> Optional[str]:
+    from app.repositories import OrderRepository as orderRepository
+    from bson import ObjectId
+
+    if not order_id or not ObjectId.is_valid(str(order_id)):
+        return None
+    doc = orderRepository.find_one({"_id": ObjectId(str(order_id))})
+    group_id = ((doc or {}).get("offer") or {}).get("group_id")
+    return str(group_id) if group_id else None
+
+
+def _is_delivery_restricted_caller(request: Request, user: dict, order_id: Optional[str] = None) -> bool:
+    """Delivery-only callers (deliveries.perform without orders.change_status) may only mark
+    their own assigned orders as received. Checked in the order's seller group, which the
+    caller cannot choose, and in the selected group. The legacy global role claim still applies."""
+    if _DELIVERY_PERSON_ROLE in (user.get("roles") or []):
+        return True
+    header_group = getattr(request.state, "groupSelected", None) or request.headers.get("groupselected")
+    groups = {g for g in (header_group, _order_seller_group(order_id)) if g}
+    return any(
+        authz.is_delivery_restricted(authz.effective_grants(user.get("uid"), gid, request))
+        for gid in groups
+    )
 
 orderRouter = APIRouter(prefix="/order")
 
@@ -142,9 +168,7 @@ def change_order_status(request: Request, data: dict = Body(...)):
 
         # --- Authenticated path ---
         user = request.state.user
-        user_roles = user.get("roles", [])
-
-        if _DELIVERY_PERSON_ROLE in user_roles:
+        if _is_delivery_restricted_caller(request, user, order_id):
             if new_status != OrderStatus.RECIEVED.name:
                 return JSONResponse(
                     status_code=status.HTTP_403_FORBIDDEN,
