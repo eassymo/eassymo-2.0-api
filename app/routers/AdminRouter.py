@@ -1,5 +1,8 @@
 from fastapi import APIRouter, Body, Depends, File, Query, Request, UploadFile, status
+from bson import ObjectId
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
+import logging
 from typing import Optional
 from sqlalchemy.orm import Session
 
@@ -21,11 +24,18 @@ adminRouter = APIRouter(
 
 
 def _ok(data):
-    return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(data))
+    # Services return raw Mongo documents: make dates and ObjectIds JSON-safe for every admin endpoint.
+    content = jsonable_encoder(get_successful_response(data), custom_encoder={ObjectId: str})
+    return JSONResponse(status_code=status.HTTP_200_OK, content=content)
+
+
+logger = logging.getLogger(__name__)
 
 
 def _err(exc, code=status.HTTP_500_INTERNAL_SERVER_ERROR):
     status_code = getattr(exc, "status_code", code)
+    if status_code >= 500:
+        logger.error("Admin endpoint failed: %s", exc, exc_info=exc)
     detail = getattr(exc, "detail", str(exc))
     return JSONResponse(status_code=status_code, content=get_unsuccessful_response(detail))
 

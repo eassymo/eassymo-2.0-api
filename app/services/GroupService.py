@@ -3,6 +3,7 @@ from app.repositories import CensusRepository as censusRepository
 from app.repositories import UserRepository as userRepository
 from app.repositories import ListsRepository as listRepository
 from app.repositories import PartRequestInviteRepository as partRequestInviteRepository
+from app.repositories import PartRequestRepository as partRequestRepository
 from app.schemas.Groups import GroupSchema
 from app.schemas.Census import CensusSchema
 from app.schemas.Lists import ListsSchema
@@ -148,18 +149,46 @@ def create_group(
     return {"message": "ok", "body": group_data}
 
 
+def _object_id_or_raw(value: str):
+    """Group ids are ObjectIds in Mongo; fall back to the raw value for anything else."""
+    return ObjectId(value) if ObjectId.is_valid(value) else value
+
+
+def received_group_ids(part_requests: List[Dict[str, Any]]) -> set:
+    """Groups subscribed (as sellers or followers) to any of these part requests."""
+    ids = set()
+    for pr in part_requests:
+        for key in ("subscribedSellers", "subscribedFollowers"):
+            for gid in pr.get(key) or []:
+                if gid:
+                    ids.add(str(gid))
+    return ids
+
+
 def find(request: Request, filters: Dict[str, Any]) -> List[GroupSchema]:
     try:
         user = request.state._state.get('user')
         groupSelected = request.state._state.get('groupSelected')
 
         search_filters = _compose_group_find_filters(filters)
+        if filters.get("parent_request_id") and groupSelected:
+            # Searching shops to invite to a request: never offer the viewer's own store.
+            not_self = {"_id": {"$ne": _object_id_or_raw(groupSelected)}}
+            search_filters = {"$and": [search_filters, not_self]} if search_filters else {"$and": [not_self]}
 
         groups_cursor = groupRepository.find(search_filters)
         if filters.get("search_argument"):
             groups_cursor = groups_cursor.sort("name", 1).limit(GROUP_SEARCH_RESULT_LIMIT)
 
         groups_data = list(groups_cursor)
+
+        parent_request_id = filters.get("parent_request_id")
+        received_ids = None
+        if parent_request_id:
+            received_ids = received_group_ids(list(partRequestRepository.find(
+                {"specific_order_uid": parent_request_id},
+                {"subscribedSellers": 1, "subscribedFollowers": 1},
+            )))
 
         groups: List[GroupSchema] = []
 
@@ -187,6 +216,8 @@ def find(request: Request, filters: Dict[str, Any]) -> List[GroupSchema]:
                 partRequestInviteRepository.find(search_filters))
 
             group.can_be_invited = len(invites_data_found) == 0
+            if received_ids is not None:
+                group.already_received = str(group.id) in received_ids
 
             groups.append(group)
 

@@ -728,9 +728,11 @@ class AdminMetricsService:
                 user_uids.append(str(item["user_uid"]))
 
         group_names: Dict[str, str] = {}
+        group_owners: Dict[str, str] = {}
         if group_ids:
-            for group in db["groups"].find({"_id": {"$in": group_ids}}, {"name": 1}):
+            for group in db["groups"].find({"_id": {"$in": group_ids}}, {"name": 1, "owner": 1}):
                 group_names[str(group["_id"])] = group.get("name") or str(group["_id"])
+                group_owners[str(group["_id"])] = group.get("owner")
 
         user_names: Dict[str, str] = {}
         if user_uids:
@@ -745,6 +747,7 @@ class AdminMetricsService:
             group_id = row.get("group")
             row["group_name"] = group_names.get(str(group_id)) if group_id else None
             row["user_name"] = user_names.get(str(row.get("user_uid")))
+            row["is_group_owner"] = bool(group_id) and group_owners.get(str(group_id)) == row.get("user_uid")
             enriched.append(row)
         return enriched
 

@@ -38,6 +38,8 @@ class GroupSchema(BaseModel):
         None, description="users linked to this group")
     owner: Optional[str] = Field(None, description="User owner")
     can_be_invited: Optional[bool] = Field(None)
+    already_received: Optional[bool] = Field(
+        None, description="Set when searching for a parent request: the group is already subscribed to it")
     is_callcenter: Optional[bool] = Field(False)
     is_commissioner: Optional[bool] = Field(False, description="Makrs if the group will be of type commission")
     reputation: Optional[ReputationSummary] = Field(

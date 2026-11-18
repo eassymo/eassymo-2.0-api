@@ -1,6 +1,11 @@
+# Seller offer creator opened by notifications. Keep in sync with the client's
+# OFFER_CREATOR_ROUTE (src/common/utils/offer-creator-route.ts); rollback = "/offer-creator-v3".
+SELLER_OFFER_CREATOR_ROUTE = "/offer-creator-v4"
+
+
 def seller_offer_creator_path(request_id: str) -> str:
     request_id = (request_id or "").strip()
-    return f"/offer-creator-v3/{request_id}" if request_id else "/dashboard-v2"
+    return f"{SELLER_OFFER_CREATOR_ROUTE}/{request_id}" if request_id else "/dashboard-v2"
 
 
 def buyer_offer_review_path(

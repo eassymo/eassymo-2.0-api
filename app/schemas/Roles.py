@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class RolesSchema(BaseModel):
@@ -19,6 +19,14 @@ class RolesSchema(BaseModel):
     is_system: bool = Field(False)
     updated_at: Optional[datetime] = None
     updated_by: Optional[str] = None
+
+    @field_validator("value", "entityType", mode="before")
+    @classmethod
+    def _legacy_number_as_text(cls, v):
+        # Legacy roles store these as numbers (value 215, entityType 1).
+        if isinstance(v, int) and not isinstance(v, bool):
+            return str(v)
+        return v
 
     def toJson(self):
         data = self.model_dump()

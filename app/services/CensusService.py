@@ -358,6 +358,13 @@ def text_search(request: Request, argument: str | None, parent_request_id: str |
 
         search_filters["group_reference_id"] = {"$eq": None}
 
+        # Never offer the viewer's own store, even if its directory entry was never linked to the group.
+        if groupSelected:
+            own_group = groupRepository.find_by_id(groupSelected, {"censusReference": 1})
+            own_census = (own_group or {}).get("censusReference")
+            if own_census and ObjectId.is_valid(str(own_census)):
+                search_filters["_id"] = {"$ne": ObjectId(str(own_census))}
+
         results = list(censusRepository.find(search_filters, 30, 0))
 
         results_json = []
