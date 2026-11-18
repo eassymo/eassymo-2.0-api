@@ -18,6 +18,16 @@ def insert(partRequestInvite: RequestInvite):
         return error_json_response(e)
 
 
+@partRequestInviteRouter.get("/pending", description="Open invites for the selected group that it has not joined yet", tags=["partRequestInvite"])
+def find_pending(request: Request):
+    try:
+        group_id = request.state._state.get("groupSelected")
+        response = partRequestInviteService.find_pending_for_group(group_id)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+    except (HTTPException, Exception) as e:
+        return error_json_response(e)
+
+
 @partRequestInviteRouter.get("/{id}", description="Get a part request invite by id", tags=["partRequestInvite"])
 def find_by_id(id: str):
     try:

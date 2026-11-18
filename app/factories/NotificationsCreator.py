@@ -310,11 +310,21 @@ def create_part_request_invite_notification(
     if visible_roles is None:
         visible_roles = DEFAULT_ROLES
     
-    part_description = meta_data.get("partRequest", {}).get("part", {}).get("tipoParteDescripcion", "")
-    
+    part_requests = meta_data.get("partRequests") or []
+    count = len(part_requests)
+    vehicle = (part_requests[0].get("vehicleInformation") or {}) if part_requests else {}
+    vehicle_text = " ".join(
+        str(vehicle[key]) for key in ("maker", "model", "year") if vehicle.get(key)
+    )
+    pieces = f"{count} {'pieza' if count == 1 else 'piezas'}"
+    message = f"{inviter_group_name} te invita a cotizar {pieces}"
+    if vehicle_text:
+        message += f" para un {vehicle_text}"
+    message += "."
+
     return Notification(
         type=NotificationType.PART_REQUEST_INVITE,
-        message=f"¡{inviter_group_name} Te está invitando a ofertar en su solicitud por un {part_description}.",
+        message=message,
         owner=owner,
         ownerGroup=owner_group,
         visibleRoles=visible_roles,

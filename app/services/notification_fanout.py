@@ -392,7 +392,7 @@ def fanout_part_request_invite(
     inviter_user: str,
     owner: str,
     owner_group: str,
-    part_request: Dict[str, Any],
+    part_requests: List[Dict[str, Any]],
 ) -> None:
     notification = create_part_request_invite_notification(
         inviter_group_name=inviter_group_name,
@@ -400,7 +400,7 @@ def fanout_part_request_invite(
         owner=owner,
         owner_group=owner_group,
         navigate_to_url=f"/join-request-invite/{invite_id}",
-        meta_data={"partRequest": part_request},
+        meta_data={"partRequests": part_requests, "partRequest": part_requests[0] if part_requests else {}},
     )
     send_notifications_batch([notification])
 
