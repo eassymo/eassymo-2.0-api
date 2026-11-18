@@ -1018,5 +1018,22 @@
   "status": "active",
   "notes": null,
   "sort_order": 62
+ },
+ {
+  "code": "V.N3.I1",
+  "name": "Invitaciones pendientes (vales)",
+  "description": "Vales de las invitaciones a cotizar pendientes en Vendiendo",
+  "pov": "vendedor",
+  "route": "/dashboard-v2",
+  "sample": null,
+  "element": "Vales 'Te invitaron a cotizar'",
+  "steps": null,
+  "grants": [
+   "offers.view_incoming",
+   "offers.view_all"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 63
  }
 ]
