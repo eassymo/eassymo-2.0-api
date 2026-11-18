@@ -1035,5 +1035,22 @@
   "status": "active",
   "notes": null,
   "sort_order": 63
+ },
+ {
+  "code": "V.N3.I2",
+  "name": "Invitaciones una por una",
+  "description": "Mazo de invitaciones a cotizar pendientes: unirse o pasar, una a la vez",
+  "pov": "vendedor",
+  "route": "/invitaciones",
+  "sample": null,
+  "element": "Página completa",
+  "steps": null,
+  "grants": [
+   "offers.view_incoming",
+   "offers.view_all"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 64
  }
 ]
