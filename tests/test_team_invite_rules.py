@@ -44,7 +44,7 @@ def test_mutation_denied_with_reason():
 def test_owner_activating_own_role_skips_assignable_check():
     with patch.object(authz, "can_assign_role") as car, \
          patch.object(group_auth, "is_group_owner", return_value=True):
-        group_auth.authorize_role_mutation(_request(uid="o"), "o", GID, "212")
+        group_auth.authorize_role_mutation(_request(uid="o"), "o", GID, "212", owner_self_activation=True)
     car.assert_not_called()
 
 
