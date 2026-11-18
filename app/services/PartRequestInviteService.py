@@ -1,7 +1,7 @@
 from app.schemas.RequestInvites import RequestInvite, RequestInviteStatus
 from fastapi import HTTPException, status
 from app.repositories import PartRequestRepository, PartRequestInviteRepository
-from app.repositories import GroupRepository
+from app.repositories import GroupRepository, OfferRepository
 from app.schemas.PartRequest import PartRequest, PartRequestStatus
 from app.services import PartRequestService as partRequestService
 from app.schemas.Groups import GroupSchema
@@ -212,3 +212,76 @@ def format_part_requests(part_requests: List[Dict[str, Any]]) -> List[Dict[str, 
         formatted_part_requests.append(part_request.toJson())
 
     return formatted_part_requests
+
+def find_pending_for_group(group_id: str) -> List[Dict[str, Any]]:
+    """Open invites for `group_id` the seller has not yet joined, newest first."""
+    invites = list(PartRequestInviteRepository.find({
+        "invited_group": group_id,
+        "status": RequestInviteStatus.CREATED.value
+    }))
+    invites.sort(key=lambda invite: str(invite.get("created_at") or ""), reverse=True)
+
+    pending: List[Dict[str, Any]] = []
+    for invite in invites:
+        part_requests = list(PartRequestRepository.find({
+            "specific_order_uid": invite.get("parent_request_id")
+        }, {}))
+        request_ids = [str(part_request["_id"]) for part_request in part_requests]
+        offers = list(OfferRepository.find({"request_id": {"$in": request_ids}})) if request_ids else []
+
+        view = _pending_invite_view(invite, part_requests, offers, group_id)
+        if view is not None:
+            pending.append(view)
+
+    return pending
+
+
+def _pending_invite_view(invite: Dict[str, Any], part_requests: List[Dict[str, Any]],
+                         offers: List[Dict[str, Any]], group_id: str = None) -> Dict[str, Any] | None:
+    if not part_requests:
+        return None
+
+    for part_request in part_requests:
+        if (part_request.get("status") != PartRequestStatus.CREATED.value
+                or part_request.get("isActive") is False
+                or (group_id is not None and group_id in (part_request.get("subscribedSellers") or []))):
+            return None
+
+    first = part_requests[0]
+    vehicle = first.get("vehicleInformation") or {}
+
+    inviter_group_name = invite.get("inviter_group_name")
+    if not inviter_group_name:
+        group = GroupRepository.find_by_id(invite.get("inviter_group"))
+        inviter_group_name = (group or {}).get("name")
+
+    parts = []
+    for part_request in part_requests:
+        part = part_request.get("part") or {}
+        parts.append({
+            "part_request_id": str(part_request["_id"]),
+            "name": part.get("tipoParteDescripcion"),
+            "amount": part.get("amount"),
+            "unit": part.get("unitOfMeasure"),
+            "position": part.get("position"),
+        })
+
+    created_at = invite.get("created_at")
+    return {
+        "id": str(invite["_id"]),
+        "parent_request_id": invite.get("parent_request_id"),
+        "inviter_group": invite.get("inviter_group"),
+        "inviter_group_name": inviter_group_name,
+        "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else created_at,
+        "fulfillment_type": first.get("fulfillment_type"),
+        "vehicle": {
+            "maker": vehicle.get("maker"),
+            "model": vehicle.get("model"),
+            "year": vehicle.get("year"),
+            "sub_model": vehicle.get("subModel"),
+            "engine": vehicle.get("engine"),
+        },
+        "parts": parts,
+        "invited_shops": len(first.get("subscribedSellers") or []),
+        "quoted_shops": len({str(offer.get("group_id")) for offer in offers if offer.get("group_id")}),
+    }
