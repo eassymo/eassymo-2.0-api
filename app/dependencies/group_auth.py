@@ -88,12 +88,16 @@ def assert_group_owner(caller_uid: str, group_id: str) -> None:
         )
 
 
+OWNER_ROLE_LOCKED = "El dueño del grupo ya tiene todos los permisos; su rol no se puede cambiar"
+
+
 def authorize_role_mutation(
     request: Request,
     target_user_uid: str,
     group_id: Optional[str],
     role_value: Optional[str] = None,
     removing: bool = False,
+    owner_self_activation: bool = False,
 ) -> None:
     """
     With a role: the caller must be allowed to assign it (authz.can_assign_role: assignable,
@@ -101,14 +105,19 @@ def authorize_role_mutation(
     (onboarding) is always allowed, and the owner may always remove a role.
     Without a role: group owner only.
     A new shop owner may assign their own first pre-group role.
+    The group owner already holds every grant, so their roles are locked: nobody may give,
+    change or remove them, except the owner activating their own first role during onboarding
+    (owner_self_activation) or removing one of their own leftover roles.
     """
     caller_uid = _caller_uid(request)
     target_user_uid = str(target_user_uid).strip()
     group_id_str = str(group_id).strip() if group_id else None
 
     if group_id_str:
-        if caller_uid == target_user_uid and is_group_owner(caller_uid, group_id_str):
-            return
+        if is_group_owner(target_user_uid, group_id_str):
+            if caller_uid == target_user_uid and (owner_self_activation or removing):
+                return
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=OWNER_ROLE_LOCKED)
         if removing and is_group_owner(caller_uid, group_id_str):
             return
         if role_value:

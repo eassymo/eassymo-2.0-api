@@ -54,6 +54,7 @@ def test_app_registry_matches_client_grant_sections():
     assert app_keys == {
         g.REQUESTS_CREATE, g.STORE_EDIT_PROFILE, g.ORDERS_VIEW, g.DELIVERIES_PERFORM,
         g.REQUESTS_VIEW, g.OFFERS_VIEW_INCOMING, g.TEAM_ASSIGN_ROLES,
+        g.TEAM_VIEW, g.REPORTS_VIEW, g.RELATIONSHIPS_MANAGE, g.NETWORK_VIEW, g.WHATSAPP_POS_INTAKE,
     }
 
 
