@@ -56,7 +56,7 @@ def activate_role(request: Request, payload=Body(...)):
         role = payload["role"]
         new_group_id = payload["new_group_id"]
 
-        authorize_role_mutation(request, user_uid, new_group_id, role)
+        authorize_role_mutation(request, user_uid, new_group_id, role, owner_self_activation=True)
 
         response = userRolesService.activate_role(user_uid, role, new_group_id)
 

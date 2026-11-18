@@ -488,7 +488,7 @@
   "name": "Crear oferta",
   "description": "Formulario para cotizar una solicitud",
   "pov": "vendedor",
-  "route": "/offer-creator-v3/{request}",
+  "route": "/offer-creator-v4/{request}",
   "sample": "solicitud entrante",
   "element": "Formulario de oferta",
   "steps": null,

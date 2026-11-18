@@ -228,11 +228,33 @@ class AdminWriteService:
         return updated
 
     @staticmethod
+    def _assert_not_group_owner(
+        user_uid: Optional[str], group_id: Optional[str], role: Optional[Any] = None
+    ) -> None:
+        """The group owner already holds every grant: their roles can't be given or changed.
+        The all-grants role (Super Admin) is the exception: it adds the Eassymo grants owners lack."""
+        if not user_uid or not group_id:
+            return
+        if role is not None and db["Roles"].find_one(
+            {"value": {"$in": [role, str(role)]}, "all_grants": True}, {"_id": 1}
+        ):
+            return
+        try:
+            group = db["groups"].find_one({"_id": ObjectId(str(group_id))}, {"owner": 1})
+        except (InvalidId, TypeError):
+            return
+        if group and group.get("owner") == user_uid:
+            from app.dependencies.group_auth import OWNER_ROLE_LOCKED
+
+            raise HTTPException(status_code=409, detail=OWNER_ROLE_LOCKED)
+
+    @staticmethod
     def assign_user_role(admin_uid: str, data: Dict[str, Any]) -> Dict[str, Any]:
         required = ["user_uid", "role", "group"]
         for field in required:
             if not data.get(field):
                 raise HTTPException(status_code=400, detail=f"{field} is required")
+        AdminWriteService._assert_not_group_owner(data["user_uid"], data["group"], data["role"])
 
         payload = UserRoles(
             user_uid=data["user_uid"],
@@ -265,6 +287,10 @@ class AdminWriteService:
                 status_code=400,
                 detail="Assign a group to this UserRoles record before activating it",
             )
+        if active:
+            AdminWriteService._assert_not_group_owner(
+                existing.get("user_uid"), existing.get("group"), existing.get("role")
+            )
 
         updated = db["UserRoles"].find_one_and_update(
             {"_id": existing["_id"]},
@@ -285,6 +311,9 @@ class AdminWriteService:
     ) -> Dict[str, Any]:
         allowed = {"role", "group", "active"}
         update_payload = {k: v for k, v in data.items() if k in allowed}
+        if update_payload.get("role") is not None:
+            # Legacy Roles store `value` as a number; assignments always hold it as text.
+            update_payload["role"] = str(update_payload["role"])
         if not update_payload:
             raise HTTPException(status_code=400, detail="No valid fields to update")
 
@@ -303,6 +332,8 @@ class AdminWriteService:
                 status_code=400,
                 detail="A UserRoles assignment must have a group before it can be active",
             )
+        if next_active or "role" in update_payload or "group" in update_payload:
+            AdminWriteService._assert_not_group_owner(existing.get("user_uid"), next_group, next_role)
 
         duplicate = db["UserRoles"].find_one({
             "user_uid": existing.get("user_uid"),
