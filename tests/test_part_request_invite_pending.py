@@ -110,3 +110,20 @@ def test_pending_route_is_not_captured_by_find_by_id():
     assert json.loads(res.body)["body"] == [{"id": "x"}]
     pending.assert_called_once_with("me")
     by_id.assert_not_called()
+
+
+def test_pending_returns_empty_without_selected_group():
+    with patch.object(svc.PartRequestInviteRepository, "find") as inv_find:
+        assert svc.find_pending_for_group("") == []
+        assert svc.find_pending_for_group(None) == []
+    inv_find.assert_not_called()
+
+
+def test_update_status_changes_every_matching_invite():
+    docs = [_invite("p1", "2026-01-01"), _invite("p1", "2026-01-02")]
+    with patch.object(svc.PartRequestInviteRepository, "find", return_value=iter(docs)), \
+         patch.object(svc.PartRequestInviteRepository, "find_one_and_update",
+                      side_effect=lambda _id, payload: {**payload, "_id": _id}) as upd:
+        result = svc.update_status("inviter", "me", "p1", "REJECTED")
+    assert upd.call_count == 2
+    assert len(result) == 2

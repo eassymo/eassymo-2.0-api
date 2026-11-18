@@ -65,8 +65,8 @@ def insert(partRequestInvite: RequestInvite) -> RequestInvite:
             linked = list(PartRequestRepository.find({
                 "specific_order_uid": partRequestInvite.parent_request_id
             }, {}))
-            for part_request_raw in linked:
-                part_request_fmt = PartRequest(**part_request_raw).toJson()
+            linked_fmt = [PartRequest(**raw).toJson() for raw in linked]
+            if linked_fmt:
                 for group_found in notification_fanout._users_by_group_ids(
                     [str(partRequestInvite.invited_group)],
                 ):
@@ -77,7 +77,7 @@ def insert(partRequestInvite: RequestInvite) -> RequestInvite:
                             inviter_user=str(partRequestInvite.inviter_user or ""),
                             owner=str(user_id),
                             owner_group=str(partRequestInvite.invited_group),
-                            part_request=part_request_fmt,
+                            part_requests=linked_fmt,
                         )
 
         return invite
@@ -114,7 +114,7 @@ def update_status(inviter_group: str, invited_group: str, parent_request_id: str
 
             part_requests_modified.append(modified_invite.toJson())
 
-            return part_requests_modified
+        return part_requests_modified
     except (HTTPException) as e:
         raise HTTPException(e)
 
@@ -186,18 +186,19 @@ def find_and_link_census_invites_with_created_group(
             inviter_group_name = invite_json.get("inviter_group_name") or ""
             inviter_user = invite_json.get("inviter_user") or ""
             invited_group = invite_json.get("invited_group") or ""
-            for part_request in invite_json.get("linked_part_requests") or []:
-                users = notification_fanout._users_by_group_ids([invited_group]) if invited_group else []
-                for group_found in users:
-                    for user_id in group_found.get("users") or []:
-                        notification_fanout.fanout_part_request_invite(
-                            invite_id=invite_id,
-                            inviter_group_name=inviter_group_name,
-                            inviter_user=inviter_user,
-                            owner=str(user_id),
-                            owner_group=invited_group,
-                            part_request=part_request,
-                        )
+            linked_part_requests = invite_json.get("linked_part_requests") or []
+            if not (linked_part_requests and invited_group):
+                continue
+            for group_found in notification_fanout._users_by_group_ids([invited_group]):
+                for user_id in group_found.get("users") or []:
+                    notification_fanout.fanout_part_request_invite(
+                        invite_id=invite_id,
+                        inviter_group_name=inviter_group_name,
+                        inviter_user=inviter_user,
+                        owner=str(user_id),
+                        owner_group=invited_group,
+                        part_requests=linked_part_requests,
+                    )
 
         return part_requests_invites_modified
 
@@ -215,6 +216,8 @@ def format_part_requests(part_requests: List[Dict[str, Any]]) -> List[Dict[str, 
 
 def find_pending_for_group(group_id: str) -> List[Dict[str, Any]]:
     """Open invites for `group_id` the seller has not yet joined, newest first."""
+    if not group_id:
+        return []
     invites = list(PartRequestInviteRepository.find({
         "invited_group": group_id,
         "status": RequestInviteStatus.CREATED.value

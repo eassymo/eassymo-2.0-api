@@ -75,3 +75,32 @@ def test_fanout_order_delayed_notifies_buyer_creator():
         assert notif.type.value == "ORDER_DELAYED"
         assert notif.owner == "buyer-u1"
         assert notif.ownerGroup == "buyer-g1"
+
+
+def _invite_part(maker="Nissan"):
+    return {"vehicleInformation": {"maker": maker, "model": "Altima", "year": "2010"},
+            "part": {"tipoParteDescripcion": "Filtro"}}
+
+
+def _fanout_invite(part_requests):
+    with patch("app.services.notification_fanout.send_notifications_batch") as batch:
+        notification_fanout.fanout_part_request_invite(
+            invite_id="inv-1", inviter_group_name="Taller Hernández", inviter_user="u1",
+            owner="o1", owner_group="g1", part_requests=part_requests)
+    return batch
+
+
+def test_part_request_invite_sends_one_notification_for_all_parts():
+    parts = [_invite_part(), _invite_part()]
+    batch = _fanout_invite(parts)
+    batch.assert_called_once()
+    sent = batch.call_args.args[0]
+    assert len(sent) == 1
+    assert sent[0].message == "Taller Hernández te invita a cotizar 2 piezas para un Nissan Altima 2010."
+    assert sent[0].navigateToUrl == "/join-request-invite/inv-1"
+    assert sent[0].metaData == {"partRequests": parts, "partRequest": parts[0]}
+
+
+def test_part_request_invite_message_singular():
+    sent = _fanout_invite([_invite_part()]).call_args.args[0]
+    assert sent[0].message == "Taller Hernández te invita a cotizar 1 pieza para un Nissan Altima 2010."
