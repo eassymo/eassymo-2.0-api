@@ -30,6 +30,7 @@ def find_by_id(id: str):
 
 
 @partRequestInviteRouter.put("/update-status", description="Edit a part request invite", tags=["partRequestInvite"])
+@partRequestInviteRouter.put("/update-status/", include_in_schema=False)
 def update_status(request: Request, payload=Body(...)):
     try:
         invited_group = request.state._state.get("groupSelected")
