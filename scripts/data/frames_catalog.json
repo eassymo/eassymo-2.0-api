@@ -1001,5 +1001,22 @@
   "status": "pending",
   "notes": "La pantalla aún no existe",
   "sort_order": 61
+ },
+ {
+  "code": "V.N3.I3",
+  "name": "Invitación a cotizar",
+  "description": "Pantalla para unirse a una solicitud por enlace o invitación directa",
+  "pov": "vendedor",
+  "route": "/join-request-invite/{invite}",
+  "sample": "invitación",
+  "element": "Página completa",
+  "steps": null,
+  "grants": [
+   "offers.view_incoming",
+   "offers.view_all"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 62
  }
 ]
