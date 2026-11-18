@@ -46,9 +46,9 @@ def _run(invites, part_requests, offers=(), group=None):
     with patch.object(svc.PartRequestInviteRepository, "find", return_value=iter(invites)) as inv_find, \
          patch.object(svc.PartRequestRepository, "find",
                       side_effect=lambda f, p=None: iter([pr for pr in part_requests
-                                                          if pr["specific_order_uid"] == f["specific_order_uid"]])), \
+                                                          if pr["specific_order_uid"] in f["specific_order_uid"]["$in"]])), \
          patch.object(svc.OfferRepository, "find", return_value=iter(offers)), \
-         patch.object(svc.GroupRepository, "find_by_id", return_value=group) as grp:
+         patch.object(svc.GroupRepository, "find", return_value=iter(group or [])) as grp:
         result = svc.find_pending_for_group("me")
     return result, inv_find, grp
 
@@ -63,7 +63,8 @@ def test_pending_lists_created_invites_for_the_group_newest_first():
 
 def test_pending_shapes_vehicle_parts_and_counts():
     pr = _part_request("p1")
-    offers = [{"group_id": "g1"}, {"group_id": "g1"}, {"group_id": "g2"}]
+    rid = str(pr["_id"])
+    offers = [{"group_id": "g1", "request_id": rid}, {"group_id": "g1", "request_id": rid}, {"group_id": "g2", "request_id": rid}]
     result, _, _ = _run([_invite("p1", datetime(2026, 1, 1, tzinfo=timezone.utc))], [pr], offers)
     item = result[0]
     assert item["invited_shops"] == 4
@@ -90,9 +91,37 @@ def test_pending_skips_closed_inactive_or_already_joined():
 
 def test_pending_fills_missing_inviter_name_from_group():
     inv = _invite("p1", datetime(2026, 1, 1, tzinfo=timezone.utc), name=None)
-    result, _, grp = _run([inv], [_part_request("p1")], group={"name": "Refaccionaria X"})
-    grp.assert_called_once_with("inviter")
+    gid = ObjectId()
+    inv["inviter_group"] = str(gid)
+    result, _, grp = _run([inv], [_part_request("p1")], group=[{"_id": gid, "name": "Refaccionaria X"}])
+    grp.assert_called_once_with({"_id": {"$in": [gid]}}, {"name": 1})
     assert result[0]["inviter_group_name"] == "Refaccionaria X"
+
+
+def test_pending_batches_lookups_for_many_invites():
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    gids = [ObjectId() for _ in range(3)]
+    invites = [_invite(p, now, name=None, inviter_group=str(g)) for p, g in zip(("p1", "p2", "p3"), gids)]
+    prs = [_part_request(p) for p in ("p1", "p2", "p3")]
+    offers = [{"group_id": "g1", "request_id": str(prs[0]["_id"])}, {"group_id": "g2", "request_id": str(prs[0]["_id"])},
+              {"group_id": "g1", "request_id": str(prs[2]["_id"])}]
+    groups = [{"_id": g, "name": f"Taller {i}"} for i, g in enumerate(gids)]
+    with patch.object(svc.PartRequestInviteRepository, "find", return_value=iter(invites)), \
+         patch.object(svc.PartRequestRepository, "find", return_value=iter(prs)) as pr_find, \
+         patch.object(svc.OfferRepository, "find", return_value=iter(offers)) as off_find, \
+         patch.object(svc.GroupRepository, "find", return_value=iter(groups)) as grp_find, \
+         patch.object(svc.GroupRepository, "find_by_id") as by_id:
+        result = svc.find_pending_for_group("me")
+    pr_find.assert_called_once()
+    off_find.assert_called_once()
+    grp_find.assert_called_once()
+    by_id.assert_not_called()
+    assert sorted(r["parent_request_id"] for r in result) == ["p1", "p2", "p3"]
+    by_parent = {r["parent_request_id"]: r for r in result}
+    assert by_parent["p1"]["quoted_shops"] == 2
+    assert by_parent["p2"]["quoted_shops"] == 0
+    assert by_parent["p3"]["quoted_shops"] == 1
+    assert sorted(r["inviter_group_name"] for r in result) == ["Taller 0", "Taller 1", "Taller 2"]
 
 
 def test_pending_route_is_not_captured_by_find_by_id():

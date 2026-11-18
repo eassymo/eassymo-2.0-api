@@ -224,23 +224,50 @@ def find_pending_for_group(group_id: str) -> List[Dict[str, Any]]:
     }))
     invites.sort(key=lambda invite: str(invite.get("created_at") or ""), reverse=True)
 
+    # Batched: one query per collection however many invites there are.
+    parent_ids = list({invite.get("parent_request_id") for invite in invites if invite.get("parent_request_id")})
+    part_requests_by_parent: Dict[Any, List[Dict[str, Any]]] = {}
+    if parent_ids:
+        for part_request in PartRequestRepository.find({"specific_order_uid": {"$in": parent_ids}}, {}):
+            part_requests_by_parent.setdefault(part_request.get("specific_order_uid"), []).append(part_request)
+
+    all_request_ids = [str(pr["_id"]) for prs in part_requests_by_parent.values() for pr in prs]
+    offers_by_request: Dict[str, List[Dict[str, Any]]] = {}
+    if all_request_ids:
+        for offer in OfferRepository.find({"request_id": {"$in": all_request_ids}}):
+            offers_by_request.setdefault(str(offer.get("request_id")), []).append(offer)
+
+    inviter_names = _inviter_names([invite for invite in invites if not invite.get("inviter_group_name")])
+
     pending: List[Dict[str, Any]] = []
     for invite in invites:
-        part_requests = list(PartRequestRepository.find({
-            "specific_order_uid": invite.get("parent_request_id")
-        }, {}))
-        request_ids = [str(part_request["_id"]) for part_request in part_requests]
-        offers = list(OfferRepository.find({"request_id": {"$in": request_ids}})) if request_ids else []
+        part_requests = part_requests_by_parent.get(invite.get("parent_request_id"), [])
+        offers = [offer for pr in part_requests for offer in offers_by_request.get(str(pr["_id"]), [])]
 
-        view = _pending_invite_view(invite, part_requests, offers, group_id)
+        view = _pending_invite_view(invite, part_requests, offers, group_id, inviter_names)
         if view is not None:
             pending.append(view)
 
     return pending
 
 
+def _inviter_names(invites: List[Dict[str, Any]]) -> Dict[str, str]:
+    """Names of the inviter groups of `invites` (those lacking a stored name), in a single query."""
+    oids = []
+    for invite in invites:
+        try:
+            oids.append(ObjectId(str(invite.get("inviter_group"))))
+        except Exception:
+            continue
+    if not oids:
+        return {}
+    groups = GroupRepository.find({"_id": {"$in": list(set(oids))}}, {"name": 1})
+    return {str(group["_id"]): group.get("name") for group in groups}
+
+
 def _pending_invite_view(invite: Dict[str, Any], part_requests: List[Dict[str, Any]],
-                         offers: List[Dict[str, Any]], group_id: str = None) -> Dict[str, Any] | None:
+                         offers: List[Dict[str, Any]], group_id: str = None,
+                         inviter_names: Dict[str, str] = None) -> Dict[str, Any] | None:
     if not part_requests:
         return None
 
@@ -255,8 +282,7 @@ def _pending_invite_view(invite: Dict[str, Any], part_requests: List[Dict[str, A
 
     inviter_group_name = invite.get("inviter_group_name")
     if not inviter_group_name:
-        group = GroupRepository.find_by_id(invite.get("inviter_group"))
-        inviter_group_name = (group or {}).get("name")
+        inviter_group_name = (inviter_names or {}).get(str(invite.get("inviter_group")))
 
     parts = []
     for part_request in part_requests:
