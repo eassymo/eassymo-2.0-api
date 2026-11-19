@@ -1,7 +1,6 @@
 """Push notifications about WhatsApp usage limits (store managers and super admins)."""
 
 import logging
-import os
 from datetime import datetime
 from typing import List, Literal, Optional
 
@@ -16,6 +15,7 @@ from app.services.WhatsappUsageService import UsageSnapshot
 logger = logging.getLogger(__name__)
 
 NAVIGATE_URL = "/user-configuration/whatsapp-pos"
+SUPER_ADMIN_ROLE = "super_admin"
 
 
 class WhatsappUsageNotifier:
@@ -33,6 +33,14 @@ class WhatsappUsageNotifier:
             return [uid for uid in unique if can(uid, str(group_id), TEAM_MANAGE_MEMBERS)]
         except Exception:
             logger.exception("whatsapp_usage_notifier manager_uids failed group_id=%s", group_id)
+            return []
+
+    def super_admin_uids(self) -> List[str]:
+        """Super admins, read from the active `super_admin` rows in UserRoles (nothing to configure)."""
+        try:
+            return userRolesRepository.distinct_active_uids(SUPER_ADMIN_ROLE)
+        except Exception:
+            logger.exception("whatsapp_usage_notifier super_admin_uids failed")
             return []
 
     def is_manager(self, uid: str, group_id: str) -> bool:
@@ -71,10 +79,8 @@ class WhatsappUsageNotifier:
         return sent
 
     def push_admins_credit_request(self, group_id: str, store_name: str, requested_by: str) -> int:
-        raw = os.getenv("SUPER_ADMIN_PUSH_UIDS", "")
-        uids = [u.strip() for u in raw.split(",") if u.strip()]
         sent = 0
-        for uid in uids:
+        for uid in self.super_admin_uids():
             sent += self._send(
                 uid,
                 "Solicitud de más solicitudes de WhatsApp",

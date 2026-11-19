@@ -34,6 +34,14 @@ def find(filters) -> List[UserRoles]:
         raise PyMongoError(e)
 
 
+def distinct_active_uids(role: str) -> List[str]:
+    """Distinct uids that hold `role` in at least one active UserRoles row."""
+    try:
+        return [str(uid) for uid in database.db["UserRoles"].distinct("user_uid", {"role": role, "active": True}) if uid]
+    except PyMongoError as e:
+        raise PyMongoError(e)
+
+
 def update(filters, payload) -> UserRoles | None:
     try:
         updated_role = database.db["UserRoles"].find_one_and_update(

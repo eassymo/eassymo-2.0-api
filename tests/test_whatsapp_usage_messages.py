@@ -105,21 +105,40 @@ def test_push_managers_counts_only_delivered():
         assert n.push_managers("g1", "T", snap, "limit", NOW) == 2
 
 
-def test_push_admins_reads_env_uids(monkeypatch):
-    monkeypatch.setenv("SUPER_ADMIN_PUSH_UIDS", "a1, a2 ,,a3")
+def test_push_admins_reads_super_admins_from_user_roles():
     n = WhatsappUsageNotifier()
-    with patch.object(notifier_mod.push_service, "send_push_to_uid", return_value=1) as send:
+    with patch.object(notifier_mod.userRolesRepository, "distinct_active_uids", return_value=["a1", "a2", "a3"]) as q, \
+         patch.object(notifier_mod.push_service, "send_push_to_uid", return_value=1) as send:
         assert n.push_admins_credit_request("g1", "Mi Tienda", "u9") == 3
+    q.assert_called_once_with("super_admin")
     assert [c.args[0] for c in send.call_args_list] == ["a1", "a2", "a3"]
     assert send.call_args_list[0].kwargs["data"] == {
         "navigateToUrl": "/super-admin/whatsapp/credit-requests",
         "group_id": "g1",
         "requested_by": "u9",
     }
-    monkeypatch.delenv("SUPER_ADMIN_PUSH_UIDS")
-    with patch.object(notifier_mod.push_service, "send_push_to_uid") as send:
+
+
+def test_push_admins_sends_nothing_without_super_admins_or_when_lookup_fails():
+    n = WhatsappUsageNotifier()
+    with patch.object(notifier_mod.userRolesRepository, "distinct_active_uids", return_value=[]), \
+         patch.object(notifier_mod.push_service, "send_push_to_uid") as send:
         assert n.push_admins_credit_request("g1", "Mi Tienda", "u9") == 0
         send.assert_not_called()
+    with patch.object(notifier_mod.userRolesRepository, "distinct_active_uids", side_effect=RuntimeError("db down")), \
+         patch.object(notifier_mod.push_service, "send_push_to_uid") as send:
+        assert n.push_admins_credit_request("g1", "Mi Tienda", "u9") == 0
+        send.assert_not_called()
+
+
+def test_user_roles_distinct_active_uids_queries_active_rows_of_the_role():
+    from app.repositories import UserRolesRepository as repo
+
+    col = MagicMock()
+    col.distinct.return_value = ["a1", None, "a2"]
+    with patch.object(repo.database, "db", {"UserRoles": col}):
+        assert repo.distinct_active_uids("super_admin") == ["a1", "a2"]
+    col.distinct.assert_called_once_with("user_uid", {"role": "super_admin", "active": True})
 
 
 def test_manager_uids_and_is_manager_use_grant():
