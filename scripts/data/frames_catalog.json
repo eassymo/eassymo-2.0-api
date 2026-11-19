@@ -1052,5 +1052,93 @@
   "status": "active",
   "notes": null,
   "sort_order": 64
+ },
+ {
+  "code": "SCC.W.2",
+  "name": "Uso de WhatsApp de la tienda",
+  "description": "Bloque con lo que le queda a la tienda, la renovación y el uso por vendedor",
+  "pov": "vendedor",
+  "route": "/user-configuration/whatsapp-pos",
+  "sample": null,
+  "element": "Bloque de uso",
+  "steps": null,
+  "grants": [
+   "whatsapp.view_usage"
+  ],
+  "status": "active",
+  "notes": "Se muestra solo si el plan de la tienda tiene límite",
+  "sort_order": 65
+ },
+ {
+  "code": "SCC.W.3",
+  "name": "Pedir más solicitudes",
+  "description": "Hoja para pedir más solicitudes de WhatsApp cuando la tienda llega al límite",
+  "pov": "ambos",
+  "route": "/user-configuration/whatsapp-pos",
+  "sample": null,
+  "element": "Hoja inferior",
+  "steps": "Tocar 'Pedir más solicitudes'",
+  "grants": [
+   "whatsapp.request_credits"
+  ],
+  "status": "active",
+  "notes": "Solo la ve quien administra la tienda",
+  "sort_order": 66
+ },
+ {
+  "code": "E.A.5",
+  "name": "WhatsApp: Planes",
+  "description": "Planes de WhatsApp y su límite de solicitudes",
+  "pov": "eassymo",
+  "route": "/super-admin/whatsapp/plans",
+  "sample": null,
+  "element": "Página completa",
+  "steps": null,
+  "grants": [],
+  "status": "active",
+  "notes": "Solo super admin",
+  "sort_order": 67
+ },
+ {
+  "code": "E.A.6",
+  "name": "WhatsApp: Uso de una tienda",
+  "description": "Panel con el uso de WhatsApp de una tienda y sus ajustes",
+  "pov": "eassymo",
+  "route": "/super-admin/groups",
+  "sample": "tienda",
+  "element": "Panel de uso",
+  "steps": "Abrir una tienda y elegir uso de WhatsApp",
+  "grants": [],
+  "status": "active",
+  "notes": "Solo super admin",
+  "sort_order": 68
+ },
+ {
+  "code": "E.A.7",
+  "name": "WhatsApp: Uso y costo",
+  "description": "Uso y costo de WhatsApp por tienda",
+  "pov": "eassymo",
+  "route": "/super-admin/whatsapp/usage",
+  "sample": null,
+  "element": "Página completa",
+  "steps": null,
+  "grants": [],
+  "status": "active",
+  "notes": "Solo super admin",
+  "sort_order": 69
+ },
+ {
+  "code": "E.A.8",
+  "name": "WhatsApp: Solicitudes de cupo",
+  "description": "Solicitudes de más cupo de WhatsApp que envían las tiendas",
+  "pov": "eassymo",
+  "route": "/super-admin/whatsapp/credit-requests",
+  "sample": null,
+  "element": "Página completa",
+  "steps": null,
+  "grants": [],
+  "status": "active",
+  "notes": "Solo super admin",
+  "sort_order": 70
  }
 ]

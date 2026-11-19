@@ -25,6 +25,8 @@ TESTED_API_KEYS = {
     g.TEAM_ASSIGN_ROLES,
     g.DELIVERIES_PERFORM,
     g.ORDERS_CHANGE_STATUS,
+    g.WHATSAPP_VIEW_USAGE,
+    g.WHATSAPP_REQUEST_CREDITS,
 }
 
 
@@ -238,6 +240,25 @@ def test_change_status_restriction_follows_grants(grants, restricted):
     req = SimpleNamespace(state=SimpleNamespace(groupSelected=GID), headers={})
     with _grants(*grants):
         assert OrderRouter._is_delivery_restricted_caller(req, {"uid": "u"}) is restricted
+
+
+# ── whatsapp.view_usage / whatsapp.request_credits on /whatsapp/usage ──────
+
+@pytest.mark.parametrize("key,call", [
+    (g.WHATSAPP_VIEW_USAGE, lambda r, req: r.get_by_seller(req, GID)),
+    (g.WHATSAPP_REQUEST_CREDITS, lambda r, req: r.create_credit_request(req, r.CreditRequestIn(), GID)),
+])
+@pytest.mark.parametrize("granted", [True, False])
+def test_usage_endpoints_follow_their_grant(key, call, granted):
+    from app.routers import WhatsappUsageRouter as r
+
+    req = _request()
+    with _grants(*([key] if granted else [g.WHATSAPP_POS_INTAKE])), \
+         patch.object(r, "usage_service"), patch.object(r, "usage_repo") as repo, \
+         patch.object(r, "userRepository"), patch.object(r, "groupRepository"), patch.object(r, "notifier"):
+        repo.by_seller.return_value = []
+        repo.find_pending_credit_request.return_value = {"id": "x"}
+        assert (call(r, req).status_code == 200) is granted
 
 
 # ── completeness ────────────────────────────────────────────────

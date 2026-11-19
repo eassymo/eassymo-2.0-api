@@ -5,6 +5,8 @@ from unittest.mock import MagicMock, patch, call
 
 import pytest
 
+from tests.test_whatsapp_intake import offline_usage_meter  # noqa: F401
+
 from app.schemas.WhatsappExtraction import (
     ClarificationAnswers,
     ExtractionEvidence,

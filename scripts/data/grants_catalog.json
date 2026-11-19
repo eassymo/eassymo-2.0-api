@@ -694,5 +694,29 @@
   "implemented": false,
   "active": true,
   "sort_order": 57
+ },
+ {
+  "key": "whatsapp.view_usage",
+  "name": "Ver uso de WhatsApp por vendedor",
+  "description": "Ver cuánto usa cada vendedor de las solicitudes de WhatsApp de la tienda",
+  "area": "Mensajes",
+  "pov": "ambos",
+  "type": "action",
+  "frame_ref": null,
+  "implemented": true,
+  "active": true,
+  "sort_order": 58
+ },
+ {
+  "key": "whatsapp.request_credits",
+  "name": "Pedir más solicitudes de WhatsApp",
+  "description": "Pedir más solicitudes de WhatsApp cuando la tienda llega al límite",
+  "area": "Mensajes",
+  "pov": "ambos",
+  "type": "action",
+  "frame_ref": null,
+  "implemented": true,
+  "active": true,
+  "sort_order": 59
  }
 ]

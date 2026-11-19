@@ -1,4 +1,5 @@
 import contextvars
+import hashlib
 import logging
 import os
 import re
@@ -50,6 +51,17 @@ from app.services.WhatsappSellerIdentityService import (
     WhatsappSellerIdentityService,
 )
 from app.services.WhatsappService import WhatsappService
+from app.services.WhatsappUsageMessages import (
+    GUARD_NOTICE,
+    block_message,
+    warning_message,
+)
+from app.services.WhatsappUsageNotifier import WhatsappUsageNotifier
+from app.services.WhatsappUsageService import (
+    UsageContext,
+    UsageLimitReached,
+    WhatsappUsageService,
+)
 from app.services import WhatsappClarificationService as clarify
 from app.utils.phone_normalize import normalize_phone_e164
 
@@ -69,6 +81,28 @@ _draft_timing: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar(
     "whatsapp_draft_timing",
     default=None,
 )
+# Usage metering for the burst being flushed (None outside a flush).
+_usage_ctx_var: contextvars.ContextVar[Optional[UsageContext]] = contextvars.ContextVar(
+    "whatsapp_usage_ctx",
+    default=None,
+)
+USAGE_PAGE_PATH = "/user-configuration/whatsapp-pos"
+_DEFAULT_NOTICE_COOLDOWN_SECONDS = 1800
+
+
+def _usage_burst_id(session: dict) -> Optional[str]:
+    """Stable id for metering: a re-flush of the same messages reuses the reservation.
+
+    Ledger events are keyed by it too, so a retried model call's tokens are not
+    recorded twice (accepted under-count)."""
+    sids = sorted(
+        str(message.get("message_sid"))
+        for message in (session.get("messages") or [])
+        if message.get("message_sid")
+    )
+    if not sids:
+        return None
+    return "b-" + hashlib.sha1("|".join(sids).encode("utf-8")).hexdigest()
 
 
 def _collect_wait_ms(session: dict) -> int:
@@ -199,6 +233,8 @@ class WhatsappIntakeProcessorService:
         self.llm_service = LlmExtractionService()
         self.catalog_mapper = WhatsappCatalogMapper()
         self.whatsapp_service = WhatsappService()
+        self.usage = WhatsappUsageService()
+        self.usage_notifier = WhatsappUsageNotifier()
         self.client_base_url = folio_service._resolve_client_base_url()
         self.whatsapp_public_base_url = _resolve_whatsapp_public_base_url()
         self.extract_enabled = os.getenv(
@@ -914,6 +950,154 @@ class WhatsappIntakeProcessorService:
                 )
         self._send_bot_message(from_number, message, burst_id=burst_id, kind="bot_error")
 
+    def _meter(self, op: str, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        """Run a metering call; any fault except a block lets the burst go."""
+        try:
+            return fn(*args, **kwargs)
+        except UsageLimitReached:
+            raise
+        except Exception:
+            logger.warning("whatsapp_usage_error op=%s", op, exc_info=True)
+            return None
+
+    def _usage_sink(
+        self, usage_ctx: Optional[UsageContext], kind: str, counted: bool
+    ) -> Dict[str, Any]:
+        """`usage_sink` kwarg for the model call, or nothing outside a metered burst."""
+        if usage_ctx is None:
+            return {}
+        holds_solicitud = [counted]  # only the first model call carries the solicitud
+
+        def sink(usage: Optional[dict]) -> None:
+            is_counted, holds_solicitud[0] = holds_solicitud[0], False
+            self._meter(
+                "record_call", self.usage.record_call, usage_ctx, kind, usage, counted=is_counted
+            )
+
+        return {"usage_sink": sink}
+
+    def _notice_cooldown_seconds(self) -> int:
+        try:
+            value = self.usage.repo.get_settings().get("notice_cooldown_seconds")
+            return int(value or _DEFAULT_NOTICE_COOLDOWN_SECONDS)
+        except Exception:
+            logger.warning("whatsapp_usage_error op=notice_cooldown", exc_info=True)
+            return _DEFAULT_NOTICE_COOLDOWN_SECONDS
+
+    def _claim_usage_notice(self, group_id: str, field: str, now: datetime) -> bool:
+        """True when this notice may go out (once per cooldown). Errors say yes."""
+        try:
+            return bool(
+                self.usage.repo.claim_notice(
+                    group_id, field, self._notice_cooldown_seconds(), now
+                )
+            )
+        except Exception:
+            logger.warning("whatsapp_usage_error op=claim_notice", exc_info=True)
+            return True
+
+    def _burst_guard_blocks(self, group_id: str, from_number: str) -> bool:
+        """True when this phone is flooding: tell it once per cooldown, drop the message."""
+        allowed = self._meter(
+            "check_burst_guard", self.usage.check_burst_guard, group_id, from_number
+        )
+        if allowed is None or allowed:
+            return False
+        try:
+            if self._claim_usage_notice(
+                group_id, "guard_notified_at", datetime.now(timezone.utc)
+            ):
+                self._send_bot_message(from_number, GUARD_NOTICE, kind="bot_notice")
+        except Exception:
+            logger.warning("whatsapp_usage_error op=guard_notice", exc_info=True)
+        return True
+
+    def _send_usage_block(
+        self,
+        from_number: str,
+        ctx: UsageContext,
+        exc: UsageLimitReached,
+        burst_id: str,
+        store_name: Optional[str] = None,
+    ) -> None:
+        """The store is at its limit: tell the seller (once per cooldown) and drop the burst."""
+        now = datetime.now(timezone.utc)
+        try:
+            if self._claim_usage_notice(ctx.group_id, "blocked_notified_at", now):
+                is_manager = self.usage_notifier.is_manager(ctx.uid, ctx.group_id)
+                link = f"{self.whatsapp_public_base_url}{USAGE_PAGE_PATH}"
+                self._send_bot_message(
+                    from_number,
+                    block_message(exc.snapshot, is_manager=is_manager, link=link, now=now),
+                    burst_id=burst_id,
+                    kind="bot_notice",
+                )
+                self._push_usage_managers(ctx, store_name, exc.snapshot, "limit", now)
+        except _FlushSuperseded:
+            raise
+        except Exception:
+            logger.warning("whatsapp_usage_error op=block_notice", exc_info=True)
+        self._clear_session(from_number)
+
+    def _push_usage_managers(
+        self, ctx: UsageContext, store_name: Optional[str], snapshot: Any, kind: str, now: datetime
+    ) -> None:
+        try:
+            name = store_name or self._group_name(ctx.group_id)
+            self.usage_notifier.push_managers(ctx.group_id, name, snapshot, kind, now)
+        except Exception:
+            logger.warning("whatsapp_usage_error op=push_managers kind=%s", kind, exc_info=True)
+
+    def _send_usage_warning(
+        self,
+        from_number: str,
+        ctx: UsageContext,
+        burst_id: str,
+        store_name: Optional[str] = None,
+    ) -> None:
+        """This burst crossed the warning threshold: tell the seller and the managers."""
+        if not (ctx.reserved and ctx.crossed_warning and ctx.snapshot is not None):
+            return
+        now = datetime.now(timezone.utc)
+        try:
+            self._send_bot_message(
+                from_number,
+                warning_message(ctx.snapshot, now),
+                burst_id=burst_id,
+                kind="bot_notice",
+            )
+        except Exception:
+            logger.warning("whatsapp_usage_error op=warning_notice", exc_info=True)
+            return
+        self._push_usage_managers(ctx, store_name, ctx.snapshot, "warning", now)
+
+    def _create_burst_draft(
+        self, pending_block: Optional[UsageLimitReached], **kwargs: Any
+    ) -> bool:
+        """A new draft from the flush: the store must have a solicitud for it."""
+        if pending_block is not None:
+            raise pending_block
+        self._create_draft_from_proposal(**kwargs)
+        return True
+
+    def _may_be_follow_up(
+        self, group_id: str, creator_uid: Optional[str], quoted_sid: Optional[str]
+    ) -> bool:
+        """Before the model: could this burst answer or extend an existing draft?"""
+        try:
+            if quoted_sid and (
+                clarify.find_folio_by_clarify_sid(quoted_sid)
+                or self._inbound_doc(quoted_sid).get("direction") == "outbound"
+            ):
+                return True
+            drafts = clarify.find_drafts_with_open_questions(
+                origin_group_id=group_id, creator_uid=creator_uid
+            )
+            return bool(self._answerable_drafts(drafts, None))
+        except Exception:
+            logger.warning("whatsapp_usage_error op=may_be_follow_up", exc_info=True)
+            return True
+
     def _extract_proposal_or_fail(
         self,
         *,
@@ -924,18 +1108,28 @@ class WhatsappIntakeProcessorService:
         known_vehicle: str = "",
         burst_id: Optional[str] = None,
         on_failure: Optional[Callable[[], bool]] = None,
+        usage_ctx: Optional[UsageContext] = None,
+        counted: bool = False,
     ) -> Optional[WhatsappExtractionProposal]:
-        """on_failure: tried when the model's reply can't be read; True means it answered the seller."""
+        """on_failure: tried when the model's reply can't be read; True means it answered the seller.
+
+        counted: this call holds the burst's solicitud, refunded if the model fails.
+        """
         model_started = time.perf_counter()
         try:
             try:
                 return self.llm_service.extract(
-                    bodies, store_name=store_name, known_vehicle=known_vehicle
+                    bodies,
+                    store_name=store_name,
+                    known_vehicle=known_vehicle,
+                    **self._usage_sink(usage_ctx, "extract", counted),
                 )
             finally:
                 _record_stage("model_ms", model_started)
         except LlmRateLimitError as exc:
             logger.error("GLM rate limited during flush for %s: %s", from_number, exc)
+            if counted and usage_ctx is not None:
+                self._meter("refund", self.usage.refund, usage_ctx)
             self._send_extraction_failure(
                 from_number,
                 message_sids,
@@ -950,6 +1144,8 @@ class WhatsappIntakeProcessorService:
             return None
         except Exception as exc:
             logger.error("GLM extraction failed during flush for %s: %s", from_number, exc)
+            if counted and usage_ctx is not None:
+                self._meter("refund", self.usage.refund, usage_ctx)
             if on_failure is not None and self._handled_after_failed_extraction(
                 on_failure, message_sids, error=str(exc), burst_id=burst_id
             ):
@@ -1137,6 +1333,10 @@ class WhatsappIntakeProcessorService:
             )
             return
 
+        # A follow-up never uses a solicitud but obeys the token ceiling.
+        usage_ctx = _usage_ctx_var.get()
+        if usage_ctx is not None:
+            self._meter("ensure_tokens_available", self.usage.ensure_tokens_available, usage_ctx)
         proposal = self._extract_proposal_or_fail(
             from_number=from_number,
             store_name=store_name,
@@ -1144,6 +1344,8 @@ class WhatsappIntakeProcessorService:
             message_sids=message_sids,
             known_vehicle=self._folio_vehicle_label(resume_folio) or "",
             burst_id=burst_id,
+            usage_ctx=usage_ctx,
+            counted=False,
         )
         if proposal is None:
             return
@@ -1885,6 +2087,9 @@ class WhatsappIntakeProcessorService:
 
         quoted_doc = self._inbound_doc(quoted_sid) if quoted_sid else {}
         quoted_text = str(quoted_doc.get("body") or "") if quoted_doc.get("direction") == "outbound" else ""
+        usage_ctx = _usage_ctx_var.get()
+        if usage_ctx is not None:
+            self._meter("ensure_tokens_available", self.usage.ensure_tokens_available, usage_ctx)
         try:
             proposed = self.llm_service.match_answers(
                 [answer_text],
@@ -1896,6 +2101,7 @@ class WhatsappIntakeProcessorService:
                     for item in questions
                 ],
                 quoted_text=quoted_text,
+                **self._usage_sink(usage_ctx, "match_answers", False),
             )
         except Exception:
             logger.exception("Answer matching failed for %s", from_number)
@@ -2511,7 +2717,7 @@ class WhatsappIntakeProcessorService:
                 inbound_repo.update_fields(sid, fields)
         try:
             return bool(on_failure())
-        except _FlushSuperseded:
+        except (_FlushSuperseded, UsageLimitReached):
             raise
         except Exception:
             logger.exception("Fallback after failed extraction also failed")
@@ -2590,6 +2796,52 @@ class WhatsappIntakeProcessorService:
 
     def _flush_session_body(self, from_number: str, session: dict) -> None:
         burst_id = uuid4().hex
+        group_id = session.get("group_id")
+        usage_ctx = (
+            UsageContext(
+                group_id=str(group_id),
+                uid=str(session.get("creator_uid") or ""),
+                burst_id=_usage_burst_id(session) or burst_id,
+            )
+            if group_id
+            else None
+        )
+        usage_token = _usage_ctx_var.set(usage_ctx)
+        try:
+            created_draft = self._flush_burst(from_number, session, burst_id, usage_ctx)
+        except UsageLimitReached as exc:
+            if usage_ctx is not None:
+                if usage_ctx.reserved:  # token ceiling hit after the reserve
+                    self._meter("refund", self.usage.refund, usage_ctx)
+                self._send_usage_block(
+                    from_number, usage_ctx, exc, burst_id, session.get("group_name")
+                )
+            return
+        except _FlushSuperseded:
+            raise  # a successor flush with the same sids reuses the reservation
+        except Exception:
+            if usage_ctx is not None and usage_ctx.reserved:
+                self._meter("refund", self.usage.refund, usage_ctx)
+            raise
+        finally:
+            _usage_ctx_var.reset(usage_token)
+        if usage_ctx is None:
+            return
+        if usage_ctx.reserved and not created_draft:
+            # Follow-ups, resends and replies with no request are free.
+            self._meter("refund", self.usage.refund, usage_ctx)
+        self._send_usage_warning(
+            from_number, usage_ctx, burst_id, session.get("group_name")
+        )
+
+    def _flush_burst(
+        self,
+        from_number: str,
+        session: dict,
+        burst_id: str,
+        usage_ctx: Optional[UsageContext],
+    ) -> bool:
+        """Run one burst. True only when it created a new draft (the solicitud is kept)."""
         self._stamp_burst_messages(session, burst_id=burst_id, from_number=from_number)
         message_sids = [
             message.get("message_sid")
@@ -2683,12 +2935,28 @@ class WhatsappIntakeProcessorService:
             )
             return
 
+        # A new request uses one solicitud. At the limit, a burst that may be a
+        # follow-up still reaches the model (free, under the token ceiling); the
+        # block stands only if it turns out to be a new draft.
+        pending_block: Optional[UsageLimitReached] = None
+        if usage_ctx is not None:
+            try:
+                self._meter("reserve", self.usage.reserve, usage_ctx)
+            except UsageLimitReached as exc:
+                if not self._may_be_follow_up(
+                    group_id or "", creator_uid, original_replied_message_sid
+                ):
+                    raise
+                pending_block = exc
+                self._meter("ensure_tokens_available", self.usage.ensure_tokens_available, usage_ctx)
         proposal = self._extract_proposal_or_fail(
             from_number=from_number,
             store_name=store_name,
             bodies=extract_bodies,
             message_sids=message_sids,
             burst_id=burst_id,
+            usage_ctx=usage_ctx,
+            counted=usage_ctx is not None and pending_block is None,
             on_failure=lambda: self._answer_quoted_draft(
                 from_number=from_number,
                 bodies=extract_bodies,
@@ -2748,7 +3016,8 @@ class WhatsappIntakeProcessorService:
                     quoted, group_id=group_id or "", creator_uid=creator_uid
                 )
                 if can_resume:
-                    self._create_draft_from_proposal(
+                    return self._create_burst_draft(
+                        pending_block,
                         from_number=from_number,
                         group_id=group_id,
                         creator_uid=creator_uid,
@@ -2761,7 +3030,6 @@ class WhatsappIntakeProcessorService:
                         session=session,
                         sibling_of=quoted,
                     )
-                    return
             matched = self._find_resend_match_folio(
                 from_number=from_number,
                 proposal=proposal,
@@ -2778,7 +3046,8 @@ class WhatsappIntakeProcessorService:
                     creator_uid=creator_uid,
                 )
                 return
-            self._create_draft_from_proposal(
+            return self._create_burst_draft(
+                pending_block,
                 from_number=from_number,
                 group_id=group_id,
                 creator_uid=creator_uid,
@@ -2790,7 +3059,6 @@ class WhatsappIntakeProcessorService:
                 burst_id=burst_id,
                 session=session,
             )
-            return
 
         if self._try_complement_before_resume(
             from_number=from_number,
@@ -2817,7 +3085,8 @@ class WhatsappIntakeProcessorService:
             ):
                 # A year the draft does not have means another car, even when
                 # the model never named it. Parts for it are a new request.
-                self._create_draft_from_proposal(
+                return self._create_burst_draft(
+                    pending_block,
                     from_number=from_number,
                     group_id=group_id,
                     creator_uid=creator_uid,
@@ -2830,7 +3099,6 @@ class WhatsappIntakeProcessorService:
                     session=session,
                     sibling_of=resume_folio if from_quote else None,
                 )
-                return
             if resume_folio:
                 can_resume, refuse_message = self._can_resume_folio(
                     resume_folio,
@@ -2860,7 +3128,8 @@ class WhatsappIntakeProcessorService:
             )
             return
 
-        self._create_draft_from_proposal(
+        return self._create_burst_draft(
+            pending_block,
             from_number=from_number,
             group_id=group_id,
             creator_uid=creator_uid,
@@ -3083,6 +3352,8 @@ class WhatsappIntakeProcessorService:
             return None
 
         if body_kind == "content":
+            if self._burst_guard_blocks(identity.group_id, from_number):
+                return None
             return self._append_and_maybe_flush(
                 from_number=from_number,
                 payload=payload,

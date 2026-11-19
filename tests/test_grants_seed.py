@@ -14,7 +14,7 @@ def _catalog():
 
 def test_all_keys_match_catalog_json():
     catalog = _catalog()
-    assert len(catalog) == 58
+    assert len(catalog) == 60
     assert ALL_KEYS == frozenset(g["key"] for g in catalog)
 
 

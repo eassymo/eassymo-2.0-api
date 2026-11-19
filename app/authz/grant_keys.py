@@ -50,6 +50,8 @@ CHAT_PUBLIC = "chat.public"
 CHAT_PRIVATE = "chat.private"
 WHATSAPP_CREATE_DRAFT = "whatsapp.create_draft"
 WHATSAPP_POS_INTAKE = "whatsapp.pos_intake"
+WHATSAPP_VIEW_USAGE = "whatsapp.view_usage"
+WHATSAPP_REQUEST_CREDITS = "whatsapp.request_credits"
 PRICES_VIEW = "prices.view"
 REPORTS_VIEW = "reports.view"
 REVIEWS_SUBMIT = "reviews.submit"
@@ -110,6 +112,8 @@ ALL_KEYS: frozenset[str] = frozenset({
     CHAT_PRIVATE,
     WHATSAPP_CREATE_DRAFT,
     WHATSAPP_POS_INTAKE,
+    WHATSAPP_VIEW_USAGE,
+    WHATSAPP_REQUEST_CREDITS,
     PRICES_VIEW,
     REPORTS_VIEW,
     REVIEWS_SUBMIT,
