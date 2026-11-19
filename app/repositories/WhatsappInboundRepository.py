@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from bson import ObjectId
@@ -76,6 +76,21 @@ def insert_if_new(message: Dict[str, Any]) -> Tuple[Optional[str], bool]:
     existing = _col().find_one({"message_sid": message_sid}, {"_id": 1})
     doc_id = str(existing["_id"]) if existing else None
     return doc_id, False
+
+
+def count_recent(from_number: str, seconds: int, now: Optional[datetime] = None) -> int:
+    """Inbound messages from this phone in the last `seconds` (burst guard).
+    Outbound bot messages share `from_number`, so they are excluded."""
+    if not from_number:
+        return 0
+    since = (now or datetime.now(timezone.utc)) - timedelta(seconds=seconds)
+    return _col().count_documents(
+        {
+            "from_number": from_number,
+            "created_at": {"$gte": since},
+            "direction": {"$ne": "outbound"},
+        }
+    )
 
 
 def find_by_message_sid(message_sid: str) -> Optional[dict]:

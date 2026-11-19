@@ -2,6 +2,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.services.WhatsappInboundService import WhatsappInboundService
+from tests.test_whatsapp_intake import offline_usage_meter  # noqa: F401
 
 
 def test_verify_subscription_returns_challenge(monkeypatch):

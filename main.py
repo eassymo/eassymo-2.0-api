@@ -42,6 +42,8 @@ from app.routers import RelationshipRouter as relationshipRouter
 from app.routers import PushRouter as pushRouter
 from app.routers import NotificationRouter as notificationRouter
 from app.routers import WhatsappLinksRouter as whatsappLinksRouter
+from app.routers import WhatsappUsageRouter as whatsappUsageRouter
+from app.routers import AdminWhatsappUsageRouter as adminWhatsappUsageRouter
 from app.routers import MeRouter as meRouter
 
 
@@ -72,12 +74,23 @@ def _log_missing_grant_keys():
         print(f"WARNING: could not check grant catalog: {exc}")
 
 
+def _init_whatsapp_usage():
+    try:
+        from app.repositories import WhatsappUsageRepository as usage_repo
+
+        usage_repo.ensure_indexes()
+        usage_repo.seed_normal_tier()
+    except Exception as exc:  # never block startup on usage-limit setup
+        print(f"WARNING: could not init whatsapp usage limits: {exc}")
+
+
 @asynccontextmanager
 async def app_lifespan(_app: FastAPI):
     from app.routers.WhatsappRouter import inbound_service
 
     inbound_service.start_intake_recovery()
     _log_missing_grant_keys()
+    _init_whatsapp_usage()
     try:
         yield
     finally:
@@ -213,6 +226,8 @@ app.include_router(censusRouter.censusRouter)
 app.include_router(networkRouter.networkRouter)
 app.include_router(groupRouter.groupRouter)
 app.include_router(whatsappLinksRouter.whatsappLinksRouter)
+app.include_router(whatsappUsageRouter.whatsappUsageRouter)
+app.include_router(adminWhatsappUsageRouter.adminWhatsappUsageRouter)
 app.include_router(listRouter.listRouter)
 app.include_router(groupCarRouter.groupCarRouter)
 app.include_router(partRequestRouter.partRequestRouter)

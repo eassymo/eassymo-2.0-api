@@ -1,7 +1,7 @@
 from unittest.mock import MagicMock, patch
 
 from app.services.WhatsappSellerIdentityService import NO_ACCESS_MESSAGE
-from tests.test_whatsapp_intake import _collecting_session
+from tests.test_whatsapp_intake import _collecting_session, offline_usage_meter  # noqa: F401
 
 
 def _run(mock_identity_cls, entitled):

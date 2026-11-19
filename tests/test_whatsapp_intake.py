@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import ANY, MagicMock, call, patch
 
 import pytest
 from fastapi import HTTPException
@@ -24,6 +24,15 @@ _skip_missing_verify = pytest.mark.skipif(
     WhatsappIntakeVerificationService is None,
     reason="WhatsappIntakeVerificationService is not in this tree",
 )
+
+
+@pytest.fixture(autouse=True)
+def offline_usage_meter():
+    """Stub usage meter for intake tests: the real one would hit the stubbed DB
+    and log whatsapp_usage_error. Import this fixture to apply it elsewhere."""
+    with patch("app.services.WhatsappIntakeProcessorService.WhatsappUsageService") as usage_cls:
+        usage_cls.return_value.check_burst_guard.return_value = True
+        yield usage_cls
 
 
 @pytest.fixture
@@ -946,6 +955,7 @@ def test_process_inbound_extracts_after_sticky_store(
         [payload["body"]],
         store_name="Tienda A",
         known_vehicle="",
+        usage_sink=ANY,
     )
     mock_folio_service.create.assert_called_once()
     sent = [
@@ -1660,6 +1670,7 @@ def test_flush_resumes_draft_with_extra_piece(
         ["también un filtro de aire"],
         store_name="Tienda A",
         known_vehicle="2020 Renault Koleos",
+        usage_sink=ANY,
     )
     mock_folio_service.create.assert_not_called()
     assert mock_folio_service.update.call_count >= 1

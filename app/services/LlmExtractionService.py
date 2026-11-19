@@ -4,7 +4,7 @@ import logging
 import os
 import re
 import time
-from typing import Any, Dict, Iterator, Optional, Sequence, Union
+from typing import Any, Callable, Dict, Iterator, Optional, Sequence, Union
 
 import requests
 
@@ -140,6 +140,9 @@ Devuelve JSON con esta forma:
 """
 
 
+UsageSink = Callable[[Dict[str, Any]], None]
+
+
 class LlmExtractionService:
     def __init__(self) -> None:
         self.api_key = os.getenv("Z_AI_API_KEY", "").strip()
@@ -256,7 +259,13 @@ class LlmExtractionService:
         sliced = cleaned[start : end + 1] if start >= 0 and end > start else cleaned
         return json.loads(sliced)
 
-    def _call_api(self, store_name: str, body: str, known_vehicle: str = "") -> Dict[str, Any]:
+    def _call_api(
+        self,
+        store_name: str,
+        body: str,
+        known_vehicle: str = "",
+        usage_sink: Optional[UsageSink] = None,
+    ) -> Dict[str, Any]:
         known_vehicle_block = ""
         if (known_vehicle or "").strip():
             known_vehicle_block = (
@@ -276,9 +285,27 @@ class LlmExtractionService:
                     body=body or "",
                 ),
             },
-        ])
+        ], usage_sink=usage_sink)
 
-    def _complete(self, messages: list) -> Dict[str, Any]:
+    def _report_usage(self, data: Dict[str, Any], usage_sink: Optional[UsageSink]) -> None:
+        """Hand one completion's token counts to the sink. Never raises."""
+        if usage_sink is None:
+            return
+        try:
+            usage = data.get("usage") if isinstance(data, dict) else None
+            has_usage = isinstance(usage, dict)
+            usage = usage if has_usage else {}
+            # GLM counts thinking tokens inside completion_tokens already.
+            usage_sink({
+                "prompt_tokens": int(usage.get("prompt_tokens") or 0),
+                "completion_tokens": int(usage.get("completion_tokens") or 0),
+                "model": self.model,
+                "has_usage": has_usage,
+            })
+        except Exception:
+            logger.warning("GLM usage sink failed", exc_info=True)
+
+    def _complete(self, messages: list, usage_sink: Optional[UsageSink] = None) -> Dict[str, Any]:
         url = f"{self.base_url}/chat/completions"
         payload = {
             "model": self.model,
@@ -322,6 +349,7 @@ class LlmExtractionService:
                 raise LlmExtractionError(str(exc)) from exc
 
             data = response.json()
+            self._report_usage(data, usage_sink)
             message = ((data.get("choices") or [{}])[0].get("message") or {})
             finish_reason = ((data.get("choices") or [{}])[0].get("finish_reason"))
             if isinstance(message, dict):
@@ -532,24 +560,26 @@ class LlmExtractionService:
         body: Union[str, Sequence[str]],
         store_name: str = "",
         known_vehicle: str = "",
+        usage_sink: Optional[UsageSink] = None,
     ) -> WhatsappExtractionProposal:
-        return self.drop_noise_lines(self._extract(body, store_name, known_vehicle))
+        return self.drop_noise_lines(self._extract(body, store_name, known_vehicle, usage_sink))
 
     def _extract(
         self,
         body: Union[str, Sequence[str]],
         store_name: str = "",
         known_vehicle: str = "",
+        usage_sink: Optional[UsageSink] = None,
     ) -> WhatsappExtractionProposal:
         messages = self._normalize_messages(body)
         thread = self._format_thread(messages)
         if not self.enabled:
             return WhatsappExtractionProposal(intent=ExtractionIntent.UNKNOWN, warnings=["LLM not configured"])
 
-        message = self._call_api(store_name, thread, known_vehicle=known_vehicle)
+        message = self._call_api(store_name, thread, known_vehicle=known_vehicle, usage_sink=usage_sink)
         if not self._candidate_texts(message):
             logger.warning("GLM empty response, retrying original thread")
-            message = self._call_api(store_name, thread, known_vehicle=known_vehicle)
+            message = self._call_api(store_name, thread, known_vehicle=known_vehicle, usage_sink=usage_sink)
 
         try:
             return self._proposal_from_message(message)
@@ -572,6 +602,7 @@ class LlmExtractionService:
                     "Devuelve SOLO el JSON de extracción (intent new_request si hay auto o pieza)."
                 ),
                 known_vehicle=known_vehicle,
+                usage_sink=usage_sink,
             )
             return self._proposal_from_message(repair)
 
@@ -580,6 +611,7 @@ class LlmExtractionService:
         body: Union[str, Sequence[str]],
         questions: Sequence[Dict[str, Any]],
         quoted_text: str = "",
+        usage_sink: Optional[UsageSink] = None,
     ) -> ClarificationAnswers:
         """Ask the model which open questions the seller's reply answers.
 
@@ -608,7 +640,7 @@ class LlmExtractionService:
                     body=self._format_thread(self._normalize_messages(body)),
                 ),
             },
-        ])
+        ], usage_sink=usage_sink)
         for text in self._candidate_texts(message):
             try:
                 return ClarificationAnswers.model_validate(self._extract_json(text))

@@ -61,6 +61,8 @@ GRANT_SECTIONS: Dict[str, List[Section]] = {
     g.RELATIONSHIPS_MANAGE: [_app("Mi cuenta: Tus relaciones (/relaciones)")],
     g.NETWORK_VIEW: [_app("Mi cuenta: Mi red (/profile/my-lists)")],
     g.WHATSAPP_POS_INTAKE: [_app("Mi cuenta: WhatsApp para POS (/user-configuration/whatsapp-pos)")],
+    g.WHATSAPP_VIEW_USAGE: [_api("GET /whatsapp/usage/by-seller")],
+    g.WHATSAPP_REQUEST_CREDITS: [_api("POST /whatsapp/usage/credit-requests")],
     g.ORDERS_VIEW: [_app("Menú: Mis pedidos / ventas (/order-management-v2)")],
     g.REQUESTS_VIEW: [_app("Panel principal (/dashboard-v2) para quien también entrega")],
     g.OFFERS_VIEW_INCOMING: [_app("Panel principal (/dashboard-v2) para quien también entrega")],
