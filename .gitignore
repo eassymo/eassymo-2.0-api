@@ -156,4 +156,3 @@ node_modules
 !.env.example
 
 # local secrets (never commit)
-.env
