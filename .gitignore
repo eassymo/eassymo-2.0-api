@@ -144,12 +144,8 @@ cython_debug/
 .idea/
 
 # Local-only scripts and exports
-branch_structure.json
-temp_auto_push.bat
-temp_interactive_push.bat
 
 # Note: .env.example and docs/ remain tracked.
-config.bat
 node_modules
 
 # Local secrets: never commit. Keep the template tracked.
