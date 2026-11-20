@@ -184,8 +184,24 @@ def find_one(filters):
 
 
 def edit(id: ObjectId, new_data):
+    # delivery_failures is append-only through push_delivery_failure; a whole-order save
+    # built from an older read must never write back (and erase) a newer attempt.
+    new_data = {k: v for k, v in new_data.items() if k != "delivery_failures"}
     return database.db["Orders"].find_one_and_update(
         {"_id": id},
         {"$set": new_data},
         return_document=True
+    )
+
+
+def push_delivery_failure(id: ObjectId, failure: dict, client_attempt_id: Optional[str] = None):
+    """Appends one failed attempt atomically. With a client_attempt_id the filter skips
+    orders that already hold it, so offline replays record once (returns None then)."""
+    filters: Dict[str, Any] = {"_id": id}
+    if client_attempt_id:
+        filters["delivery_failures.client_attempt_id"] = {"$ne": client_attempt_id}
+    return database.db["Orders"].find_one_and_update(
+        filters,
+        {"$push": {"delivery_failures": failure}},
+        return_document=True,
     )

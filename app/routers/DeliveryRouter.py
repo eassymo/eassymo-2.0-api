@@ -1,8 +1,16 @@
 from fastapi import APIRouter, Body, Query, Request, status
 from fastapi.responses import JSONResponse
-from typing import Optional
+from pydantic import BaseModel, Field
+from typing import List, Optional
+
+from app.schemas.DeliveryFailure import (
+    DELIVERY_FAILURE_MAX_NOTE_LEN,
+    DELIVERY_FAILURE_MAX_PHOTOS,
+    DeliveryFailureReason,
+)
 
 from app.services import DeliveryService
+from app.services import RouteService
 from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response
 
 deliveryRouter = APIRouter(tags=["Delivery"])
@@ -184,3 +192,125 @@ def confirm_pickup(request: Request, data: dict = Body(...)):
     except Exception as e:
         status_code = e.status_code if hasattr(e, "status_code") else status.HTTP_500_INTERNAL_SERVER_ERROR
         return JSONResponse(status_code=status_code, content=get_unsuccessful_response(e))
+
+
+# ---------------------------------------------------------------------------
+# Guest notification feed — X-Guest-Token only (never body or query)
+# ---------------------------------------------------------------------------
+
+def _error_response(e: Exception) -> JSONResponse:
+    # Errors with a machine code the client branches on (guest_token_inactive, route_estimates_unavailable).
+    if isinstance(e, (DeliveryService.GuestTokenInactive, RouteService.RouteEstimatesUnavailable)):
+        return JSONResponse(status_code=e.status_code, content={"code": e.code, "error": str(e.detail)})
+    status_code = e.status_code if hasattr(e, "status_code") else status.HTTP_500_INTERNAL_SERVER_ERROR
+    return JSONResponse(status_code=status_code, content=get_unsuccessful_response(e))
+
+
+def _missing_guest_token() -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        content=get_unsuccessful_response(Exception("Missing X-Guest-Token header")),
+    )
+
+
+@deliveryRouter.get("/delivery/guest-notifications", description="Delivery alerts for a guest token")
+def get_guest_notifications(
+    request: Request,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1),
+):
+    token = request.headers.get("X-Guest-Token")
+    if not token:
+        return _missing_guest_token()
+    try:
+        result = DeliveryService.get_guest_notifications(token, skip, limit)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(result))
+    except Exception as e:
+        return _error_response(e)
+
+
+class GuestNotificationsReadBody(BaseModel):
+    ids: Optional[List[str]] = None
+
+
+@deliveryRouter.post("/delivery/guest-notifications/read", description="Mark a guest's alerts read (no ids = all)")
+def mark_guest_notifications_read(request: Request, data: GuestNotificationsReadBody = Body(default_factory=GuestNotificationsReadBody)):
+    token = request.headers.get("X-Guest-Token")
+    if not token:
+        return _missing_guest_token()
+    try:
+        result = DeliveryService.mark_guest_notifications_read(token, data.ids)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(result))
+    except Exception as e:
+        return _error_response(e)
+
+
+# ---------------------------------------------------------------------------
+# POST /delivery/report-failed  — account (bearer) or guest (X-Guest-Token)
+# ---------------------------------------------------------------------------
+
+class ReportFailedBody(BaseModel):
+    order_id: str = Field(..., min_length=1)
+    reason: DeliveryFailureReason
+    note: Optional[str] = Field(None, max_length=DELIVERY_FAILURE_MAX_NOTE_LEN)
+    photo_urls: List[str] = Field(default_factory=list, max_length=DELIVERY_FAILURE_MAX_PHOTOS)
+    client_attempt_id: Optional[str] = Field(None, max_length=100)
+
+
+def _caller(request: Request) -> tuple[Optional[str], Optional[str]]:
+    """(user_uid, guest_token): the guest token comes only from the header."""
+    guest_token = request.headers.get("X-Guest-Token")
+    if guest_token:
+        return None, guest_token
+    user = getattr(request.state, "user", None) or {}
+    return user.get("uid"), None
+
+
+@deliveryRouter.post("/delivery/report-failed", description="Rider reports a failed delivery attempt")
+def report_failed(request: Request, data: ReportFailedBody):
+    user_uid, guest_token = _caller(request)
+    if not user_uid and not guest_token:
+        return _missing_guest_token()
+    try:
+        result = DeliveryService.report_failed(
+            order_id=data.order_id,
+            reason=data.reason,
+            note=data.note,
+            photo_urls=data.photo_urls,
+            client_attempt_id=data.client_attempt_id,
+            user_uid=user_uid,
+            guest_token=guest_token,
+        )
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(result))
+    except Exception as e:
+        return _error_response(e)
+
+
+# ---------------------------------------------------------------------------
+# POST /delivery/route-legs  — km and minutes per stop (Google Directions, cached)
+# ---------------------------------------------------------------------------
+
+class LatLng(BaseModel):
+    lat: float = Field(..., ge=-90, le=90)
+    lng: float = Field(..., ge=-180, le=180)
+
+
+class RouteLegsBody(BaseModel):
+    origin: LatLng
+    stops: List[LatLng] = Field(default_factory=list, max_length=RouteService.MAX_STOPS)
+
+
+@deliveryRouter.post("/delivery/route-legs", description="Distance and time per stop, in the order sent")
+def route_legs(request: Request, data: RouteLegsBody):
+    user_uid, guest_token = _caller(request)
+    if not user_uid and not guest_token:
+        return _missing_guest_token()
+    try:
+        if guest_token:
+            DeliveryService.require_active_guest(guest_token)
+        else:
+            DeliveryService._assert_has_delivery_role(user_uid)  # deliveries.perform
+        legs = RouteService.get_route_legs(data.origin.model_dump(), [s.model_dump() for s in data.stops])
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response({"legs": legs}))
+    except Exception as e:
+        return _error_response(e)

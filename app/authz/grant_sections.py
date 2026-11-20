@@ -46,6 +46,8 @@ GRANT_SECTIONS: Dict[str, List[Section]] = {
         _api("GET /delivery/my-orders"),
         _api("GET /delivery/invite/{token}/eligibility"),
         _api("POST /order/change-status (repartidor: solo marcar recibido)"),
+        _api("POST /delivery/report-failed (repartidor con cuenta; invitados por enlace)"),
+        _api("POST /delivery/route-legs (repartidor con cuenta; invitados por enlace)"),
         _app("Menú: Mis entregas (/deliveries)"),
     ],
     g.ORDERS_CHANGE_STATUS: [

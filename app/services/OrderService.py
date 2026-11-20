@@ -8,8 +8,31 @@ from bson import ObjectId
 from datetime import datetime
 
 from typing import Dict, Any, List, Optional
+import logging
 
 DELIVERY_PROOF_MAX_RECIPIENT_NAME_LEN = 200
+
+logger = logging.getLogger(__name__)
+
+# A rider is told about a new time only while the order is still on its way.
+_DELIVERY_TIME_ALERT_STATUSES = {"WAITING_FOR_COLLECTION", "READY_TO_BE_DISPATCHED", "DISPATCHED"}
+
+
+def _same_rider(a: Optional[Dict[str, Any]], b: Optional[Dict[str, Any]]) -> bool:
+    if not a or not b or a.get("type") != b.get("type"):
+        return False
+    key = "guest_token" if a.get("type") == "guest" else "user_id"
+    return bool(a.get(key)) and a.get(key) == b.get(key)
+
+
+def _send_delivery_alert(name: str, order_id: Any, **kwargs) -> None:
+    """Delivery alerts never fail the order operation (no tokens or phones in the log)."""
+    from app.services import notification_fanout
+
+    try:
+        getattr(notification_fanout, name)(**kwargs)
+    except Exception as exc:
+        logger.warning("delivery alert %s failed for order %s: %s", name, order_id, type(exc).__name__)
 
 
 def _is_mostrador_checkout_handoff(order: Order) -> bool:
@@ -343,6 +366,9 @@ def change_order_status(
         if is_delayed:
             notification_fanout.fanout_order_delayed(order=result)
 
+        if OrderStatus[new_status] == OrderStatus.CANCELED and result.get("delivery_assignment"):
+            _send_delivery_alert("fanout_delivery_canceled", order_id, order=result)
+
         return result
 
     except HTTPException:
@@ -377,6 +403,7 @@ def assign_delivery(
 
         order_doc = order_docs[0]
         order = Order(**order_doc)
+        previous_assignment = order.delivery_assignment.toJson() if order.delivery_assignment else None
 
         if order.part_request and order.part_request.fulfillment_type == FulfillmentType.pickup:
             raise HTTPException(
@@ -438,6 +465,14 @@ def assign_delivery(
 
         notification_fanout.fanout_order_status_change(order=result, new_status=new_status)
 
+        new_assignment = result.get("delivery_assignment")
+        if not _same_rider(previous_assignment, new_assignment):
+            _send_delivery_alert("fanout_delivery_assigned", oid, order=result)
+            if previous_assignment:
+                _send_delivery_alert(
+                    "fanout_delivery_reassigned", oid, order=result, previous_assignment=previous_assignment,
+                )
+
         return result
 
     except HTTPException:
@@ -452,6 +487,7 @@ def change_delivery_time(order_id: str | ObjectId, new_delivery_time: datetime, 
         orders = list(orderRepository.find_by_id(order_id))
         if len(orders) > 0:
             order = Order(**orders[0])
+            previous_time = order.to_be_delivered_time
             order.change_delivery_time(
                 new_delivery_time, current_deliver_promise_delayed=is_delayed)
             order_data = order.toJson()
@@ -466,6 +502,11 @@ def change_delivery_time(order_id: str | ObjectId, new_delivery_time: datetime, 
                 from app.services import notification_fanout
 
                 notification_fanout.fanout_order_delayed(order=result)
+
+            if result.get("delivery_assignment") and result.get("status") in _DELIVERY_TIME_ALERT_STATUSES:
+                _send_delivery_alert(
+                    "fanout_delivery_time_changed", order_id, order=result, previous_time=previous_time,
+                )
 
             return result
     except Exception as e:
