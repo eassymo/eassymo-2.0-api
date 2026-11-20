@@ -152,3 +152,6 @@ node_modules
 !.env.example
 
 # local secrets (never commit)
+
+# Local secrets: never commit. Keep the template tracked.
+.env
