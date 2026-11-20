@@ -10,6 +10,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 from app.schemas.PartRequest import PartRequest
 from app.schemas.Groups import GroupSchema
+from app.schemas.DeliveryFailure import DeliveryFailure
 from app.utils.datetime_utils import serialize_datetime
 
 
@@ -108,6 +109,8 @@ class Order(BaseModel):
     packaged_notes_seller: Optional[str] = Field(None)
     packaged_pictures_seller: Optional[List[str]] = Field([])
     delivery_assignment: Optional[DeliveryAssignment] = Field(None)
+    # Failed delivery attempts ("No pude entregar"); recorded without changing status.
+    delivery_failures: Optional[List[DeliveryFailure]] = Field(None)
     # Origin of the order: marketplace (default flow) or mostrador (in-person counter flow)
     origin: Optional[str] = Field("marketplace", description="marketplace | mostrador")
     mostrador_folio_id: Optional[str] = Field(
@@ -147,6 +150,9 @@ class Order(BaseModel):
 
         if self.delivery_assignment is not None:
             data["delivery_assignment"] = self.delivery_assignment.toJson()
+
+        if self.delivery_failures is not None:
+            data["delivery_failures"] = [failure.toJson() for failure in self.delivery_failures]
 
         return data
 

@@ -591,3 +591,34 @@ NOTIFICATION_CREATORS = {
     NotificationType.MOSTRADOR_SHOP_INVITED: create_mostrador_shop_invited_notification,
     NotificationType.RELATIONSHIP_REVIEW_REMINDER: create_relationship_review_reminder,
 }
+
+# ── Deliveries ───────────────────────────────────────────────────────────────
+# Rider alerts (assigned / time changed / reassigned / canceled) and the seller's
+# "failed" alert. The message is "Title. Body" so push and the bell show it whole;
+# metaData keeps title and body apart for the deliveries feed.
+
+DELIVERY_SELLER_ROLES = [UserRoles.ADMIN_SELLER_SHOP.value, UserRoles.SELLER_SHOP.value]
+
+
+def create_delivery_notification(
+    notification_type: NotificationType,
+    title: str,
+    body: str,
+    order_id: str,
+    owner: str,
+    owner_group: str,
+    navigate_to_url: str,
+    guest_token: Optional[str] = None,
+    visible_roles: Optional[List[str]] = None,
+) -> Notification:
+    return Notification(
+        type=notification_type,
+        message=f"{title}. {body}",
+        owner=owner,
+        ownerGroup=owner_group,
+        visibleRoles=visible_roles,
+        navigateToUrl=navigate_to_url,
+        read=False,
+        metaData={"orderId": order_id, "title": title, "body": body},
+        guest_token=guest_token,
+    )

@@ -29,6 +29,11 @@ class NotificationType(Enum):
     MOSTRADOR_OPTION_ADDED = 'MOSTRADOR_OPTION_ADDED'
     MOSTRADOR_SHOP_INVITED = 'MOSTRADOR_SHOP_INVITED'
     RELATIONSHIP_REVIEW_REMINDER = 'RELATIONSHIP_REVIEW_REMINDER'
+    DELIVERY_ASSIGNED = 'DELIVERY_ASSIGNED'
+    DELIVERY_TIME_CHANGED = 'DELIVERY_TIME_CHANGED'
+    DELIVERY_REASSIGNED = 'DELIVERY_REASSIGNED'
+    DELIVERY_CANCELED = 'DELIVERY_CANCELED'
+    DELIVERY_FAILED = 'DELIVERY_FAILED'
 
 class Notification(BaseModel):
     type: NotificationType
@@ -44,3 +49,5 @@ class Notification(BaseModel):
     id: str | None = None
     callcenterId: str | None = None
     callcenterName: str | None = None
+    # Guest riders have no account: their feed is keyed by the guest token (owner stays "").
+    guest_token: str | None = None

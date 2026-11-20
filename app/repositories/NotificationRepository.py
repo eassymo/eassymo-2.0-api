@@ -21,6 +21,7 @@ def ensure_indexes() -> None:
     db[COLLECTION].create_index([("owner", ASCENDING), ("ownerGroup", ASCENDING), ("createdAt", DESCENDING)])
     db[COLLECTION].create_index([("owner", ASCENDING), ("read", ASCENDING)])
     db[COLLECTION].create_index([("uid", ASCENDING)], unique=True, sparse=True)
+    db[COLLECTION].create_index([("guest_token", ASCENDING), ("createdAt", DESCENDING)], sparse=True)
 
 
 def insert(doc: Dict[str, Any]) -> Dict[str, Any]:
@@ -98,6 +99,46 @@ def mark_all_read(owner: str, owner_group: str, callcenter_only: Optional[bool] 
         query,
         {"$set": {"read": True, "updatedAt": _now()}},
     )
+    return result.modified_count
+
+
+# Guest riders (no account): every query is pinned to the token, so one guest never
+# reads or touches another guest's or an account's notifications.
+
+def find_for_guest(token: str, skip: int = 0, limit: int = 50) -> List[Dict[str, Any]]:
+    if not token:
+        return []
+    cursor = (
+        db[COLLECTION]
+        .find({"guest_token": token})
+        .sort("createdAt", DESCENDING)
+        .skip(max(skip, 0))
+        .limit(min(max(limit, 1), 100))
+    )
+    return [_serialize(doc) for doc in cursor]
+
+
+def count_unread_for_guest(token: str) -> int:
+    if not token:
+        return 0
+    return db[COLLECTION].count_documents({"guest_token": token, "read": False})
+
+
+def mark_read_for_guest(token: str, ids: Optional[List[str]] = None) -> int:
+    if not token:
+        return 0
+    query: Dict[str, Any] = {"guest_token": token, "read": False}
+    if ids is not None:
+        oids = []
+        for raw in ids:
+            try:
+                oids.append(ObjectId(raw))
+            except Exception:
+                continue
+        if not oids:
+            return 0
+        query["_id"] = {"$in": oids}
+    result = db[COLLECTION].update_many(query, {"$set": {"read": True, "updatedAt": _now()}})
     return result.modified_count
 
 

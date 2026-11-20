@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 from app.factories.NotificationsCreator import (
     create_callcenter_connected_group_selected_notification,
     create_callcenter_offer_approval_approved_notification,
+    create_delivery_notification,
+    DELIVERY_SELLER_ROLES,
     create_invite_accepted_notification,
     create_offer_approval_request_notification,
     create_offer_notification,
@@ -21,6 +25,7 @@ from app.factories.NotificationsCreator import (
     create_part_request_reminder_notification,
 )
 from app.repositories import GroupRepository as groupRepository
+from app.repositories import UserRepository as userRepository
 from app.schemas.Notification import Notification, NotificationType
 from app.schemas.Offer import OfferStatus
 from app.schemas.Order import OrderStatus
@@ -499,5 +504,174 @@ def fanout_order_status_change(*, order: Dict[str, Any], new_status: str) -> Non
                     )
                 )
 
+    if notifications:
+        send_notifications_batch(notifications)
+
+
+# ── Deliveries ───────────────────────────────────────────────────────────────
+
+DELIVERY_TZ = ZoneInfo("America/Mexico_City")
+
+DELIVERY_FAILURE_REASON_TEXT = {
+    "no_answer": "no contestan",
+    "wrong_address": "la dirección no es correcta",
+    "nobody_to_receive": "no había quien recibiera",
+    "other": "otro motivo",
+}
+
+
+def _user_name(uid: str) -> str:
+    doc = userRepository.find_one({"uid": uid}) if uid else None
+    return (doc or {}).get("name") or ""
+
+
+def _order_id(order: Dict[str, Any]) -> str:
+    return str(order.get("_id") or order.get("id") or "")
+
+
+def _selling_group_id(order: Dict[str, Any]) -> str:
+    return str(
+        (order.get("offer") or {}).get("group_id")
+        or (order.get("offer_group") or {}).get("_id")
+        or ""
+    )
+
+
+def _store_name(order: Dict[str, Any]) -> str:
+    return (order.get("offer_group") or {}).get("name") or _group_name(_selling_group_id(order)) or "la tienda"
+
+
+def _buyer_name(order: Dict[str, Any]) -> str:
+    buyer_group = str((order.get("part_request") or {}).get("creatorGroup") or "")
+    return (order.get("request_group") or {}).get("name") or (_group_name(buyer_group) if buyer_group else "") or "el cliente"
+
+
+def _part_name(order: Dict[str, Any]) -> str:
+    return ((order.get("part_request") or {}).get("part") or {}).get("tipoParteDescripcion") or "La pieza"
+
+
+def _delivery_address(order: Dict[str, Any]) -> str:
+    address = ((order.get("part_request") or {}).get("delivery_address") or {}).get("address")
+    return address or _buyer_name(order)
+
+
+def _rider_name(assignment: Dict[str, Any]) -> str:
+    if assignment.get("type") == "guest":
+        return assignment.get("guest_name") or "otro repartidor"
+    return _user_name(str(assignment.get("user_id") or "")) or "otro repartidor"
+
+
+def _local_hhmm(value: Any) -> str:
+    if not value:
+        return ""
+    if isinstance(value, str):
+        value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=ZoneInfo("UTC"))
+    return value.astimezone(DELIVERY_TZ).strftime("%H:%M")
+
+
+def _rider_notification(
+    assignment: Optional[Dict[str, Any]],
+    order: Dict[str, Any],
+    notification_type: NotificationType,
+    title: str,
+    body: str,
+) -> Optional[Notification]:
+    """Account rider: owned by user_id in the selling group (push included).
+    Guest rider: keyed by guest_token with no owner, so no push and no account feed."""
+    if not assignment:
+        return None
+    order_id = _order_id(order)
+    group_id = _selling_group_id(order)
+    if assignment.get("type") == "guest":
+        token = assignment.get("guest_token")
+        if not token:
+            return None
+        return create_delivery_notification(
+            notification_type, title, body, order_id,
+            owner="", owner_group=group_id,
+            navigate_to_url=f"/delivery/guest/{order_id}?token={token}",
+            guest_token=token,
+        )
+    user_id = assignment.get("user_id")
+    if not user_id:
+        return None
+    return create_delivery_notification(
+        notification_type, title, body, order_id,
+        owner=str(user_id), owner_group=group_id,
+        navigate_to_url=f"/deliveries/{order_id}",
+    )
+
+
+def _send_one(notification: Optional[Notification]) -> None:
+    if notification is not None:
+        send_notifications_batch([notification])
+
+
+def fanout_delivery_assigned(*, order: Dict[str, Any]) -> None:
+    _send_one(_rider_notification(
+        order.get("delivery_assignment"), order, NotificationType.DELIVERY_ASSIGNED,
+        "Te asignaron una entrega",
+        f"Recoger en {_store_name(order)}, entregar a {_buyer_name(order)}",
+    ))
+
+
+def fanout_delivery_time_changed(*, order: Dict[str, Any], previous_time: Any = None) -> None:
+    assignment = order.get("delivery_assignment")
+    if not assignment:
+        return
+    body = f"{_buyer_name(order)}: ahora a las {_local_hhmm(order.get('to_be_delivered_time'))}"
+    if previous_time:
+        body += f" (antes {_local_hhmm(previous_time)})"
+    _send_one(_rider_notification(
+        assignment, order, NotificationType.DELIVERY_TIME_CHANGED, "Cambió la hora de entrega", body,
+    ))
+
+
+def fanout_delivery_reassigned(*, order: Dict[str, Any], previous_assignment: Optional[Dict[str, Any]]) -> None:
+    new_assignment = order.get("delivery_assignment")
+    if not previous_assignment or not new_assignment:
+        return
+    _send_one(_rider_notification(
+        previous_assignment, order, NotificationType.DELIVERY_REASSIGNED,
+        "Te reasignaron",
+        f"La orden de {_delivery_address(order)} pasó a {_rider_name(new_assignment)}. Ya no es tuya.",
+    ))
+
+
+def fanout_delivery_canceled(*, order: Dict[str, Any]) -> None:
+    _send_one(_rider_notification(
+        order.get("delivery_assignment"), order, NotificationType.DELIVERY_CANCELED,
+        "Cancelaron la orden",
+        f"{_part_name(order)}, {_store_name(order)}. No la recojas.",
+    ))
+
+
+def fanout_delivery_failed(*, order: Dict[str, Any], failure: Dict[str, Any]) -> None:
+    """Seller side only: every user of the selling group except the assigned rider."""
+    group_id = _selling_group_id(order)
+    if not group_id:
+        return
+    reason = DELIVERY_FAILURE_REASON_TEXT.get(str(failure.get("reason") or ""), "otro motivo")
+    note = (failure.get("note") or "").strip()
+    if failure.get("reason") == "other" and note:
+        reason = f"{reason} ({note})"
+    rider_uid = str((order.get("delivery_assignment") or {}).get("user_id") or "")
+    order_id = _order_id(order)
+    title, body = "No se pudo entregar", f"{_part_name(order)}: {reason}."
+    url = order_management_v2_path(order_id, current_role=2)
+
+    notifications: List[Notification] = []
+    for group_found in _users_by_group_ids([group_id]):
+        owner_group = str(group_found.get("_id") or group_id)
+        for user_id in group_found.get("users") or []:
+            if str(user_id) == rider_uid:
+                continue
+            notifications.append(create_delivery_notification(
+                NotificationType.DELIVERY_FAILED, title, body, order_id,
+                owner=str(user_id), owner_group=owner_group, navigate_to_url=url,
+                visible_roles=DELIVERY_SELLER_ROLES,
+            ))
     if notifications:
         send_notifications_batch(notifications)
