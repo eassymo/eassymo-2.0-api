@@ -105,3 +105,70 @@ def test_group_owner_can_open_my_deliveries(_vals, _find):
     with patch.object(svc.groupRepository, "find", return_value=[{"_id": "g1"}]), \
          patch.object(svc, "_fetch_orders_for_delivery", return_value=[]):
         assert svc.get_my_orders("owner-uid", None) == []
+
+
+# ── new delivery endpoints (report-failed, route-legs, guest feed) ──────────
+
+import main
+from tests.asgi_client import AsgiClient
+
+ORDER_ID = "6560f0aa0000000000000001"
+
+
+async def _account(request):
+    request.state.user = {"uid": "no-grant-uid"}
+    request.state.groupSelected = "g1"
+    return request.state.user
+
+
+@pytest.fixture
+def account_client():
+    with patch.object(main, "verify_token", side_effect=_account):
+        yield AsgiClient(main.app)
+
+
+@pytest.mark.parametrize("path,body", [
+    ("/delivery/report-failed", {"order_id": ORDER_ID, "reason": "no_answer"}),
+    ("/delivery/route-legs", {"origin": {"lat": 19.4, "lng": -99.1}, "stops": [{"lat": 19.3, "lng": -99.2}]}),
+])
+def test_account_without_deliveries_perform_is_403(account_client, path, body):
+    with patch.object(svc.userRolesRepository, "find", return_value=[]), \
+         patch.object(svc.authz, "delivery_role_variants", return_value=["215"]), \
+         patch.object(svc.groupRepository, "find", return_value=[]), \
+         patch.object(svc.orderRepository, "find_one", side_effect=AssertionError("no order read before the grant")), \
+         patch("app.services.RouteService.get_route_legs", side_effect=AssertionError("no Directions call")):
+        res = account_client.post(path, json=body)
+    assert res.status_code == 403
+
+
+GUEST_CALLS = [
+    ("GET", "/delivery/guest-notifications", None),
+    ("POST", "/delivery/guest-notifications/read", {}),
+    ("POST", "/delivery/report-failed", {"order_id": ORDER_ID, "reason": "no_answer"}),
+    ("POST", "/delivery/route-legs", {"origin": {"lat": 19.4, "lng": -99.1}, "stops": [{"lat": 19.3, "lng": -99.2}]}),
+]
+
+
+async def _no_firebase(_request):
+    raise HTTPException(status_code=401, detail="Missing or invalid token")
+
+
+@pytest.mark.parametrize("method,path,body", GUEST_CALLS)
+def test_all_guest_endpoints_return_guest_token_inactive_for_a_deactivated_profile(method, path, body):
+    profile = {"token": "tok-off", "name": "Beto", "status": "inactive"}
+    with patch.object(main, "verify_token", side_effect=_no_firebase), \
+         patch.object(svc.guestProfileRepository, "find_by_token", return_value=profile), \
+         patch.object(svc, "_ensure_guest_profile") as reactivate:
+        res = AsgiClient(main.app).request(method, path, headers={"X-Guest-Token": "tok-off"}, json=body)
+    assert res.status_code == 401
+    assert res.json()["code"] == "guest_token_inactive"
+    reactivate.assert_not_called()
+
+
+def test_new_account_checks_are_registered_under_deliveries_perform():
+    from app.authz import grant_keys as g
+    from app.authz.grant_sections import GRANT_SECTIONS
+
+    sections = [s["section"] for s in GRANT_SECTIONS[g.DELIVERIES_PERFORM]]
+    assert any(s.startswith("POST /delivery/report-failed") for s in sections)
+    assert any(s.startswith("POST /delivery/route-legs") for s in sections)

@@ -25,7 +25,7 @@ def _to_document(notification: Notification | Dict[str, Any]) -> Dict[str, Any]:
     notif_type = _normalize_type(data.get("type"))
     uid = data.get("uid") or str(uuid4())
 
-    return {
+    doc = {
         "type": notif_type,
         "message": data.get("message") or "",
         "ownerGroup": data.get("ownerGroup") or "",
@@ -38,6 +38,9 @@ def _to_document(notification: Notification | Dict[str, Any]) -> Dict[str, Any]:
         "callcenterId": data.get("callcenterId"),
         "callcenterName": data.get("callcenterName"),
     }
+    if data.get("guest_token"):
+        doc["guest_token"] = data["guest_token"]
+    return doc
 
 
 def _publish_saved(doc: Dict[str, Any]) -> None:

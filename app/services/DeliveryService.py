@@ -13,8 +13,10 @@ from app.repositories import (
 )
 from app.schemas.Order import Order, DeliveryAssignment, DeliveryAssignmentType, OrderStatus
 from app.schemas.GuestDeliveryProfile import GuestDeliveryProfile, GuestDeliveryProfileStatus
+from app.schemas.DeliveryFailure import DeliveryFailure, DeliveryFailureReason
 from app.schemas.Groups import GroupSchema
 from app.repositories import GroupRepository as groupRepository
+from app.repositories import NotificationRepository as notificationRepository
 from app.services import authz
 
 # Role value for delivery persons (DEALER_SHOP in the UserRoles enum)
@@ -470,6 +472,116 @@ def confirm_pickup(
 
 
 # ---------------------------------------------------------------------------
+# POST /delivery/report-failed  — "No pude entregar" (account or guest rider)
+# ---------------------------------------------------------------------------
+
+# Orders a rider can still be carrying; a failed attempt never moves them out.
+_FAILURE_REPORTABLE_STATUSES = {
+    OrderStatus.READY_TO_BE_DISPATCHED.value,
+    OrderStatus.WAITING_FOR_COLLECTION.value,
+    OrderStatus.DISPATCHED.value,
+}
+
+
+def _find_order_doc(order_id: str) -> dict:
+    try:
+        oid = ObjectId(order_id)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Order not found")
+    order_doc = orderRepository.find_one({"_id": oid})
+    if not order_doc:
+        raise HTTPException(status_code=404, detail="Order not found")
+    return order_doc
+
+
+def _reporter(order_doc: dict, user_uid: Optional[str], guest_token: Optional[str]) -> dict:
+    """The caller must be the order's assigned rider; returns who reported (no token)."""
+    assignment = order_doc.get("delivery_assignment") or {}
+    if guest_token:
+        if assignment.get("type") == "guest" and assignment.get("guest_token") == guest_token:
+            return {"type": "guest", "name": assignment.get("guest_name") or "Invitado"}
+    elif user_uid:
+        if assignment.get("type") == "group_member" and assignment.get("user_id") == user_uid:
+            return {"type": "group_member", "user_id": user_uid}
+    raise HTTPException(status_code=403, detail="Only the assigned delivery person can report this order")
+
+
+def _recorded_attempt(order_doc: dict, client_attempt_id: Optional[str]) -> Optional[dict]:
+    if not client_attempt_id:
+        return None
+    for failure in order_doc.get("delivery_failures") or []:
+        if failure.get("client_attempt_id") == client_attempt_id:
+            return failure
+    return None
+
+
+def _is_same_reporter(by: dict, user_uid: Optional[str], guest_token: Optional[str]) -> bool:
+    if guest_token:
+        return by.get("type") == "guest"
+    return bool(user_uid) and by.get("type") == "group_member" and by.get("user_id") == user_uid
+
+
+def report_failed(
+    order_id: str,
+    reason: DeliveryFailureReason | str,
+    note: Optional[str],
+    photo_urls: List[str],
+    client_attempt_id: Optional[str],
+    user_uid: Optional[str],
+    guest_token: Optional[str],
+) -> dict:
+    if guest_token:
+        require_active_guest(guest_token)
+    else:
+        _assert_has_delivery_role(user_uid)  # deliveries.perform for account riders
+
+    order_doc = _find_order_doc(order_id)
+
+    # Offline replay of an attempt already recorded: same answer even if the order was
+    # reassigned or closed since. Only the caller who recorded it (same uid, or a guest
+    # for a guest attempt) gets this answer; anyone else falls through to the 403.
+    replay = _recorded_attempt(order_doc, client_attempt_id)
+    if replay and _is_same_reporter(replay.get("by") or {}, user_uid, guest_token):
+        return {"recorded": True, "failures": len(order_doc.get("delivery_failures") or [])}
+
+    by = _reporter(order_doc, user_uid, guest_token)
+
+    if order_doc.get("status") not in _FAILURE_REPORTABLE_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Order is not in an active delivery status (current: {order_doc.get('status')})",
+        )
+
+    failure = DeliveryFailure(
+        reason=DeliveryFailureReason(reason),
+        note=(note or "").strip() or None,
+        photo_urls=list(photo_urls or []),
+        by=by,
+        client_attempt_id=client_attempt_id or None,
+    ).model_dump()
+    failure["reason"] = failure["reason"].value
+
+    updated = orderRepository.push_delivery_failure(order_doc["_id"], failure, client_attempt_id or None)
+    if updated is None:
+        # Replay of an attempt already recorded (offline outbox): same answer, no new alert.
+        current = orderRepository.find_one({"_id": order_doc["_id"]}) or order_doc
+        return {"recorded": True, "failures": len(current.get("delivery_failures") or [])}
+
+    try:
+        from app.services import notification_fanout
+
+        notification_fanout.fanout_delivery_failed(order=Order(**updated).toJson(), failure=failure)
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "delivery failed alert not sent for order %s: %s", order_doc["_id"], type(exc).__name__
+        )
+
+    return {"recorded": True, "failures": len(updated.get("delivery_failures") or [])}
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
@@ -563,6 +675,60 @@ def _assert_has_delivery_role(user_uid: str):
 
 def _assert_guest_token_active(token: str):
     _resolve_active_guest_profile(token)
+
+
+class GuestTokenInactive(HTTPException):
+    """A deactivated guest link. Routes answer 401 {"code": "guest_token_inactive"}."""
+
+    code = "guest_token_inactive"
+
+    def __init__(self):
+        super().__init__(status_code=401, detail="Guest delivery link is inactive")
+
+
+def require_active_guest(token: str) -> dict:
+    """Guest endpoints (feed, report-failed, route-legs): a profile an admin set to
+    inactive is rejected and never re-activated; an unknown token keeps the 404 of
+    _resolve_active_guest_profile, which also backfills legacy assignments."""
+    profile = guestProfileRepository.find_by_token(token)
+    if profile and profile.get("status") == GuestDeliveryProfileStatus.INACTIVE:
+        raise GuestTokenInactive()
+    return _resolve_active_guest_profile(token)
+
+
+# ---------------------------------------------------------------------------
+# Guest notification feed (GET /delivery/guest-notifications, POST .../read)
+# ---------------------------------------------------------------------------
+
+GUEST_NOTIFICATIONS_MAX_LIMIT = 100
+
+
+def _delivery_notification(doc: dict) -> dict:
+    """Contract shape: { id, type, message, orderId, navigateToUrl, read, timestamp }."""
+    return {
+        "id": doc.get("id"),
+        "type": doc.get("type"),
+        "message": doc.get("message") or "",
+        "orderId": (doc.get("metaData") or {}).get("orderId"),
+        "navigateToUrl": doc.get("navigateToUrl"),
+        "read": bool(doc.get("read")),
+        "timestamp": doc.get("timestamp"),
+    }
+
+
+def get_guest_notifications(token: str, skip: int = 0, limit: int = 50) -> dict:
+    require_active_guest(token)
+    limit = min(max(limit, 1), GUEST_NOTIFICATIONS_MAX_LIMIT)
+    docs = notificationRepository.find_for_guest(token, max(skip, 0), limit)
+    return {
+        "items": [_delivery_notification(doc) for doc in docs],
+        "unread": notificationRepository.count_unread_for_guest(token),
+    }
+
+
+def mark_guest_notifications_read(token: str, ids: Optional[List[str]]) -> dict:
+    require_active_guest(token)
+    return {"updated": notificationRepository.mark_read_for_guest(token, ids)}
 
 
 def _fetch_orders_for_delivery(
