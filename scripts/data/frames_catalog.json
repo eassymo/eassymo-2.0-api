@@ -324,7 +324,7 @@
   "name": "Panel de solicitudes",
   "description": "Solicitudes del grupo comprador",
   "pov": "comprador",
-  "route": "/dashboard-v2",
+  "route": "/dashboard-v3",
   "sample": "solicitud",
   "element": "Lista de solicitudes",
   "steps": null,
@@ -471,7 +471,7 @@
   "name": "Solicitudes por cotizar",
   "description": "Bandeja de solicitudes del vendedor",
   "pov": "vendedor",
-  "route": "/dashboard-v2",
+  "route": "/dashboard-v3",
   "sample": "solicitud entrante",
   "element": "Lista de solicitudes",
   "steps": null,
@@ -537,7 +537,7 @@
   "name": "Captura de imágenes",
   "description": "Subir fotos de entrega o empaque",
   "pov": "comprador",
-  "route": "/order-management-v2/{order}",
+  "route": "/order-management-v3/{order}",
   "sample": "pedido",
   "element": "Botón 'Agregar' fotos",
   "steps": "Abrir confirmar recibido",
@@ -553,7 +553,7 @@
   "name": "Mis pedidos / ventas",
   "description": "Lista de pedidos y ventas",
   "pov": "ambos",
-  "route": "/order-management-v2",
+  "route": "/order-management-v3",
   "sample": "pedido",
   "element": "Lista",
   "steps": null,
@@ -586,7 +586,7 @@
   "name": "Detalle de pedido: estado",
   "description": "Confirmar, despachar o cancelar",
   "pov": "ambos",
-  "route": "/order-management-v2/{order}",
+  "route": "/order-management-v3/{order}",
   "sample": "pedido",
   "element": "Botones de estado",
   "steps": null,
@@ -603,7 +603,7 @@
   "name": "Confirmar recibido",
   "description": "El comprador confirma que recibió",
   "pov": "comprador",
-  "route": "/order-management-v2/{order}",
+  "route": "/order-management-v3/{order}",
   "sample": "pedido despachado",
   "element": "Diálogo de confirmación",
   "steps": "Clic en confirmar recibido",
@@ -635,7 +635,7 @@
   "name": "Asignar repartidor",
   "description": "Elegir quién entrega el pedido",
   "pov": "vendedor",
-  "route": "/order-management-v2/{order}",
+  "route": "/order-management-v3/{order}",
   "sample": "pedido confirmado",
   "element": "Diálogo 'Asignar repartidor'",
   "steps": "Abrir asignar repartidor",
@@ -782,7 +782,7 @@
   "name": "Entrega en mostrador",
   "description": "Firma y recolección en persona",
   "pov": "vendedor",
-  "route": "/order-management-v2/{order}",
+  "route": "/order-management-v3/{order}",
   "sample": "pedido de mostrador",
   "element": "Diálogo de recolección en persona",
   "steps": "Abrir recolección",
@@ -1024,7 +1024,7 @@
   "name": "Invitaciones pendientes (vales)",
   "description": "Vales de las invitaciones a cotizar pendientes en Vendiendo",
   "pov": "vendedor",
-  "route": "/dashboard-v2",
+  "route": "/dashboard-v3",
   "sample": null,
   "element": "Vales 'Te invitaron a cotizar'",
   "steps": null,
@@ -1140,5 +1140,102 @@
   "status": "active",
   "notes": "Solo super admin",
   "sort_order": 70
+ },
+ {
+  "code": "V.N3.S1.P",
+  "name": "Piezas por cotizar",
+  "description": "Hoja con todas las piezas que aún no cotizas",
+  "pov": "vendedor",
+  "route": "/dashboard-v3",
+  "sample": "solicitud entrante",
+  "element": "Hoja 'Por cotizar'",
+  "steps": "Abrir piezas por cotizar",
+  "grants": [
+   "offers.view_incoming",
+   "offers.view_all"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 29
+ },
+ {
+  "code": "V.N3.S5.A",
+  "name": "Avisos del repartidor",
+  "description": "Cambios en sus entregas: asignada, cambió la hora, reasignada, cancelada",
+  "pov": "ambos",
+  "route": "/deliveries/avisos",
+  "sample": "pedido asignado",
+  "element": "Página completa",
+  "steps": null,
+  "grants": [
+   "deliveries.perform"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 65
+ },
+ {
+  "code": "V.N3.S5.AG",
+  "name": "Avisos del repartidor invitado",
+  "description": "Mismos avisos, con la barra verde y el enlace guardado",
+  "pov": "ambos",
+  "route": "/delivery/guest/avisos?token={token}",
+  "sample": "repartidor invitado",
+  "element": "Página completa",
+  "steps": null,
+  "grants": [
+   "deliveries.perform"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 66
+ },
+ {
+  "code": "V.N3.S5.AA",
+  "name": "Activar avisos",
+  "description": "Hoja que pide permiso para avisar con la app cerrada",
+  "pov": "ambos",
+  "route": "/deliveries/avisos",
+  "sample": "pedido asignado",
+  "element": "Hoja 'Activar avisos'",
+  "steps": "Abrir Avisos, tocar 'Recibe avisos con la app cerrada'",
+  "grants": [
+   "deliveries.perform"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 67
+ },
+ {
+  "code": "V.N3.S5.NP",
+  "name": "No pude entregar",
+  "description": "Hoja con el motivo cuando no se pudo entregar; la orden sigue pendiente",
+  "pov": "ambos",
+  "route": "/deliveries/{order}",
+  "sample": "pedido asignado",
+  "element": "Hoja 'No pude entregar'",
+  "steps": "Abrir detalle, tocar 'No pude entregar'",
+  "grants": [
+   "deliveries.perform"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 68
+ },
+ {
+  "code": "V.N3.S5.IR",
+  "name": "Iniciar ruta",
+  "description": "Botón que abre Maps con todas las paradas en orden",
+  "pov": "ambos",
+  "route": "/deliveries",
+  "sample": "pedido asignado",
+  "element": "Botón 'Iniciar ruta'",
+  "steps": null,
+  "grants": [
+   "deliveries.perform"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 69
  }
 ]

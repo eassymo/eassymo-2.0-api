@@ -110,6 +110,13 @@ def find_by_request_ids(request_ids, group_id, additional_filters: None | Dict[s
     return database.db["Offers"].find(filters).sort("_id", DESCENDING)
 
 
+def distinct_request_ids_for_group(group_id: str, request_ids):
+    """Which of `request_ids` this seller group has answered (any offer status, "sin stock" included)."""
+    if not request_ids:
+        return []
+    return database.db["Offers"].distinct("request_id", {"group_id": group_id, "request_id": {"$in": list(request_ids)}})
+
+
 def build_filter(propName):
     return database.db["Offers"].distinct(propName)
 

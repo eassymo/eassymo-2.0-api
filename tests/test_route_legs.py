@@ -1,6 +1,6 @@
-"""POST /delivery/route-legs: Google Directions through our server, one leg per stop in
-the order sent, 5-minute cache, 503 route_estimates_unavailable when there is no key or
-Directions fails. The key never reaches logs or responses."""
+"""POST /delivery/route-legs: Google Routes API (computeRoutes) through our server, one leg
+per stop in the order sent, 5-minute cache, 503 route_estimates_unavailable when there is no
+key or Google fails. The key never reaches logs or responses."""
 import logging
 from unittest.mock import MagicMock, patch
 
@@ -21,11 +21,12 @@ STOPS = [{"lat": 19.4, "lng": -99.1}, {"lat": 19.35, "lng": -99.16}, {"lat": 19.
 def _ok(legs):
     res = MagicMock()
     res.status_code = 200
-    res.json.return_value = {
-        "status": "OK",
-        "routes": [{"legs": [{"distance": {"value": m}, "duration": {"value": s}} for m, s in legs]}],
-    }
+    res.json.return_value = {"routes": [{"legs": [{"distanceMeters": m, "duration": f"{s}s"} for m, s in legs]}]}
     return res
+
+
+def _latlng(p):
+    return {"location": {"latLng": {"latitude": p["lat"], "longitude": p["lng"]}}}
 
 
 @pytest.fixture(autouse=True)
@@ -38,97 +39,113 @@ def clean(monkeypatch):
 
 def test_one_leg_per_stop_in_order():
     http = MagicMock(return_value=_ok([(2450, 380), (5000, 610), (12345, 1501)]))
-    assert route.get_route_legs(ORIGIN, STOPS, http_get=http) == [
+    assert route.get_route_legs(ORIGIN, STOPS, http_post=http) == [
         {"km": 2.5, "min": 6}, {"km": 5.0, "min": 10}, {"km": 12.3, "min": 25},
     ]
 
 
-def test_waypoints_are_sent_in_the_given_order_not_optimized():
+def test_request_is_a_routes_compute_routes_call_in_the_given_order():
     http = MagicMock(return_value=_ok([(1, 1)] * 3))
-    route.get_route_legs(ORIGIN, STOPS, http_get=http)
-    params = http.call_args.kwargs["params"]
-    assert params["origin"] == "19.432608,-99.133209"
-    assert params["destination"] == "19.3,-99.2"
-    assert params["waypoints"] == "19.4,-99.1|19.35,-99.16"
-    assert "optimize" not in params["waypoints"]
-    assert http.call_args.kwargs["timeout"] <= 10
+    route.get_route_legs(ORIGIN, STOPS, http_post=http)
+    assert http.call_args.args[0] == "https://routes.googleapis.com/directions/v2:computeRoutes"
+    kw = http.call_args.kwargs
+    assert kw["headers"]["X-Goog-Api-Key"] == KEY
+    assert kw["headers"]["X-Goog-FieldMask"] == "routes.legs.distanceMeters,routes.legs.duration"
+    body = kw["json"]
+    assert body["origin"] == _latlng(ORIGIN)
+    assert body["destination"] == _latlng(STOPS[-1])
+    assert body["intermediates"] == [_latlng(STOPS[0]), _latlng(STOPS[1])]
+    assert body["travelMode"] == "DRIVE"
+    assert body["routingPreference"] == "TRAFFIC_UNAWARE"
+    assert "optimizeWaypointOrder" not in body
+    assert KEY not in str(body) and "params" not in kw
+    assert kw["timeout"] <= 10
 
 
-def test_single_stop_sends_no_waypoints():
+def test_single_stop_sends_no_intermediates():
     http = MagicMock(return_value=_ok([(1000, 60)]))
-    assert route.get_route_legs(ORIGIN, STOPS[:1], http_get=http) == [{"km": 1.0, "min": 1}]
-    assert "waypoints" not in http.call_args.kwargs["params"]
+    assert route.get_route_legs(ORIGIN, STOPS[:1], http_post=http) == [{"km": 1.0, "min": 1}]
+    assert "intermediates" not in http.call_args.kwargs["json"]
+
+
+def test_a_zero_length_leg_without_fields_reads_as_zero():
+    res = MagicMock(status_code=200, json=MagicMock(return_value={"routes": [{"legs": [{}, {"distanceMeters": 900, "duration": "120s"}]}]}))
+    assert route.get_route_legs(ORIGIN, STOPS[:2], http_post=MagicMock(return_value=res)) == [
+        {"km": 0.0, "min": 0}, {"km": 0.9, "min": 2},
+    ]
 
 
 def test_missing_key_is_503_route_estimates_unavailable(monkeypatch):
     monkeypatch.delenv("GOOGLE_DIRECTIONS_API_KEY")
     http = MagicMock()
     with pytest.raises(route.RouteEstimatesUnavailable) as exc:
-        route.get_route_legs(ORIGIN, STOPS, http_get=http)
+        route.get_route_legs(ORIGIN, STOPS, http_post=http)
     assert exc.value.status_code == 503 and exc.value.code == "route_estimates_unavailable"
     http.assert_not_called()
 
 
 @pytest.mark.parametrize("response", [
-    MagicMock(status_code=200, json=MagicMock(return_value={"status": "ZERO_RESULTS", "routes": []})),
-    MagicMock(status_code=200, json=MagicMock(return_value={"status": "REQUEST_DENIED", "error_message": "bad"})),
+    MagicMock(status_code=200, json=MagicMock(return_value={})),
+    MagicMock(status_code=200, json=MagicMock(return_value={"routes": []})),
+    MagicMock(status_code=403, json=MagicMock(return_value={"error": {"code": 403, "status": "PERMISSION_DENIED", "message": "bad"}})),
     MagicMock(status_code=500, json=MagicMock(return_value={})),
-    MagicMock(status_code=200, json=MagicMock(return_value={"status": "OK", "routes": [{"legs": [{}]}]})),
+    MagicMock(status_code=200, json=MagicMock(return_value={"routes": [{"legs": [{}]}]})),
 ])
-def test_directions_error_status_is_503(response):
+def test_google_error_or_no_route_is_503(response):
     with pytest.raises(route.RouteEstimatesUnavailable):
-        route.get_route_legs(ORIGIN, STOPS, http_get=MagicMock(return_value=response))
+        route.get_route_legs(ORIGIN, STOPS, http_post=MagicMock(return_value=response))
 
 
 def test_network_error_is_503():
     with pytest.raises(route.RouteEstimatesUnavailable):
-        route.get_route_legs(ORIGIN, STOPS, http_get=MagicMock(side_effect=OSError("down")))
+        route.get_route_legs(ORIGIN, STOPS, http_post=MagicMock(side_effect=OSError("down")))
 
 
-def test_more_than_12_stops_is_422():
+def test_more_than_11_stops_is_422():
+    # 11 stops = 10 intermediates, the most Google bills at the Essentials rate.
     with pytest.raises(HTTPException) as exc:
-        route.get_route_legs(ORIGIN, [STOPS[0]] * 13, http_get=MagicMock())
+        route.get_route_legs(ORIGIN, [STOPS[0]] * 12, http_post=MagicMock())
     assert exc.value.status_code == 422
 
 
 def test_no_stops_is_empty_without_calling_directions():
     http = MagicMock()
-    assert route.get_route_legs(ORIGIN, [], http_get=http) == []
+    assert route.get_route_legs(ORIGIN, [], http_post=http) == []
     http.assert_not_called()
 
 
 def test_repeated_request_within_ttl_does_not_call_directions_again():
     http = MagicMock(return_value=_ok([(1000, 60)] * 3))
     with patch.object(route, "_now", return_value=1000.0):
-        first = route.get_route_legs(ORIGIN, STOPS, http_get=http)
+        first = route.get_route_legs(ORIGIN, STOPS, http_post=http)
     # same points within rounding (4 decimals), 299 s later
     nearby = [{"lat": s["lat"] + 0.00001, "lng": s["lng"]} for s in STOPS]
     with patch.object(route, "_now", return_value=1299.0):
-        assert route.get_route_legs(ORIGIN, nearby, http_get=http) == first
+        assert route.get_route_legs(ORIGIN, nearby, http_post=http) == first
     assert http.call_count == 1
     with patch.object(route, "_now", return_value=1301.0):
-        route.get_route_legs(ORIGIN, STOPS, http_get=http)
+        route.get_route_legs(ORIGIN, STOPS, http_post=http)
     assert http.call_count == 2
 
 
 def test_a_different_order_is_a_different_route():
     http = MagicMock(return_value=_ok([(1000, 60)] * 3))
-    route.get_route_legs(ORIGIN, STOPS, http_get=http)
-    route.get_route_legs(ORIGIN, list(reversed(STOPS)), http_get=http)
+    route.get_route_legs(ORIGIN, STOPS, http_post=http)
+    route.get_route_legs(ORIGIN, list(reversed(STOPS)), http_post=http)
     assert http.call_count == 2
 
 
 def test_key_never_appears_in_logs_or_the_error(caplog):
     caplog.set_level(logging.DEBUG)
-    leaky = OSError(f"Max retries exceeded with url: /json?key={KEY}")
+    leaky = OSError(f"Connection failed with header X-Goog-Api-Key: {KEY}")
     with pytest.raises(route.RouteEstimatesUnavailable) as exc:
-        route.get_route_legs(ORIGIN, STOPS, http_get=MagicMock(side_effect=leaky))
+        route.get_route_legs(ORIGIN, STOPS, http_post=MagicMock(side_effect=leaky))
     assert KEY not in caplog.text
     assert KEY not in str(exc.value.detail)
-    denied = MagicMock(status_code=200, json=MagicMock(
-        return_value={"status": "REQUEST_DENIED", "error_message": f"The provided API key {KEY} is invalid"}))
+    denied = MagicMock(status_code=400, json=MagicMock(
+        return_value={"error": {"code": 400, "status": "INVALID_ARGUMENT", "message": f"API key {KEY} not valid"}}))
     with pytest.raises(route.RouteEstimatesUnavailable) as exc:
-        route.get_route_legs(ORIGIN, STOPS, http_get=MagicMock(return_value=denied))
+        route.get_route_legs(ORIGIN, STOPS, http_post=MagicMock(return_value=denied))
     assert KEY not in caplog.text
     assert KEY not in str(exc.value.detail)
 
@@ -164,8 +181,8 @@ def test_route_without_key_is_503_with_code(client, monkeypatch):
     assert KEY not in res.text
 
 
-def test_route_more_than_12_stops_is_422(client):
-    res = client.post("/delivery/route-legs", json={"origin": ORIGIN, "stops": [STOPS[0]] * 13})
+def test_route_more_than_11_stops_is_422(client):
+    res = client.post("/delivery/route-legs", json={"origin": ORIGIN, "stops": [STOPS[0]] * 12})
     assert res.status_code == 422
 
 

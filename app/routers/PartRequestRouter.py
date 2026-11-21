@@ -82,6 +82,18 @@ def find_grouped(
         return error_json_response(e)
 
 
+@partRequestRouter.get("/unquoted", response_description="open requests the seller hasn't answered yet", tags=["PartRequest"])
+def find_unquoted(
+    group_id: str = Query(..., title="group_id", description="seller group"),
+    limit: Optional[int] = Query(200, ge=1, le=200, title="limit"),
+):
+    try:
+        response = partRequestService.find_unquoted_for_seller(group_id, limit=limit)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
+    except Exception as e:
+        return error_json_response(e)
+
+
 @partRequestRouter.get("/vehicles-available-in-requests", tags=["PartRequest"])
 def vehicles_available_in_requests(
     group_id: Optional[str] = Query(None, title="group_id", description=""),

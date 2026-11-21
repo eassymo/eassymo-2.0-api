@@ -287,7 +287,7 @@ def report_failed(request: Request, data: ReportFailedBody):
 
 
 # ---------------------------------------------------------------------------
-# POST /delivery/route-legs  — km and minutes per stop (Google Directions, cached)
+# POST /delivery/route-legs  — km and minutes per stop (Google Routes API, cached)
 # ---------------------------------------------------------------------------
 
 class LatLng(BaseModel):

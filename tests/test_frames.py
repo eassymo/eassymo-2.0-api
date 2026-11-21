@@ -25,7 +25,7 @@ def _catalog():
 def test_catalog_codes_unique_and_grants_known():
     catalog = _catalog()
     codes = [f["code"] for f in catalog]
-    assert len(codes) == len(set(codes)) == 71
+    assert len(codes) == len(set(codes)) == 77
     for frame in catalog:
         assert set(frame["grants"]) <= set(ALL_KEYS), frame["code"]
         assert frame["status"] in ("active", "pending")
@@ -63,7 +63,7 @@ def test_migrate_frame_refs_sets_list_from_catalog_and_is_idempotent():
     changed = migrate_frame_refs.apply(db, _catalog())
     by_key = {g["key"]: g for g in grants.docs}
     assert by_key["store.edit_profile"]["frame_refs"] == ["C.WG.1", "C.WG.1.M"]
-    assert by_key["deliveries.perform"]["frame_refs"] == ["V.N3.S5", "V.N3.S5.M", "V.N3.S5.1"]
+    assert by_key["deliveries.perform"]["frame_refs"] == ["V.N3.S5", "V.N3.S5.M", "V.N3.S5.1", "V.N3.S5.A", "V.N3.S5.AG", "V.N3.S5.AA", "V.N3.S5.NP", "V.N3.S5.IR"]
     assert by_key["offers.create"]["frame_refs"] == ["custom"]
     assert changed == 2
     assert migrate_frame_refs.apply(db, _catalog()) == 0
