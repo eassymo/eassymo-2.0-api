@@ -144,6 +144,37 @@ def count_grouped(filters):
     return database.db["PartRequests"].count_documents(filters)
 
 
+def find_open_ids(filters):
+    """Just the _id of each matching request (used to bound the offers lookup)."""
+    return [doc["_id"] for doc in database.db["PartRequests"].find(filters, {"_id": 1})]
+
+
+def _unquoted_match(filters, excluded_ids):
+    return {"$and": [filters, {"_id": {"$nin": list(excluded_ids)}}]} if excluded_ids else filters
+
+
+def find_unquoted(filters, excluded_ids, limit: int = 200):
+    """Newest first, with the buyer's group as group_info (same lookup as find_grouped)."""
+    return database.db["PartRequests"].aggregate([
+        {"$match": _unquoted_match(filters, excluded_ids)},
+        {"$sort": {"createdAt": -1}},
+        {"$limit": limit},
+        {
+            "$lookup": {
+                "from": "groups",
+                "let": {"group_id": {"$toObjectId": "$creatorGroup"}},
+                "pipeline": [{"$match": {"$expr": {"$eq": ["$_id", "$$group_id"]}}}],
+                "as": "group_info",
+            }
+        },
+        {"$unwind": {"path": "$group_info", "preserveNullAndEmptyArrays": True}},
+    ])
+
+
+def count_unquoted(filters, excluded_ids):
+    return database.db["PartRequests"].count_documents(_unquoted_match(filters, excluded_ids))
+
+
 def distinct_vehicle_ids_grouped(filters: Dict[str, Any]) -> List[Any]:
     """Distinct vehicleId values for documents matching the same filter as find_grouped $match."""
     return database.db["PartRequests"].distinct("vehicleId", filters)

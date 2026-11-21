@@ -583,6 +583,29 @@ def find_grouped(
             status_code=500, detail=f'Error finding grouped requests {e}')
 
 
+def find_unquoted_for_seller(group_id: str, limit: int = 200):
+    """
+    Every open request the seller can see (same rules as find_grouped for role 2) that the
+    seller's group hasn't answered with any offer, "sin stock" included. Newest first, capped
+    at `limit`; `total` counts them all so the dashboard headline is the real number.
+    """
+    filters = __format_grouped_filters(group_id, str(GroupType.CAR_SHOP.value), None, None, None, None, None)
+    filters["status"] = PartRequestStatus.CREATED.value
+    filters["$and"].append({"creatorGroup": {"$ne": group_id}})
+
+    # Check offers only against the open requests this seller can see, so the exclusion list stays
+    # as small as the open backlog instead of every request the store ever answered.
+    open_ids = [str(oid) for oid in partRequestRepository.find_open_ids(filters)]
+    excluded = []
+    for rid in offerRepository.distinct_request_ids_for_group(group_id, open_ids):
+        if rid and ObjectId.is_valid(str(rid)):
+            excluded.append(ObjectId(str(rid)))
+
+    docs = partRequestRepository.find_unquoted(filters, excluded, limit=limit)
+    items = [PartRequest(**doc).toJson() for doc in docs]
+    return {"items": items, "total": partRequestRepository.count_unquoted(filters, excluded)}
+
+
 def find_distinct_vehicle_ids_in_requests(
     group_id: Optional[str],
     group_role: Optional[str],
