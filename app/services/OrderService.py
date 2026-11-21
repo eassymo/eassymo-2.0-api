@@ -5,7 +5,7 @@ from app.schemas.Order import Order, OrderStatus
 from app.schemas.PartRequest import FulfillmentType
 from app.schemas.Groups import GroupSchema
 from bson import ObjectId
-from datetime import datetime
+from datetime import datetime, timezone
 
 from typing import Dict, Any, List, Optional
 import logging
@@ -205,7 +205,16 @@ def _assert_order_status_transition(
         return
 
 
-def find(order_id: str, group_id: str | None, current_role: str, search_argument: str | None):
+def _with_store_code(order_json: Dict[str, Any], order_doc: Dict[str, Any], requesting_user_uid: Optional[str], membership=None) -> Dict[str, Any]:
+    """Adds pickup_code for a member of the selling group while the order waits for collection."""
+    from app.services import PickupCodeService
+
+    code = PickupCodeService.get_code_for_store(order_doc, requesting_user_uid, membership)
+    return {**order_json, "pickup_code": code} if code else order_json
+
+
+def find(order_id: str, group_id: str | None, current_role: str, search_argument: str | None,
+         requesting_user_uid: Optional[str] = None):
     if group_id == None:
         raise HTTPException(status_code=400, detail="Group id is required")
     try:
@@ -221,6 +230,7 @@ def find(order_id: str, group_id: str | None, current_role: str, search_argument
         orders = list(orderRepository.find(filters))
 
         order_list = []
+        membership: Dict[str, bool] = {}
 
         for order_data in orders:
             order_json = Order(**order_data).toJson()
@@ -228,6 +238,10 @@ def find(order_id: str, group_id: str | None, current_role: str, search_argument
             request_group = GroupSchema(**(order_data.get("request_group") or {}))
             order_json = {**order_json, "offer_group": offer_group.toJson(),
                           "request_group": request_group.toJson()}
+            # The store's pickup code only goes in the seller view, and only to members of the
+            # selling group (checked per order, never trusting the query parameters alone).
+            if current_role == "2":
+                order_json = _with_store_code(order_json, order_data, requesting_user_uid, membership)
 
             order_list.append(order_json)
 
@@ -264,7 +278,7 @@ def _build_order_filters(current_role: str, order_id: str | None, group_id: str 
     return filters
 
 
-def find_by_id(id: str):
+def find_by_id(id: str, requesting_user_uid: Optional[str] = None):
     try:
         id = ObjectId(id)
         order_obj = list(orderRepository.find_by_id(id))[0]
@@ -277,7 +291,8 @@ def find_by_id(id: str):
         offer_group = GroupSchema(**(order_obj.get("offer_group") or {}))
         request_group = GroupSchema(**(order_obj.get("request_group") or {}))
 
-        return {**order.toJson(), "offer_group": offer_group.toJson(), "request_group": request_group.toJson()}
+        result = {**order.toJson(), "offer_group": offer_group.toJson(), "request_group": request_group.toJson()}
+        return _with_store_code(result, order_obj, requesting_user_uid)
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f'Error while fetching order by id {e}')
@@ -289,9 +304,9 @@ def change_order_status(
     delivery_notes_buyer: str | None,
     delivery_notes_seller: str | None,
     packaged_notes_seller: str | None,
-    delivery_pictures_buyer: List[str] | None = [],
-    delivery_pictures_seller: List[str] | None = [],
-    packaged_pictures_seller: List[str] | None = [],
+    delivery_pictures_buyer: List[str] | None = None,
+    delivery_pictures_seller: List[str] | None = None,
+    packaged_pictures_seller: List[str] | None = None,
     delivery_customer_signature_url: str | None = None,
     delivery_received_by_name: str | None = None,
     to_be_delivered_time: str | None = None,
@@ -306,17 +321,19 @@ def change_order_status(
         order: Order
         order_found = list(orderRepository.find_by_id(order_id))
 
-        order_found = {
-            **order_found[0],
+        # Evidence is only written when the caller sends it (None = not sent): a status change
+        # must never erase notes or photos left earlier by the store, the rider or the buyer.
+        evidence = {
             "delivery_notes_buyer": delivery_notes_buyer,
-            "delivery_pictures_buyer": delivery_pictures_buyer or [],
+            "delivery_pictures_buyer": delivery_pictures_buyer,
             "delivery_notes_seller": delivery_notes_seller,
-            "delivery_pictures_seller": delivery_pictures_seller or [],
+            "delivery_pictures_seller": delivery_pictures_seller,
             "delivery_customer_signature_url": delivery_customer_signature_url,
             "delivery_received_by_name": delivery_received_by_name,
             "packaged_notes_seller": packaged_notes_seller,
             "packaged_pictures_seller": packaged_pictures_seller,
         }
+        order_found = {**order_found[0], **{k: v for k, v in evidence.items() if v is not None}}
 
         if order_found != None:
             order = Order(**order_found)
@@ -351,6 +368,15 @@ def change_order_status(
 
         order.change_status(new_status)
 
+        # Marked ready with a rider already assigned (pre-assignment): straight to waiting for
+        # collection, and the rider is told they can go.
+        became_ready_for_rider = False
+        if OrderStatus[new_status] == OrderStatus.READY_TO_BE_DISPATCHED:
+            order.ready_at = datetime.now(timezone.utc)
+            if order.delivery_assignment and not _order_is_pickup_fulfillment(order):
+                order.change_status(OrderStatus.WAITING_FOR_COLLECTION.name)
+                became_ready_for_rider = True
+
         order_data = order.toJson()
 
         order_data.pop("_id")
@@ -362,6 +388,9 @@ def change_order_status(
         from app.services import notification_fanout
 
         notification_fanout.fanout_order_status_change(order=result, new_status=new_status)
+
+        if became_ready_for_rider:
+            _send_delivery_alert("fanout_delivery_ready", order_id, order=result)
 
         if is_delayed:
             notification_fanout.fanout_order_delayed(order=result)
@@ -388,7 +417,11 @@ def assign_delivery(
     guest_token: Optional[str] = None,
 ) -> dict:
     """
-    Assigns a delivery person to an order and advances its status to DISPATCHED.
+    Assigns a delivery person (account or guest) to an order. Allowed while it is being prepared
+    (the status stays CONFIRMED and the rider is told it is not ready yet) or once it is ready or
+    waiting for collection (the status becomes WAITING_FOR_COLLECTION for every rider type). The
+    pickup code is created, or replaced when the rider changes. No "enviado" notice goes to the
+    buyer here: that happens when the rider confirms the pickup.
     Raises HTTPException on any validation failure.
     """
     from app.services import DeliveryService
@@ -411,11 +444,15 @@ def assign_delivery(
                 detail="Delivery assignment is not available for pickup orders",
             )
 
-        _assignable_statuses = {OrderStatus.READY_TO_BE_DISPATCHED, OrderStatus.WAITING_FOR_COLLECTION}
+        _assignable_statuses = {
+            OrderStatus.CONFIRMED,
+            OrderStatus.READY_TO_BE_DISPATCHED,
+            OrderStatus.WAITING_FOR_COLLECTION,
+        }
         if order.status not in _assignable_statuses:
             raise HTTPException(
                 status_code=400,
-                detail=f"Order must be in READY_TO_BE_DISPATCHED or WAITING_FOR_COLLECTION status to assign delivery (current: {order.status.value})"
+                detail=f"Order must be in CONFIRMED, READY_TO_BE_DISPATCHED or WAITING_FOR_COLLECTION status to assign delivery (current: {order.status.value})"
             )
 
         offer_group_id = order_doc.get("offer", {}).get("group_id") or (
@@ -448,12 +485,15 @@ def assign_delivery(
 
         order.delivery_assignment = assignment
 
-        if assignment_type == "guest":
-            new_status = OrderStatus.WAITING_FOR_COLLECTION.name
-        else:
-            new_status = OrderStatus.DISPATCHED.name
+        preparing = order.status == OrderStatus.CONFIRMED
+        if not preparing and order.status != OrderStatus.WAITING_FOR_COLLECTION:
+            order.change_status(OrderStatus.WAITING_FOR_COLLECTION.name)
 
-        order.change_status(new_status)
+        # The code first: if saving the order fails, a leftover code is harmless; the reverse would leave
+        # an assigned order that silently falls back to the old no-code pickup.
+        from app.services import PickupCodeService
+
+        PickupCodeService.reset_code(str(oid))
 
         order_data = order.toJson()
         order_data.pop("_id", None)
@@ -461,13 +501,9 @@ def assign_delivery(
         updated_doc = orderRepository.edit(oid, order_data)
         result = Order(**updated_doc).toJson()
 
-        from app.services import notification_fanout
-
-        notification_fanout.fanout_order_status_change(order=result, new_status=new_status)
-
         new_assignment = result.get("delivery_assignment")
         if not _same_rider(previous_assignment, new_assignment):
-            _send_delivery_alert("fanout_delivery_assigned", oid, order=result)
+            _send_delivery_alert("fanout_delivery_assigned", oid, order=result, preparing=preparing)
             if previous_assignment:
                 _send_delivery_alert(
                     "fanout_delivery_reassigned", oid, order=result, previous_assignment=previous_assignment,

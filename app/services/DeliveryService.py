@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import HTTPException
 from bson import ObjectId
 from datetime import datetime, timedelta
@@ -13,11 +15,18 @@ from app.repositories import (
 )
 from app.schemas.Order import Order, DeliveryAssignment, DeliveryAssignmentType, OrderStatus
 from app.schemas.GuestDeliveryProfile import GuestDeliveryProfile, GuestDeliveryProfileStatus
-from app.schemas.DeliveryFailure import DeliveryFailure, DeliveryFailureReason
+from app.schemas.DeliveryFailure import (
+    FAILURE_KINDS,
+    DeliveryFailure,
+    DeliveryFailureReason,
+    reasons_for,
+)
 from app.schemas.Groups import GroupSchema
 from app.repositories import GroupRepository as groupRepository
 from app.repositories import NotificationRepository as notificationRepository
 from app.services import authz
+
+logger = logging.getLogger(__name__)
 
 # Role value for delivery persons (DEALER_SHOP in the UserRoles enum)
 DELIVERY_PERSON_ROLE_VALUE = "215"
@@ -421,54 +430,110 @@ def validate_guest_token(token: str) -> dict:
 # POST /delivery/confirm-pickup
 # ---------------------------------------------------------------------------
 
+class PickupCodeError(HTTPException):
+    """A wrong, locked or retired pickup code. Routes answer {"code": ..., "error": ..., **extra}."""
+
+    def __init__(self, status_code: int, code: str, detail: str, **extra):
+        super().__init__(status_code=status_code, detail=detail)
+        self.code = code
+        self.extra = extra
+
+
+def _pickup_rider(order_doc: dict, user_uid: Optional[str], guest_token: Optional[str]) -> dict:
+    """The caller must be the order's assigned rider; returns who confirmed (no token)."""
+    assignment = order_doc.get("delivery_assignment") or {}
+    if guest_token:
+        if assignment.get("type") == "guest" and assignment.get("guest_token") == guest_token:
+            return {"type": "rider", "name": assignment.get("guest_name") or "Invitado"}
+    elif user_uid:
+        if assignment.get("type") == "group_member" and assignment.get("user_id") == user_uid:
+            return {"type": "rider", "user_id": user_uid}
+    raise HTTPException(status_code=403, detail="Only the assigned delivery person can confirm this pickup")
+
+
 def confirm_pickup(
-    guest_token: str,
     order_id: str,
-    delivery_notes_seller: Optional[str] = None,
-    delivery_pictures_seller: Optional[List[str]] = None,
+    *,
+    guest_token: Optional[str] = None,
+    user_uid: Optional[str] = None,
+    code: Optional[str] = None,
+    photo_urls: Optional[List[str]] = None,
+    notes: Optional[str] = None,
 ) -> dict:
     """
-    Called by a guest delivery person to confirm physical collection of an order.
-    Advances order status from WAITING_FOR_COLLECTION → DISPATCHED.
+    The assigned rider (guest link or account) confirms physical collection:
+    WAITING_FOR_COLLECTION → DISPATCHED. With the store's code the pickup is verified; without it a
+    photo of the parcel is the escape hatch (recorded as rider_unverified and flagged to the store).
+    Orders assigned before codes existed keep the old rider-only tap.
     """
-    from bson import ObjectId
+    from app.services import PickupCodeService, notification_fanout
 
-    _resolve_active_guest_profile(guest_token)
+    if guest_token:
+        require_active_guest(guest_token)
+    else:
+        _assert_has_delivery_role(user_uid)
 
-    try:
-        oid = ObjectId(order_id)
-    except Exception:
-        raise HTTPException(status_code=404, detail="Order not found")
-
-    order_doc = orderRepository.find_one({"_id": oid})
-    if not order_doc:
-        raise HTTPException(status_code=404, detail="Order not found")
-
-    assigned_token = (order_doc.get("delivery_assignment") or {}).get("guest_token")
-    if assigned_token != guest_token:
-        raise HTTPException(status_code=403, detail="Token does not match order delivery assignment")
+    order_doc = _find_order_doc(order_id)
+    by = _pickup_rider(order_doc, user_uid, guest_token)
 
     order = Order(**order_doc)
-
     if order.status != OrderStatus.WAITING_FOR_COLLECTION:
         raise HTTPException(
             status_code=409,
-            detail=f"Order is not in WAITING_FOR_COLLECTION status (current: {order.status.value})"
+            detail=f"Order is not in WAITING_FOR_COLLECTION status (current: {order.status.value})",
         )
+
+    oid_str = str(order_doc["_id"])
+    photos = [p for p in (photo_urls or []) if p]
+    code = (code or "").strip()
+    verified_via: Optional[str] = None
+
+    if PickupCodeService.has_code(oid_str):
+        if code:
+            result = PickupCodeService.verify_code(oid_str, code)
+            if result.status == "wrong":
+                raise PickupCodeError(422, "wrong_pickup_code", "Código incorrecto", tries_left=result.tries_left)
+            if result.status == "locked":
+                raise PickupCodeError(423, "pickup_code_locked", "Demasiados intentos",
+                                      retry_at=result.retry_at.isoformat() if result.retry_at else None)
+            if result.status == "exhausted":
+                raise PickupCodeError(423, "pickup_code_exhausted", "El código ya no sirve; confirma con una foto")
+            verified_via = "code"
+        elif photos:
+            verified_via = "rider_unverified"
+        else:
+            raise HTTPException(status_code=400, detail="Escribe el código de la tienda o agrega una foto del paquete.")
 
     now = datetime.now(ZoneInfo('UTC'))
     order.change_status(OrderStatus.DISPATCHED.name)
-
-    if delivery_notes_seller is not None:
-        order.delivery_notes_seller = delivery_notes_seller
-    if delivery_pictures_seller:
-        order.delivery_pictures_seller = delivery_pictures_seller
+    order.picked_up_at = now
+    order.picked_up_via = verified_via
+    order.picked_up_by = by
+    if notes is not None:
+        order.pickup_notes_seller = notes
+    if photos:
+        order.pickup_pictures_seller = photos
 
     order_data = order.toJson()
     order_data.pop("_id", None)
 
-    updated_doc = orderRepository.edit(oid, order_data)
-    return Order(**updated_doc).toJson()
+    updated_doc = orderRepository.edit(order_doc["_id"], order_data)
+    result_json = Order(**updated_doc).toJson()
+    PickupCodeService.delete_code(oid_str)
+
+    # The buyer hears "enviado" now (the package really left the store), not at assignment.
+    for name, kwargs in (
+        ("fanout_order_status_change", {"order": result_json, "new_status": OrderStatus.DISPATCHED.name}),
+        ("fanout_delivery_handed_off", {"order": result_json, "unverified": verified_via == "rider_unverified"})
+        if verified_via else (None, None),
+    ):
+        if not name:
+            continue
+        try:
+            getattr(notification_fanout, name)(**kwargs)
+        except Exception as exc:
+            logger.warning("pickup alert %s failed for order %s: %s", name, oid_str, type(exc).__name__)
+    return result_json
 
 
 # ---------------------------------------------------------------------------
@@ -529,7 +594,13 @@ def report_failed(
     client_attempt_id: Optional[str],
     user_uid: Optional[str],
     guest_token: Optional[str],
+    kind: str = "delivery",
 ) -> dict:
+    if kind not in FAILURE_KINDS:
+        raise HTTPException(status_code=400, detail="kind must be pickup or delivery")
+    reason_value = DeliveryFailureReason(reason).value
+    if reason_value not in reasons_for(kind):
+        raise HTTPException(status_code=400, detail=f"reason {reason_value} does not apply to a {kind} failure")
     if guest_token:
         require_active_guest(guest_token)
     else:
@@ -546,6 +617,11 @@ def report_failed(
 
     by = _reporter(order_doc, user_uid, guest_token)
 
+    if kind == "pickup" and order_doc.get("status") != OrderStatus.WAITING_FOR_COLLECTION.value:
+        raise HTTPException(
+            status_code=400,
+            detail=f"A pickup failure needs an order waiting for collection (current: {order_doc.get('status')})",
+        )
     if order_doc.get("status") not in _FAILURE_REPORTABLE_STATUSES:
         raise HTTPException(
             status_code=400,
@@ -553,6 +629,7 @@ def report_failed(
         )
 
     failure = DeliveryFailure(
+        kind=kind,
         reason=DeliveryFailureReason(reason),
         note=(note or "").strip() or None,
         photo_urls=list(photo_urls or []),
@@ -570,7 +647,7 @@ def report_failed(
     try:
         from app.services import notification_fanout
 
-        notification_fanout.fanout_delivery_failed(order=Order(**updated).toJson(), failure=failure)
+        notification_fanout.fanout_delivery_issue(order=Order(**updated).toJson(), failure=failure)
     except Exception as exc:
         import logging
 
@@ -749,5 +826,11 @@ def _fetch_orders_for_delivery(
         if "offer" in order_json and order_json["offer"]:
             for field in ("price", "margin", "unit_price", "total_price"):
                 order_json["offer"].pop(field, None)
+        if order_json.get("status") == OrderStatus.WAITING_FOR_COLLECTION.value:
+            # Whether the rider must type the store's code (orders assigned before codes existed
+            # keep the old tap). The code itself never leaves the seller's view.
+            from app.services import PickupCodeService
+
+            order_json["pickup_code_required"] = PickupCodeService.has_code(str(order_data.get("_id")))
         result.append(order_json)
     return result

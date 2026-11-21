@@ -517,6 +517,10 @@ DELIVERY_FAILURE_REASON_TEXT = {
     "wrong_address": "la dirección no es correcta",
     "nobody_to_receive": "no había quien recibiera",
     "other": "otro motivo",
+    "store_closed": "la tienda está cerrada",
+    "not_ready": "todavía no está lista",
+    "wrong_item": "no es la pieza correcta",
+    "damaged": "la pieza llegó dañada",
 }
 
 
@@ -609,11 +613,22 @@ def _send_one(notification: Optional[Notification]) -> None:
         send_notifications_batch([notification])
 
 
-def fanout_delivery_assigned(*, order: Dict[str, Any]) -> None:
+def fanout_delivery_assigned(*, order: Dict[str, Any], preparing: bool = False) -> None:
+    body = f"Recoger en {_store_name(order)}, entregar a {_buyer_name(order)}"
+    if preparing:
+        body += ". Todavía se está preparando; te avisamos cuando esté lista"
     _send_one(_rider_notification(
         order.get("delivery_assignment"), order, NotificationType.DELIVERY_ASSIGNED,
-        "Te asignaron una entrega",
-        f"Recoger en {_store_name(order)}, entregar a {_buyer_name(order)}",
+        "Te asignaron una entrega", body,
+    ))
+
+
+def fanout_delivery_ready(*, order: Dict[str, Any]) -> None:
+    """The store marked the order ready: the assigned rider can go and collect it."""
+    _send_one(_rider_notification(
+        order.get("delivery_assignment"), order, NotificationType.DELIVERY_READY,
+        "Ya está lista",
+        f"{_part_name(order)} en {_store_name(order)}. Pídele el código al encargado de la tienda.",
     ))
 
 
@@ -641,11 +656,131 @@ def fanout_delivery_reassigned(*, order: Dict[str, Any], previous_assignment: Op
 
 
 def fanout_delivery_canceled(*, order: Dict[str, Any]) -> None:
+    after_pickup = bool(order.get("picked_up_at"))
     _send_one(_rider_notification(
         order.get("delivery_assignment"), order, NotificationType.DELIVERY_CANCELED,
         "Cancelaron la orden",
-        f"{_part_name(order)}, {_store_name(order)}. No la recojas.",
+        f"{_part_name(order)}, {_store_name(order)}. "
+        + ("Devuélvela a la tienda." if after_pickup else "No la recojas."),
     ))
+
+
+def fanout_issue_resolved(*, order: Dict[str, Any], action: str, resolution: Dict[str, Any]) -> None:
+    """Someone acted on an open issue: the rider is told what to do now, and the party that did
+    not act is told what changed (buyer fixed it -> store; store rescheduled -> buyer)."""
+    role = (resolution.get("by") or {}).get("role")
+    when = _local_hhmm(order.get("to_be_delivered_time"))
+    rider_copy = {
+        "fix_and_retry": ("Datos corregidos", "El comprador corrigió los datos. Intenta de nuevo."),
+        "reschedule": ("Nuevo horario", f"Intenta de nuevo{f' a las {when}' if when else ''}."),
+        "return_to_store": ("Devuelve el paquete", "Devuelve el paquete a la tienda."),
+    }.get(action)
+    if rider_copy:
+        _send_one(_rider_notification(
+            order.get("delivery_assignment"), order, NotificationType.DELIVERY_ISSUE_RESOLVED, *rider_copy,
+        ))
+    part = _part_name(order)
+    if action == "fix_and_retry" and role != "store":
+        _notify_selling_group(
+            order, NotificationType.DELIVERY_ISSUE_RESOLVED, "El comprador corrigió los datos",
+            f"{part}: el repartidor lo intentará de nuevo.",
+        )
+    elif action in ("reschedule", "return_to_store") and role != "buyer":
+        _notify_buyer_group(
+            order, NotificationType.DELIVERY_ISSUE_RESOLVED, "Reprogramamos tu entrega",
+            f"{part}: " + (f"llegará a las {when}." if when and action == "reschedule" else "lo intentaremos de nuevo."),
+        )
+
+
+def _notify_selling_group(order: Dict[str, Any], notification_type: NotificationType, title: str, body: str) -> None:
+    """Every user of the selling group except the assigned rider (seller roles, push included)."""
+    group_id = _selling_group_id(order)
+    if not group_id:
+        return
+    rider_uid = str((order.get("delivery_assignment") or {}).get("user_id") or "")
+    order_id = _order_id(order)
+    url = order_management_v2_path(order_id, current_role=2)
+    notifications: List[Notification] = []
+    for group_found in _users_by_group_ids([group_id]):
+        owner_group = str(group_found.get("_id") or group_id)
+        for user_id in group_found.get("users") or []:
+            if str(user_id) == rider_uid:
+                continue
+            notifications.append(create_delivery_notification(
+                notification_type, title, body, order_id,
+                owner=str(user_id), owner_group=owner_group, navigate_to_url=url,
+                visible_roles=DELIVERY_SELLER_ROLES,
+            ))
+    if notifications:
+        send_notifications_batch(notifications)
+
+
+def fanout_delivery_handed_off(*, order: Dict[str, Any], unverified: bool = False) -> None:
+    """The rider collected the order. Without the code, the store is asked to check the parcel."""
+    rider = _rider_name(order.get("delivery_assignment") or {})
+    when = _local_hhmm(order.get("picked_up_at"))
+    if unverified:
+        title = "Recogida sin código"
+        body = f"{rider} recogió {_part_name(order)} con una foto. Revisa que se llevó el paquete correcto."
+    else:
+        title = f"{rider} recogió la orden"
+        body = f"{_part_name(order)}" + (f" · {when}" if when else "")
+    _notify_selling_group(order, NotificationType.DELIVERY_HANDED_OFF, title, body)
+
+
+def _notify_buyer_group(order: Dict[str, Any], notification_type: NotificationType, title: str, body: str) -> None:
+    creator_group = str((order.get("part_request") or {}).get("creatorGroup") or "")
+    if not creator_group:
+        return
+    order_id = _order_id(order)
+    url = order_management_v2_path(order_id, current_role=1)
+    notifications: List[Notification] = []
+    for group_found in _users_by_group_ids([creator_group]):
+        owner_group = str(group_found.get("_id") or creator_group)
+        for user_id in group_found.get("users") or []:
+            notifications.append(create_delivery_notification(
+                notification_type, title, body, order_id,
+                owner=str(user_id), owner_group=owner_group, navigate_to_url=url,
+            ))
+    if notifications:
+        send_notifications_batch(notifications)
+
+
+def fanout_pickup_code_guessing(*, order_id: str) -> None:
+    """The rider missed the pickup code too many times and it was retired: the store is told to
+    check who is at the counter. The alert never contains the code."""
+    from bson import ObjectId
+
+    from app.repositories import OrderRepository as orderRepository
+
+    if not ObjectId.is_valid(str(order_id)):
+        return
+    order = orderRepository.find_one({"_id": ObjectId(str(order_id))})
+    if not order:
+        return
+    order = {**order, "_id": str(order["_id"])}
+    _notify_selling_group(
+        order, NotificationType.DELIVERY_ISSUE, "Código de recogida bloqueado",
+        f"{_part_name(order)}: el repartidor falló el código muchas veces. "
+        "Ya no se acepta; si es quien esperas, puede recoger con una foto.",
+    )
+
+
+def fanout_delivery_issue(*, order: Dict[str, Any], failure: Dict[str, Any]) -> None:
+    """An attempt failed: the store is told (it can reschedule or return), and for a failed
+    delivery the buyer is told too (they can fix the address, phone or time)."""
+    reason = DELIVERY_FAILURE_REASON_TEXT.get(str(failure.get("reason") or ""), "otro motivo")
+    note = (failure.get("note") or "").strip()
+    if failure.get("reason") == "other" and note:
+        reason = f"{reason} ({note})"
+    pickup = failure.get("kind") == "pickup"
+    title = "No se pudo recoger" if pickup else "No se pudo entregar"
+    _notify_selling_group(order, NotificationType.DELIVERY_ISSUE, title, f"{_part_name(order)}: {reason}.")
+    if not pickup:
+        _notify_buyer_group(
+            order, NotificationType.DELIVERY_ISSUE, "No pudimos entregar tu pedido",
+            f"{_part_name(order)}: {reason}. Corrige los datos para que lo intentemos de nuevo.",
+        )
 
 
 def fanout_delivery_failed(*, order: Dict[str, Any], failure: Dict[str, Any]) -> None:

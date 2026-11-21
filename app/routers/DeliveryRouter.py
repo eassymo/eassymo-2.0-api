@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Body, Query, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from app.schemas.DeliveryFailure import (
     DELIVERY_FAILURE_MAX_NOTE_LEN,
@@ -162,19 +162,14 @@ def link_invite(token: str, request: Request):
 
 
 # ---------------------------------------------------------------------------
-# POST /delivery/confirm-pickup  — guest confirms physical collection
+# POST /delivery/confirm-pickup  — the assigned rider (account or guest) confirms collection
 # ---------------------------------------------------------------------------
-
-@deliveryRouter.post("/delivery/confirm-pickup", description="Guest confirms they have physically collected the order")
+@deliveryRouter.post("/delivery/confirm-pickup", description="Rider confirms they collected the order: the store's code, or a photo when the store can't confirm")
 def confirm_pickup(request: Request, data: dict = Body(...)):
+    user_uid, guest_token = _caller(request)
+    if not user_uid and not guest_token:
+        return _missing_guest_token()
     try:
-        guest_token = request.headers.get("X-Guest-Token")
-        if not guest_token:
-            return JSONResponse(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                content=get_unsuccessful_response("Missing X-Guest-Token header"),
-            )
-
         order_id = data.get("order_id")
         if not order_id:
             return JSONResponse(
@@ -183,15 +178,19 @@ def confirm_pickup(request: Request, data: dict = Body(...)):
             )
 
         result = DeliveryService.confirm_pickup(
+            order_id,
             guest_token=guest_token,
-            order_id=order_id,
-            delivery_notes_seller=data.get("delivery_notes_seller"),
-            delivery_pictures_seller=data.get("delivery_pictures_seller"),
+            user_uid=user_uid,
+            code=data.get("code"),
+            # delivery_* are the names the first client sent for the same two fields
+            photo_urls=data.get("photo_urls") or data.get("delivery_pictures_seller"),
+            notes=data.get("notes") if data.get("notes") is not None else data.get("delivery_notes_seller"),
         )
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(result))
     except Exception as e:
-        status_code = e.status_code if hasattr(e, "status_code") else status.HTTP_500_INTERNAL_SERVER_ERROR
-        return JSONResponse(status_code=status_code, content=get_unsuccessful_response(e))
+        return _error_response(e)
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -202,6 +201,8 @@ def _error_response(e: Exception) -> JSONResponse:
     # Errors with a machine code the client branches on (guest_token_inactive, route_estimates_unavailable).
     if isinstance(e, (DeliveryService.GuestTokenInactive, RouteService.RouteEstimatesUnavailable)):
         return JSONResponse(status_code=e.status_code, content={"code": e.code, "error": str(e.detail)})
+    if isinstance(e, DeliveryService.PickupCodeError):
+        return JSONResponse(status_code=e.status_code, content={"code": e.code, "error": str(e.detail), **e.extra})
     status_code = e.status_code if hasattr(e, "status_code") else status.HTTP_500_INTERNAL_SERVER_ERROR
     return JSONResponse(status_code=status_code, content=get_unsuccessful_response(e))
 
@@ -252,6 +253,7 @@ def mark_guest_notifications_read(request: Request, data: GuestNotificationsRead
 class ReportFailedBody(BaseModel):
     order_id: str = Field(..., min_length=1)
     reason: DeliveryFailureReason
+    kind: Literal["pickup", "delivery"] = "delivery"
     note: Optional[str] = Field(None, max_length=DELIVERY_FAILURE_MAX_NOTE_LEN)
     photo_urls: List[str] = Field(default_factory=list, max_length=DELIVERY_FAILURE_MAX_PHOTOS)
     client_attempt_id: Optional[str] = Field(None, max_length=100)
@@ -275,6 +277,7 @@ def report_failed(request: Request, data: ReportFailedBody):
         result = DeliveryService.report_failed(
             order_id=data.order_id,
             reason=data.reason,
+            kind=data.kind,
             note=data.note,
             photo_urls=data.photo_urls,
             client_attempt_id=data.client_attempt_id,

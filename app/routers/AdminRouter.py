@@ -40,6 +40,22 @@ def _err(exc, code=status.HTTP_500_INTERNAL_SERVER_ERROR):
     return JSONResponse(status_code=status_code, content=get_unsuccessful_response(detail))
 
 
+# ── Delivery issues (support) ────────────────────────────────────────────────
+
+@adminRouter.get("/delivery-issues", description="Open (or resolved) delivery issues, oldest first")
+def delivery_issues(
+    status: str = Query("open", pattern="^(open|resolved)$"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+):
+    try:
+        from app.services import DeliveryIssueAdminService
+
+        return _ok(DeliveryIssueAdminService.list_issues(status=status, skip=skip, limit=limit))
+    except Exception as e:
+        return _err(e)
+
+
 # ── Metrics ─────────────────────────────────────────────────────────────────
 
 @adminRouter.get("/overview")
