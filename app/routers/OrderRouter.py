@@ -5,7 +5,8 @@ from app.services import OrderService
 from app.services import DeliveryService
 from app.services import authz
 from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response, error_json_response
-from typing import Optional
+from typing import Any, Dict, Literal, Optional
+from pydantic import BaseModel
 
 # Role value for delivery persons (DEALER_SHOP)
 _DELIVERY_PERSON_ROLE = "215"
@@ -41,6 +42,7 @@ orderRouter = APIRouter(prefix="/order")
 @orderRouter.get("", description="returns the list of orders", tags=["Orders"])
 @orderRouter.get("/", include_in_schema=False)
 def find(
+    request: Request,
     id: str = Query(None, title="order_id"),
     group_id: str = Query(None, title="group_id"),
     current_role: str = Query(None, title="current_role"),
@@ -48,7 +50,8 @@ def find(
 ):
     try:
         response = OrderService.find(
-            id, group_id, current_role, search_argument)
+            id, group_id, current_role, search_argument,
+            requesting_user_uid=(getattr(request.state, "user", None) or {}).get("uid"))
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
         return error_json_response(e)
@@ -234,10 +237,39 @@ def change_order_status(request: Request, data: dict = Body(...)):
         return JSONResponse(status_code=status_code, content=get_unsuccessful_response(e))
 
 
-@orderRouter.get("/{id}", description="Get order by id", tags=["Orders"], response_model=Order)
-def find_by_id(id: str):
+class ResolveIssueBody(BaseModel):
+    action: Literal["fix_and_retry", "reschedule", "return_to_store", "confirm_return", "cancel"]
+    note: Optional[str] = None
+    new_time: Optional[str] = None
+    new_rider: Optional[Dict[str, Any]] = None
+    contact: Optional[Dict[str, Any]] = None
+
+
+@orderRouter.post("/{id}/resolve-issue", description="Store, buyer or support acts on an open delivery issue", tags=["Orders"])
+def resolve_issue(request: Request, id: str, data: ResolveIssueBody):
     try:
-        response = OrderService.find_by_id(id)
+        from app.services import IssueResolutionService
+
+        user = getattr(request.state, "user", None) or {}
+        uid = user.get("uid")
+        if not uid:
+            return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED,
+                                content=get_unsuccessful_response("User not authenticated"))
+        response = IssueResolutionService.resolve_issue(
+            id, data.action, uid,
+            is_support=user.get("super_admin") is True,
+            note=data.note, new_time=data.new_time, new_rider=data.new_rider, contact=data.contact,
+        )
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+    except Exception as e:
+        return error_json_response(e)
+
+
+@orderRouter.get("/{id}", description="Get order by id", tags=["Orders"], response_model=Order)
+def find_by_id(request: Request, id: str):
+    try:
+        response = OrderService.find_by_id(
+            id, requesting_user_uid=(getattr(request.state, "user", None) or {}).get("uid"))
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
         return error_json_response(e)

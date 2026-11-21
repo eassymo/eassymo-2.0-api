@@ -108,6 +108,14 @@ class Order(BaseModel):
     delivery_received_by_name: Optional[str] = Field(None)
     packaged_notes_seller: Optional[str] = Field(None)
     packaged_pictures_seller: Optional[List[str]] = Field([])
+    # Evidence the rider leaves when collecting at the store; never shares a field with the delivery photos.
+    pickup_notes_seller: Optional[str] = Field(None)
+    pickup_pictures_seller: Optional[List[str]] = Field([])
+    # Pickup handoff: when the store marked the order ready, when the rider collected it and how it was confirmed.
+    ready_at: Optional[datetime] = Field(None)
+    picked_up_at: Optional[datetime] = Field(None)
+    picked_up_via: Optional[str] = Field(None, description="code | rider_unverified")
+    picked_up_by: Optional[dict] = Field(None)
     delivery_assignment: Optional[DeliveryAssignment] = Field(None)
     # Failed delivery attempts ("No pude entregar"); recorded without changing status.
     delivery_failures: Optional[List[DeliveryFailure]] = Field(None)
@@ -150,6 +158,11 @@ class Order(BaseModel):
 
         if self.delivery_assignment is not None:
             data["delivery_assignment"] = self.delivery_assignment.toJson()
+
+        if self.ready_at is not None:
+            data["ready_at"] = serialize_datetime(self.ready_at)
+        if self.picked_up_at is not None:
+            data["picked_up_at"] = serialize_datetime(self.picked_up_at)
 
         if self.delivery_failures is not None:
             data["delivery_failures"] = [failure.toJson() for failure in self.delivery_failures]

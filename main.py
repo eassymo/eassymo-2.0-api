@@ -84,6 +84,15 @@ def _init_whatsapp_usage():
         print(f"WARNING: could not init whatsapp usage limits: {exc}")
 
 
+def _init_pickup_codes():
+    try:
+        from app.repositories import PickupCodeRepository as pickup_codes_repo
+
+        pickup_codes_repo.ensure_indexes()
+    except Exception as exc:  # never block startup on this index
+        print(f"WARNING: could not init pickup code index: {exc}")
+
+
 @asynccontextmanager
 async def app_lifespan(_app: FastAPI):
     from app.routers.WhatsappRouter import inbound_service
@@ -91,6 +100,7 @@ async def app_lifespan(_app: FastAPI):
     inbound_service.start_intake_recovery()
     _log_missing_grant_keys()
     _init_whatsapp_usage()
+    _init_pickup_codes()
     try:
         yield
     finally:

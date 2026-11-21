@@ -76,7 +76,7 @@ def env():
             patch.object(svc.orderRepository, "find_one", side_effect=store.find_one),
             patch.object(svc.orderRepository, "push_delivery_failure", side_effect=store.push_delivery_failure),
             patch.object(svc.orderRepository, "edit", side_effect=AssertionError("status must not be rewritten")),
-            patch.object(notification_fanout, "fanout_delivery_failed"),
+            patch.object(notification_fanout, "fanout_delivery_issue"),
             patch.object(svc.guestProfileRepository, "find_by_token",
                          return_value={"token": TOKEN, "name": "Beto", "status": GuestDeliveryProfileStatus.ACTIVE}),
             patch.object(svc, "_assert_has_delivery_role"),

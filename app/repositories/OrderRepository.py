@@ -205,3 +205,37 @@ def push_delivery_failure(id: ObjectId, failure: dict, client_attempt_id: Option
         {"$push": {"delivery_failures": failure}},
         return_document=True,
     )
+
+
+def mark_return_requested(id: ObjectId, failure_id: str):
+    """The store asked the rider to bring the parcel back; the issue stays open."""
+    return database.db["Orders"].find_one_and_update(
+        {"_id": id, "delivery_failures": {"$elemMatch": {"id": failure_id, "resolution": None}}},
+        {"$set": {"delivery_failures.$.return_requested": True}},
+        return_document=True,
+    )
+
+
+def apply_update(id: ObjectId, set_: Optional[Dict[str, Any]] = None, unset: Optional[list] = None):
+    """Targeted update (dotted keys allowed); unlike edit() it can also remove fields."""
+    update: Dict[str, Any] = {}
+    if set_:
+        update["$set"] = set_
+    if unset:
+        update["$unset"] = {k: "" for k in unset}
+    if not update:
+        return find_one({"_id": id})
+    return database.db["Orders"].find_one_and_update({"_id": id}, update, return_document=True)
+
+
+def resolve_delivery_failure(id: ObjectId, failure_id: str, resolution: dict):
+    """Marks one open failure resolved (positional update); None when it was already resolved."""
+    return database.db["Orders"].find_one_and_update(
+        {"_id": id, "delivery_failures": {"$elemMatch": {"id": failure_id, "resolution": None}}},
+        {"$set": {"delivery_failures.$.resolution": resolution}},
+        return_document=True,
+    )
+
+
+def aggregate(pipeline: list):
+    return list(database.db["Orders"].aggregate(pipeline))
