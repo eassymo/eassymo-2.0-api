@@ -75,17 +75,12 @@ def test_unread_first_then_recent(env):
     assert r["unread_conversations"] == 1
 
 
-def test_waiting_request_only_for_creator(env):
+def test_request_without_messages_is_not_listed(env):
     rid = _rid(3)
     env["requests"].append(_request(rid, created="2026-11-02T08:00:00Z"))
-    r = svc.list_conversations(G, UID)
-    assert len(r["items"]) == 1
-    item = r["items"][0]
-    assert item["kind"] == "waiting_request"
-    assert item["last_message"] is None
-    assert item["activity_at"] == "2026-11-02T08:00:00Z"
+    assert svc.list_conversations(G, UID)["items"] == []
 
-    env["requests"][0] = _request(rid, creator=OTHER)
+    env["chats"].append({"_id": ObjectId(), "requestId": rid, "messages": []})
     assert svc.list_conversations(G, UID)["items"] == []
 
 
@@ -161,9 +156,10 @@ def test_filters(env):
     ]
     ids = lambda f: {i["entity_id"] for i in svc.list_conversations(G, UID, filter=f)["items"]}
     assert ids("unread") == {unread_rid}
-    assert ids("request") == {read_rid, unread_rid, wait_rid}
+    assert ids("request") == {read_rid, unread_rid}
     assert ids("order") == {oid}
-    assert ids("waiting") == {wait_rid}
+    # Old clients may still send "waiting": it is accepted and lists nothing
+    assert ids("waiting") == set()
 
 
 def test_search_accent_insensitive(env):

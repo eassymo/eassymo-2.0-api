@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 from app.repositories import ConversationRepository as repo
 from app.services.ChatService import _message_is_unread_for_user, _user_group_read_key
 
+# "waiting" is kept so older clients that still send it get an empty list, not a 400
 FILTERS = ("all", "unread", "request", "order", "waiting")
 
 OPEN_REQUEST_STATUSES = {"Created", "Pending"}
@@ -106,8 +107,8 @@ def _build_items(group_id: str, uid: str) -> List[Dict[str, Any]]:
     creator_ids = {str(r.get("creatorGroup")) for r in requests.values() if str(r.get("creatorGroup")) != gid}
     names = repo.group_names(creator_ids) if creator_ids else {}
 
+    # Only chats that have messages: a request nobody has written on is not a conversation
     items: List[Dict[str, Any]] = []
-    requests_with_messages = set()
 
     for chat in chats:
         messages = chat.get("messages") or []
@@ -118,7 +119,6 @@ def _build_items(group_id: str, uid: str) -> List[Dict[str, Any]]:
             request = requests.get(str(request_id))
             if not request or not messages:
                 continue
-            requests_with_messages.add(str(request_id))
             creator = str(request.get("creatorGroup") or "")
             if creator == gid:
                 counterpart = _latest_other_group(messages, gid)
@@ -161,25 +161,6 @@ def _build_items(group_id: str, uid: str) -> List[Dict[str, Any]]:
                 "activity_at": _iso(messages[-1].get("createdAt")),
             })
 
-    for rid, request in requests.items():
-        if rid in requests_with_messages:
-            continue
-        if str(request.get("creatorGroup") or "") != gid or not _request_is_open(request):
-            continue
-        items.append({
-            "id": f"waiting-{rid}",
-            "kind": "waiting_request",
-            "type": "request",
-            "entity_id": rid,
-            "counterpart": None,
-            "context_title": _request_context(request),
-            "status": request.get("status"),
-            "is_closed": False,
-            "last_message": None,
-            "unread_count": 0,
-            "activity_at": _iso(request.get("createdAt")),
-        })
-
     items.sort(key=lambda i: (i["unread_count"] > 0, _sort_key(i["activity_at"]), i["id"]), reverse=True)
     return items
 
@@ -189,7 +170,7 @@ def _matches(item: Dict[str, Any], filter: str, q: str) -> bool:
         return False
     if filter in ("request", "order") and item["type"] != filter:
         return False
-    if filter == "waiting" and item["kind"] != "waiting_request":
+    if filter == "waiting":
         return False
     if q:
         haystack = " ".join([
