@@ -133,6 +133,8 @@ class PartRequest(BaseModel):
         "marketplace", description="marketplace | mostrador")
     mostrador_folio_id: Optional[str] = Field(None)
     mostrador_piece_id: Optional[str] = Field(None)
+    last_cancellation: Optional[dict] = Field(
+        None, description="{order_id, store_group_id, store_name, reason, note, at} of the latest seller cancel")
     mostrador_delivery_mode: Optional[str] = Field(
         None,
         description="tienda|domicilio|pickup, mirrors MostradorPieceOrder.delivery_mode",
@@ -183,6 +185,9 @@ class PartRequest(BaseModel):
         if data.get("status") is not None:
             status = self.status
             data["status"] = status.value if isinstance(status, PartRequestStatus) else status
+
+        if isinstance(data.get("last_cancellation"), dict) and isinstance(data["last_cancellation"].get("at"), datetime):
+            data["last_cancellation"] = {**data["last_cancellation"], "at": serialize_datetime(data["last_cancellation"]["at"])}
 
         fulfillment = self.fulfillment_type
         data["fulfillment_type"] = (

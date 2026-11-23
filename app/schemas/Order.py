@@ -4,7 +4,7 @@ from app.schemas.PartRequest import PartRequest
 from enum import Enum
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from typing import List, Optional
+from typing import List, Literal, Optional
 from bson import ObjectId
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -31,6 +31,23 @@ class DeliveryAssignment(BaseModel):
         data = self.model_dump()
         data["type"] = self.type.value
         data["assigned_at"] = serialize_datetime(self.assigned_at)
+        return data
+
+
+CancelReason = Literal["sold", "no_stock", "damaged", "other"]
+
+
+class OrderCancellation(BaseModel):
+    by: Literal["seller", "support"]
+    group_id: str
+    user_id: str
+    reason: CancelReason
+    note: Optional[str] = None
+    at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo('UTC')))
+
+    def toJson(self):
+        data = self.model_dump()
+        data["at"] = serialize_datetime(self.at)
         return data
 
 
@@ -123,6 +140,7 @@ class Order(BaseModel):
     origin: Optional[str] = Field("marketplace", description="marketplace | mostrador")
     mostrador_folio_id: Optional[str] = Field(
         None, description="source MostradorFolios _id when origin=mostrador")
+    cancellation: Optional[OrderCancellation] = Field(None, description="Who canceled the order and why")
 
     @root_validator(pre=True)
     def convert_objectId(cls, values):
@@ -163,6 +181,9 @@ class Order(BaseModel):
             data["ready_at"] = serialize_datetime(self.ready_at)
         if self.picked_up_at is not None:
             data["picked_up_at"] = serialize_datetime(self.picked_up_at)
+
+        if self.cancellation is not None:
+            data["cancellation"] = self.cancellation.toJson()
 
         if self.delivery_failures is not None:
             data["delivery_failures"] = [failure.toJson() for failure in self.delivery_failures]
