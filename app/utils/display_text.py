@@ -1,6 +1,7 @@
 """Display-text helpers; same rules as the client's dashboard-v3/lib/display-name.ts."""
 from datetime import datetime
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 CONNECTORS = {"de", "del", "la", "las", "los", "y", "e", "o", "en", "con"}
 
@@ -51,8 +52,18 @@ def vehicle_label(vehicle: Optional[dict]) -> str:
 
 
 def local_time_label(value) -> str:
-    """'3:17 p. m.' style label for a datetime (UTC-naive values are shown as given)."""
+    """'3:17 p. m.' in Mexico City time; accepts a datetime or an ISO string, "" when missing."""
+    if not value:
+        return ""
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return ""
     if not isinstance(value, datetime):
         return ""
-    hour = value.hour % 12 or 12
-    return f"{hour}:{value.minute:02d} {'a. m.' if value.hour < 12 else 'p. m.'}"
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=ZoneInfo("UTC"))
+    local = value.astimezone(ZoneInfo("America/Mexico_City"))
+    hour = local.hour % 12 or 12
+    return f"{hour}:{local.minute:02d} {'a. m.' if local.hour < 12 else 'p. m.'}"

@@ -1,6 +1,7 @@
 from typing import Dict, Any, List, Optional
 from app.schemas.Notification import NotificationType, Notification
 from app.schemas.Users import UserRoles
+from app.utils.display_text import display_name, sentence_case, local_time_label
 
 
 DEFAULT_ROLES = [
@@ -9,6 +10,63 @@ DEFAULT_ROLES = [
 ]
 
 
+def structured_notification(
+    *,
+    type: NotificationType,
+    owner: str,
+    owner_group: str,
+    title: str,
+    body: str,
+    side: str,
+    navigate_to_url: str,
+    meta_data: Dict[str, Any],
+    vehicle: str = "",
+    action: Optional[Dict[str, str]] = None,
+    decision_key: Optional[str] = None,
+    visible_roles: Optional[List[str]] = None,
+) -> Notification:
+    """A v2 notice: title/body/side drive the screen and the push; message stays for older clients."""
+    return Notification(
+        type=type,
+        message=f"{title}. {body}" if body else title,
+        title=title,
+        body=body or None,
+        side=side,
+        vehicle=vehicle or None,
+        action=action,
+        decision_key=decision_key,
+        owner=owner,
+        ownerGroup=owner_group,
+        visibleRoles=visible_roles if visible_roles is not None else DEFAULT_ROLES,
+        navigateToUrl=navigate_to_url,
+        read=False,
+        metaData=meta_data,
+    )
+
+
+# ── Copy helpers ─────────────────────────────────────────────────────────────
+
+def _money(price: Optional[float]) -> str:
+    if price is None:
+        return ""
+    return f"${int(price):,}" if float(price).is_integer() else f"${price:,.2f}"
+
+
+def _join(*parts: Optional[str]) -> str:
+    return " · ".join(p for p in parts if p)
+
+
+def _pieces(count: Optional[int]) -> str:
+    if not count:
+        return ""
+    return f"{count} pieza" if count == 1 else f"{count} piezas"
+
+
+# ── Builders ─────────────────────────────────────────────────────────────────
+# Title = who did what in the reader's words (also the push title); body = the part and the datum
+# that changed. Builders that need data the old call sites did not pass take it as keyword arguments
+# and drop that part of the body when absent.
+
 def create_part_request_notification(
     store_name: str,
     part_name: str,
@@ -16,21 +74,19 @@ def create_part_request_notification(
     owner_group: str,
     navigate_to_url: str,
     meta_data: Dict[str, Any],
-    visible_roles: Optional[List[str]] = None
+    visible_roles: Optional[List[str]] = None,
+    *,
+    vehicle: str = "",
 ) -> Notification:
-    if visible_roles is None:
-        visible_roles = DEFAULT_ROLES
-    
-    return Notification(
+    return structured_notification(
         type=NotificationType.PART_REQUEST_CREATED,
-        message=f"El {store_name} está buscando {part_name} pieza. Envía tu mejor oferta y sorpréndelos con tu servicio.",
-        owner=owner,
-        ownerGroup=owner_group,
-        visibleRoles=visible_roles,
-        navigateToUrl=navigate_to_url,
-        read=False,
-        metaData=meta_data
+        title=f"{display_name(store_name)} busca una pieza",
+        body=sentence_case(part_name),
+        side="sell", vehicle=vehicle,
+        owner=owner, owner_group=owner_group, visible_roles=visible_roles,
+        navigate_to_url=navigate_to_url, meta_data=meta_data,
     )
+
 
 def create_part_request_reminder_notification(
     store_name: str,
@@ -39,21 +95,23 @@ def create_part_request_reminder_notification(
     owner_group: str,
     navigate_to_url: str,
     meta_data: Dict[str, Any],
-    visible_roles: Optional[List[str]] = None
+    visible_roles: Optional[List[str]] = None,
+    *,
+    request_id: Optional[str] = None,
+    vehicle: str = "",
 ) -> Notification:
-    if visible_roles is None:
-        visible_roles = DEFAULT_ROLES
-
-    return Notification(
+    request_id = request_id or meta_data.get("requestId")
+    return structured_notification(
         type=NotificationType.PART_REQUEST_REMINDER,
-        message=f"Recuerda que el {store_name} está buscando {part_name} pieza. Envía tu mejor oferta y sorpréndelos con tu servicio.",
-        owner=owner,
-        ownerGroup=owner_group,
-        visibleRoles=visible_roles,
-        navigateToUrl=navigate_to_url,
-        read=False,
-        metaData=meta_data
+        title=f"{display_name(store_name)} sigue esperando tu cotización",
+        body=sentence_case(part_name),
+        side="sell", vehicle=vehicle,
+        action={"label": "Cotizar", "href": navigate_to_url},
+        decision_key=f"request:{request_id}:quote:{owner_group}" if request_id else None,
+        owner=owner, owner_group=owner_group, visible_roles=visible_roles,
+        navigate_to_url=navigate_to_url, meta_data=meta_data,
     )
+
 
 def create_offer_workshop_approval(
     store_name: str,
@@ -62,21 +120,24 @@ def create_offer_workshop_approval(
     owner_group: str,
     navigate_to_url: str,
     meta_data: Dict[str, Any],
-    visible_roles: Optional[List[str]] = None
+    visible_roles: Optional[List[str]] = None,
+    *,
+    price: Optional[float] = None,
+    vehicle: str = "",
+    offer_id: Optional[str] = None,
 ) -> Notification:
-    if visible_roles is None:
-        visible_roles = DEFAULT_ROLES
-
-    return Notification(
+    offer_id = offer_id or meta_data.get("offerId")
+    return structured_notification(
         type=NotificationType.WORKSHOP_PENDING_APPROVAL,
-        message=f"El {store_name} acaba de ofertar para tu {part_name}. aprueba la pieza para su revisión por el comisionado",
-        owner=owner,
-        ownerGroup=owner_group,
-        visibleRoles=visible_roles,
-        navigateToUrl=navigate_to_url,
-        read=False,
-        metaData=meta_data
+        title="Una oferta espera tu aprobación",
+        body=_join(sentence_case(part_name), _money(price), display_name(store_name)),
+        side="buy", vehicle=vehicle,
+        action={"label": "Revisar", "href": navigate_to_url},
+        decision_key=f"offer:{offer_id}:approve" if offer_id else None,
+        owner=owner, owner_group=owner_group, visible_roles=visible_roles,
+        navigate_to_url=navigate_to_url, meta_data=meta_data,
     )
+
 
 def create_offer_notification(
     store_name: str,
@@ -85,20 +146,18 @@ def create_offer_notification(
     owner_group: str,
     navigate_to_url: str,
     meta_data: Dict[str, Any],
-    visible_roles: Optional[List[str]] = None
+    visible_roles: Optional[List[str]] = None,
+    *,
+    price: Optional[float] = None,
+    vehicle: str = "",
 ) -> Notification:
-    if visible_roles is None:
-        visible_roles = DEFAULT_ROLES
-    
-    return Notification(
+    return structured_notification(
         type=NotificationType.OFFER_CREATED,
-        message=f"El {store_name} acaba de ofertar para tu {part_name}.",
-        owner=owner,
-        ownerGroup=owner_group,
-        visibleRoles=visible_roles,
-        navigateToUrl=navigate_to_url,
-        read=False,
-        metaData=meta_data
+        title=f"Nueva oferta de {display_name(store_name)}",
+        body=_join(sentence_case(part_name), _money(price)),
+        side="buy", vehicle=vehicle,
+        owner=owner, owner_group=owner_group, visible_roles=visible_roles,
+        navigate_to_url=navigate_to_url, meta_data=meta_data,
     )
 
 
@@ -110,21 +169,22 @@ def create_offer_selected_notification(
     owner_group: str,
     navigate_to_url: str,
     meta_data: Dict[str, Any],
-    visible_roles: Optional[List[str]] = None
+    visible_roles: Optional[List[str]] = None,
+    *,
+    price: Optional[float] = None,
+    vehicle: str = "",
 ) -> Notification:
-    if visible_roles is None:
-        visible_roles = DEFAULT_ROLES
-    
-    return Notification(
+    return structured_notification(
         type=NotificationType.OFFER_SELECTED,
-        message=f"Felicidades {store_name} ordenó tu oferta de la pieza {part_name}. Pedido núm: {order_id}.",
-        owner=owner,
-        ownerGroup=owner_group,
-        visibleRoles=visible_roles,
-        navigateToUrl=navigate_to_url,
-        read=False,
-        metaData=meta_data
+        title=f"{display_name(store_name)} pidió tu oferta",
+        body=f"{_join(sentence_case(part_name), _money(price))}. Confirma la hora de entrega.",
+        side="sell", vehicle=vehicle,
+        action={"label": "Confirmar hora", "href": navigate_to_url},
+        decision_key=f"order:{order_id}:confirm" if order_id else None,
+        owner=owner, owner_group=owner_group, visible_roles=visible_roles,
+        navigate_to_url=navigate_to_url, meta_data=meta_data,
     )
+
 
 def create_offer_selected_by_commissioner_to_origin_group_notification(
     store_name: str,
@@ -134,20 +194,20 @@ def create_offer_selected_by_commissioner_to_origin_group_notification(
     owner_group: str,
     navigate_to_url: str,
     meta_data: Dict[str, Any],
-    visible_roles: Optional[List[str]] = None
+    visible_roles: Optional[List[str]] = None,
+    *,
+    price: Optional[float] = None,
+    seller_name: str = "",
+    vehicle: str = "",
 ) -> Notification:
-    if visible_roles is None:
-        visible_roles = DEFAULT_ROLES
-    
-    return Notification(
+    # store_name is the commissioner (kept for call sites); the seller is shown when known.
+    return structured_notification(
         type=NotificationType.OFFER_SELECTED,
-        message=f"El comisionado {store_name} ordenó la oferta de la pieza {part_name}. Pedido núm: {order_id}.",
-        owner=owner,
-        ownerGroup=owner_group,
-        visibleRoles=visible_roles,
-        navigateToUrl=navigate_to_url,
-        read=False,
-        metaData=meta_data
+        title="Tu comisionado pidió una pieza",
+        body=_join(sentence_case(part_name), _money(price), display_name(seller_name or store_name)),
+        side="buy", vehicle=vehicle,
+        owner=owner, owner_group=owner_group, visible_roles=visible_roles,
+        navigate_to_url=navigate_to_url, meta_data=meta_data,
     )
 
 
@@ -159,20 +219,19 @@ def create_order_confirmed_notification(
     owner_group: str,
     navigate_to_url: str,
     meta_data: Dict[str, Any],
-    visible_roles: Optional[List[str]] = None
+    visible_roles: Optional[List[str]] = None,
+    *,
+    delivery_time: Any = None,
+    vehicle: str = "",
 ) -> Notification:
-    if visible_roles is None:
-        visible_roles = DEFAULT_ROLES
-    
-    return Notification(
+    when = local_time_label(delivery_time)
+    return structured_notification(
         type=NotificationType.ORDER_CONFIRMED,
-        message=f"El negocio {store_name} está preparando tu pieza {part_name}. Pedido núm {order_id}",
-        owner=owner,
-        ownerGroup=owner_group,
-        visibleRoles=visible_roles,
-        navigateToUrl=navigate_to_url,
-        read=False,
-        metaData=meta_data
+        title=f"{display_name(store_name)} está preparando tu pedido",
+        body=_join(sentence_case(part_name), f"llega {when}" if when else ""),
+        side="buy", vehicle=vehicle,
+        owner=owner, owner_group=owner_group, visible_roles=visible_roles,
+        navigate_to_url=navigate_to_url, meta_data=meta_data,
     )
 
 
@@ -184,20 +243,17 @@ def create_order_ready_to_be_sent_notification(
     owner_group: str,
     navigate_to_url: str,
     meta_data: Dict[str, Any],
-    visible_roles: Optional[List[str]] = None
+    visible_roles: Optional[List[str]] = None,
+    *,
+    vehicle: str = "",
 ) -> Notification:
-    if visible_roles is None:
-        visible_roles = DEFAULT_ROLES
-    
-    return Notification(
+    return structured_notification(
         type=NotificationType.ORDER_READY_TO_BE_SENT,
-        message=f"El negocio {store_name} reporta que tu pieza {part_name} está lista para envío. Pedido núm {order_id}",
-        owner=owner,
-        ownerGroup=owner_group,
-        visibleRoles=visible_roles,
-        navigateToUrl=navigate_to_url,
-        read=False,
-        metaData=meta_data
+        title="Tu pedido está listo para salir",
+        body=_join(sentence_case(part_name), display_name(store_name)),
+        side="buy", vehicle=vehicle,
+        owner=owner, owner_group=owner_group, visible_roles=visible_roles,
+        navigate_to_url=navigate_to_url, meta_data=meta_data,
     )
 
 
@@ -209,20 +265,18 @@ def create_order_sent_notification(
     owner_group: str,
     navigate_to_url: str,
     meta_data: Dict[str, Any],
-    visible_roles: Optional[List[str]] = None
+    visible_roles: Optional[List[str]] = None,
+    *,
+    rider_name: str = "",
+    vehicle: str = "",
 ) -> Notification:
-    if visible_roles is None:
-        visible_roles = DEFAULT_ROLES
-    
-    return Notification(
+    return structured_notification(
         type=NotificationType.ORDER_SENT,
-        message=f"El negocio {store_name} reporta que tu pieza {part_name} está en ruta. Pedido núm {order_id}",
-        owner=owner,
-        ownerGroup=owner_group,
-        visibleRoles=visible_roles,
-        navigateToUrl=navigate_to_url,
-        read=False,
-        metaData=meta_data
+        title="Tu pedido va en camino",
+        body=_join(sentence_case(part_name), f"con {rider_name}" if rider_name else ""),
+        side="buy", vehicle=vehicle,
+        owner=owner, owner_group=owner_group, visible_roles=visible_roles,
+        navigate_to_url=navigate_to_url, meta_data=meta_data,
     )
 
 
@@ -233,20 +287,21 @@ def create_order_received_notification(
     owner_group: str,
     navigate_to_url: str,
     meta_data: Dict[str, Any],
-    visible_roles: Optional[List[str]] = None
+    visible_roles: Optional[List[str]] = None,
+    *,
+    buyer_name: str = "",
+    received_at: Any = None,
+    vehicle: str = "",
 ) -> Notification:
-    if visible_roles is None:
-        visible_roles = DEFAULT_ROLES
-    
-    return Notification(
+    """Goes to the selling store: the buyer already knows they received it."""
+    who = display_name(buyer_name) or "Tu cliente"
+    return structured_notification(
         type=NotificationType.ORDER_RECIEVED,
-        message=f"Pieza {part_name} recibida por el comprador. Pedido núm {order_id}",
-        owner=owner,
-        ownerGroup=owner_group,
-        visibleRoles=visible_roles,
-        navigateToUrl=navigate_to_url,
-        read=False,
-        metaData=meta_data
+        title=f"{who} recibió su pedido",
+        body=_join(sentence_case(part_name), local_time_label(received_at)),
+        side="sell", vehicle=vehicle,
+        owner=owner, owner_group=owner_group, visible_roles=visible_roles,
+        navigate_to_url=navigate_to_url, meta_data=meta_data,
     )
 
 
@@ -258,20 +313,19 @@ def create_order_delayed_notification(
     owner_group: str,
     navigate_to_url: str,
     meta_data: Dict[str, Any],
-    visible_roles: Optional[List[str]] = None
+    visible_roles: Optional[List[str]] = None,
+    *,
+    delivery_time: Any = None,
+    vehicle: str = "",
 ) -> Notification:
-    if visible_roles is None:
-        visible_roles = DEFAULT_ROLES
-
-    return Notification(
+    when = local_time_label(delivery_time)
+    return structured_notification(
         type=NotificationType.ORDER_DELAYED,
-        message=f"El negocio {store_name} indica que tu pieza {part_name} llegará más tarde de lo acordado.",
-        owner=owner,
-        ownerGroup=owner_group,
-        visibleRoles=visible_roles,
-        navigateToUrl=navigate_to_url,
-        read=False,
-        metaData=meta_data
+        title=f"{display_name(store_name)} retrasó tu pedido",
+        body=_join(sentence_case(part_name), f"ahora llega {when}" if when else ""),
+        side="buy", vehicle=vehicle,
+        owner=owner, owner_group=owner_group, visible_roles=visible_roles,
+        navigate_to_url=navigate_to_url, meta_data=meta_data,
     )
 
 
@@ -283,18 +337,13 @@ def create_invite_accepted_notification(
     meta_data: Dict[str, Any],
     visible_roles: Optional[List[str]] = None
 ) -> Notification:
-    if visible_roles is None:
-        visible_roles = DEFAULT_ROLES
-    
-    return Notification(
+    return structured_notification(
         type=NotificationType.INVITE_ACCEPTED,
-        message=f"¡{store_name} ha aceptado tu invitación! Ahora podrás conectar y hacer negocios juntos en la red de eassymo.",
-        owner=owner,
-        ownerGroup=owner_group,
-        visibleRoles=visible_roles,
-        navigateToUrl=navigate_to_url,
-        read=False,
-        metaData=meta_data
+        title=f"{display_name(store_name)} aceptó tu invitación",
+        body="Ya está en tu red.",
+        side=None,
+        owner=owner, owner_group=owner_group, visible_roles=visible_roles,
+        navigate_to_url=navigate_to_url, meta_data=meta_data,
     )
 
 
@@ -307,54 +356,17 @@ def create_part_request_invite_notification(
     meta_data: Dict[str, Any],
     visible_roles: Optional[List[str]] = None
 ) -> Notification:
-    if visible_roles is None:
-        visible_roles = DEFAULT_ROLES
-    
     part_requests = meta_data.get("partRequests") or []
-    count = len(part_requests)
     vehicle = (part_requests[0].get("vehicleInformation") or {}) if part_requests else {}
-    vehicle_text = " ".join(
-        str(vehicle[key]) for key in ("maker", "model", "year") if vehicle.get(key)
-    )
-    pieces = f"{count} {'pieza' if count == 1 else 'piezas'}"
-    message = f"{inviter_group_name} te invita a cotizar {pieces}"
-    if vehicle_text:
-        message += f" para un {vehicle_text}"
-    message += "."
-
-    return Notification(
+    vehicle_text = " ".join(str(vehicle[key]) for key in ("maker", "model", "year") if vehicle.get(key))
+    return structured_notification(
         type=NotificationType.PART_REQUEST_INVITE,
-        message=message,
-        owner=owner,
-        ownerGroup=owner_group,
-        visibleRoles=visible_roles,
-        navigateToUrl=navigate_to_url,
-        read=False,
-        metaData=meta_data
-    )
-
-
-def create_part_request_reminder_notification(
-    store_name: str,
-    part_name: str,
-    owner: str,
-    owner_group: str,
-    navigate_to_url: str,
-    meta_data: Dict[str, Any],
-    visible_roles: Optional[List[str]] = None
-) -> Notification:
-    if visible_roles is None:
-        visible_roles = DEFAULT_ROLES
-
-    return Notification(
-        type=NotificationType.PART_REQUEST_REMINDER,
-        message=f"Recuerda que el {store_name} está buscando {part_name} pieza. Envía tu mejor oferta y sorpréndelos con tu servicio.",
-        owner=owner,
-        ownerGroup=owner_group,
-        visibleRoles=visible_roles,
-        navigateToUrl=navigate_to_url,
-        read=False,
-        metaData=meta_data
+        title=f"{display_name(inviter_group_name)} te invita a cotizar",
+        body=_join(_pieces(len(part_requests)), vehicle_text),
+        side="sell", vehicle=vehicle_text,
+        action={"label": "Ver invitación", "href": navigate_to_url},
+        owner=owner, owner_group=owner_group, visible_roles=visible_roles,
+        navigate_to_url=navigate_to_url, meta_data=meta_data,
     )
 
 
@@ -364,22 +376,18 @@ def create_callcenter_connected_group_selected_notification(
     owner_group: str,
     navigate_to_url: str,
     meta_data: Dict[str, Any],
-    visible_roles: Optional[List[str]] = None
+    visible_roles: Optional[List[str]] = None,
+    *,
+    vehicle: str = "",
 ) -> Notification:
-    if visible_roles is None:
-        visible_roles = DEFAULT_ROLES
-    
-    part_description = meta_data.get("partRequest", {}).get("part", {}).get("tipoParteDescripcion", "")
-    
-    return Notification(
+    part_description = (meta_data.get("partRequest") or {}).get("part", {}).get("tipoParteDescripcion", "")
+    return structured_notification(
         type=NotificationType.CALLCENTER_CONNECTED_GROUP_SELECTED_FOR_REQUEST,
-        message=f"¡El grupo {invited_group_name} ha sido invitado a ofertar en su solicitud por un {part_description}.",
-        owner=owner,
-        ownerGroup=owner_group,
-        visibleRoles=visible_roles,
-        navigateToUrl=navigate_to_url,
-        read=False,
-        metaData=meta_data
+        title=f"{display_name(invited_group_name)} recibió una solicitud",
+        body=f"{_join(sentence_case(part_description), vehicle)}. Cotiza por ellos.",
+        side="sell", vehicle=vehicle,
+        owner=owner, owner_group=owner_group, visible_roles=visible_roles,
+        navigate_to_url=navigate_to_url, meta_data=meta_data,
     )
 
 
@@ -389,20 +397,24 @@ def create_offer_approval_request_notification(
     owner_group: str,
     navigate_to_url: str,
     meta_data: Dict[str, Any],
-    visible_roles: Optional[List[str]] = None
+    visible_roles: Optional[List[str]] = None,
+    *,
+    part_name: str = "",
+    price: Optional[float] = None,
+    vehicle: str = "",
+    offer_id: Optional[str] = None,
 ) -> Notification:
-    if visible_roles is None:
-        visible_roles = DEFAULT_ROLES
-    
-    return Notification(
+    offer_id = offer_id or meta_data.get("offerId")
+    detail = _join(sentence_case(part_name), _money(price))
+    return structured_notification(
         type=NotificationType.OFFER_APPROVAL_REQUEST,
-        message=f"¡El Call Center {call_center_name} ha enviado una oferta para aprobación!",
-        owner=owner,
-        ownerGroup=owner_group,
-        visibleRoles=visible_roles,
-        navigateToUrl=navigate_to_url,
-        metaData=meta_data,
-        read=False
+        title=f"{display_name(call_center_name)} armó una oferta por ti",
+        body=f"{detail}. Revísala antes de que la vea el comprador." if detail else "Revísala antes de que la vea el comprador.",
+        side="sell", vehicle=vehicle,
+        action={"label": "Revisar", "href": navigate_to_url},
+        decision_key=f"offer:{offer_id}:approve" if offer_id else None,
+        owner=owner, owner_group=owner_group, visible_roles=visible_roles,
+        navigate_to_url=navigate_to_url, meta_data=meta_data,
     )
 
 
@@ -413,20 +425,17 @@ def create_callcenter_offer_approval_approved_notification(
     owner_group: str,
     navigate_to_url: str,
     meta_data: Dict[str, Any],
-    visible_roles: Optional[List[str]] = None
+    visible_roles: Optional[List[str]] = None,
+    *,
+    vehicle: str = "",
 ) -> Notification:
-    if visible_roles is None:
-        visible_roles = DEFAULT_ROLES
-    
-    return Notification(
+    return structured_notification(
         type=NotificationType.CALLCENTER_OFFER_APPROVAL_APPROVED,
-        message=f"¡El grupo {group_name}, ha aceptado tu oferta para {part_name}!",
-        owner=owner,
-        ownerGroup=owner_group,
-        visibleRoles=visible_roles,
-        navigateToUrl=navigate_to_url,
-        metaData=meta_data,
-        read=False
+        title=f"{display_name(group_name)} aprobó tu oferta",
+        body=_join(sentence_case(part_name), "ya la ve el comprador."),
+        side="sell", vehicle=vehicle,
+        owner=owner, owner_group=owner_group, visible_roles=visible_roles,
+        navigate_to_url=navigate_to_url, meta_data=meta_data,
     )
 
 
@@ -436,20 +445,21 @@ def create_mostrador_folio_shared_notification(
     owner_group: str,
     navigate_to_url: str,
     meta_data: Dict[str, Any],
-    visible_roles: Optional[List[str]] = None
+    visible_roles: Optional[List[str]] = None,
+    *,
+    piece_count: Optional[int] = None,
+    vehicle: str = "",
 ) -> Notification:
-    if visible_roles is None:
-        visible_roles = DEFAULT_ROLES
-
-    return Notification(
+    folio_id = meta_data.get("folioId")
+    return structured_notification(
         type=NotificationType.MOSTRADOR_FOLIO_SHARED,
-        message=f"{store_name} te compartió una cotización de mostrador. Revísala y ordena tus piezas.",
-        owner=owner,
-        ownerGroup=owner_group,
-        visibleRoles=visible_roles,
-        navigateToUrl=navigate_to_url,
-        read=False,
-        metaData=meta_data
+        title=f"{display_name(store_name)} te mandó una cotización",
+        body=_join(_pieces(piece_count), vehicle),
+        side="buy", vehicle=vehicle,
+        action={"label": "Revisar", "href": navigate_to_url},
+        decision_key=f"folio:{folio_id}:open" if folio_id else None,
+        owner=owner, owner_group=owner_group, visible_roles=visible_roles,
+        navigate_to_url=navigate_to_url, meta_data=meta_data,
     )
 
 
@@ -461,20 +471,21 @@ def create_mostrador_folio_assigned_notification(
     navigate_to_url: str,
     meta_data: Dict[str, Any],
     visible_roles: Optional[List[str]] = None,
+    *,
+    vehicle: str = "",
 ) -> Notification:
     if visible_roles is None:
         visible_roles = [UserRoles.ADMIN_BUYER_SHOP.value]
-
-    pieces_label = f"{piece_count} pieza" if piece_count == 1 else f"{piece_count} piezas"
-    return Notification(
+    folio_id = meta_data.get("folioId")
+    return structured_notification(
         type=NotificationType.MOSTRADOR_FOLIO_ASSIGNED,
-        message=f"{store_name} te asignó una solicitud de mostrador ({pieces_label}). Revísala en Comprando.",
-        owner=owner,
-        ownerGroup=owner_group,
-        visibleRoles=visible_roles,
-        navigateToUrl=navigate_to_url,
-        read=False,
-        metaData=meta_data,
+        title=f"{display_name(store_name)} te pasó una lista",
+        body=_join(_pieces(piece_count), vehicle),
+        side="buy", vehicle=vehicle,
+        action={"label": "Revisar", "href": navigate_to_url},
+        decision_key=f"folio:{folio_id}:open" if folio_id else None,
+        owner=owner, owner_group=owner_group, visible_roles=visible_roles,
+        navigate_to_url=navigate_to_url, meta_data=meta_data,
     )
 
 
@@ -486,20 +497,18 @@ def create_mostrador_order_created_notification(
     owner_group: str,
     navigate_to_url: str,
     meta_data: Dict[str, Any],
-    visible_roles: Optional[List[str]] = None
+    visible_roles: Optional[List[str]] = None,
+    *,
+    price: Optional[float] = None,
+    vehicle: str = "",
 ) -> Notification:
-    if visible_roles is None:
-        visible_roles = DEFAULT_ROLES
-
-    return Notification(
+    return structured_notification(
         type=NotificationType.MOSTRADOR_ORDER_CREATED,
-        message=f"Tu pedido de mostrador con {store_name} fue creado para {part_name}. Pedido núm {order_id}.",
-        owner=owner,
-        ownerGroup=owner_group,
-        visibleRoles=visible_roles,
-        navigateToUrl=navigate_to_url,
-        read=False,
-        metaData=meta_data
+        title=f"Pediste en el mostrador de {display_name(store_name)}",
+        body=_join(sentence_case(part_name), _money(price)),
+        side="buy", vehicle=vehicle,
+        owner=owner, owner_group=owner_group, visible_roles=visible_roles,
+        navigate_to_url=navigate_to_url, meta_data=meta_data,
     )
 
 
@@ -510,19 +519,29 @@ def create_mostrador_option_added_notification(
     navigate_to_url: str,
     meta_data: Dict[str, Any],
     visible_roles: Optional[List[str]] = None,
+    *,
+    store_name: str = "",
+    part_name: str = "",
+    price: Optional[float] = None,
+    vehicle: str = "",
 ) -> Notification:
-    if visible_roles is None:
-        visible_roles = DEFAULT_ROLES
-
-    return Notification(
+    """Without the store and part (older activity-log entries) the free text becomes the body."""
+    if not store_name:
+        return structured_notification(
+            type=NotificationType.MOSTRADOR_OPTION_ADDED,
+            title="Hay una opción nueva en tu lista",
+            body=message,
+            side="buy", vehicle=vehicle,
+            owner=owner, owner_group=owner_group, visible_roles=visible_roles,
+            navigate_to_url=navigate_to_url, meta_data=meta_data,
+        )
+    return structured_notification(
         type=NotificationType.MOSTRADOR_OPTION_ADDED,
-        message=message,
-        owner=owner,
-        ownerGroup=owner_group,
-        visibleRoles=visible_roles,
-        navigateToUrl=navigate_to_url,
-        read=False,
-        metaData=meta_data,
+        title=f"{display_name(store_name)} agregó una opción",
+        body=_join(sentence_case(part_name), _money(price)),
+        side="buy", vehicle=vehicle,
+        owner=owner, owner_group=owner_group, visible_roles=visible_roles,
+        navigate_to_url=navigate_to_url, meta_data=meta_data,
     )
 
 
@@ -534,20 +553,17 @@ def create_mostrador_shop_invited_notification(
     navigate_to_url: str,
     meta_data: Dict[str, Any],
     visible_roles: Optional[List[str]] = None,
+    *,
+    vehicle: str = "",
 ) -> Notification:
-    if visible_roles is None:
-        visible_roles = DEFAULT_ROLES
-
-    pieces_label = f"{piece_count} pieza" if piece_count == 1 else f"{piece_count} piezas"
-    return Notification(
+    return structured_notification(
         type=NotificationType.MOSTRADOR_SHOP_INVITED,
-        message=f"{inviter_name} te invitó a cotizar en una lista de mostrador ({pieces_label}).",
-        owner=owner,
-        ownerGroup=owner_group,
-        visibleRoles=visible_roles,
-        navigateToUrl=navigate_to_url,
-        read=False,
-        metaData=meta_data,
+        title=f"{display_name(inviter_name)} te invita a cotizar su lista",
+        body=_join(_pieces(piece_count), vehicle),
+        side="sell", vehicle=vehicle,
+        action={"label": "Ver invitación", "href": navigate_to_url},
+        owner=owner, owner_group=owner_group, visible_roles=visible_roles,
+        navigate_to_url=navigate_to_url, meta_data=meta_data,
     )
 
 
@@ -555,15 +571,13 @@ def create_relationship_review_reminder(
     owner: str,
     owner_group: str,
 ) -> Notification:
-    return Notification(
+    return structured_notification(
         type=NotificationType.RELATIONSHIP_REVIEW_REMINDER,
-        message="¿Cómo van tus relaciones?",
-        owner=owner,
-        ownerGroup=owner_group,
-        visibleRoles=DEFAULT_ROLES,
-        navigateToUrl="/relaciones/inicio",
-        read=False,
-        metaData={"source": "relationship_reminder"},
+        title="Revisa tus relaciones",
+        body="Mira con qué tiendas trabajas y a quién te falta responder.",
+        side=None,
+        owner=owner, owner_group=owner_group, visible_roles=DEFAULT_ROLES,
+        navigate_to_url="/relaciones/inicio", meta_data={"source": "relationship_reminder"},
     )
 
 
@@ -621,38 +635,4 @@ def create_delivery_notification(
         read=False,
         metaData={"orderId": order_id, "title": title, "body": body},
         guest_token=guest_token,
-    )
-
-
-def structured_notification(
-    *,
-    type: NotificationType,
-    owner: str,
-    owner_group: str,
-    title: str,
-    body: str,
-    side: str,
-    navigate_to_url: str,
-    meta_data: Dict[str, Any],
-    vehicle: str = "",
-    action: Optional[Dict[str, str]] = None,
-    decision_key: Optional[str] = None,
-    visible_roles: Optional[List[str]] = None,
-) -> Notification:
-    """A v2 notice: title/body/side drive the screen and the push; message stays for older clients."""
-    return Notification(
-        type=type,
-        message=f"{title}. {body}" if body else title,
-        title=title,
-        body=body or None,
-        side=side,
-        vehicle=vehicle or None,
-        action=action,
-        decision_key=decision_key,
-        owner=owner,
-        ownerGroup=owner_group,
-        visibleRoles=visible_roles if visible_roles is not None else DEFAULT_ROLES,
-        navigateToUrl=navigate_to_url,
-        read=False,
-        metaData=meta_data,
     )

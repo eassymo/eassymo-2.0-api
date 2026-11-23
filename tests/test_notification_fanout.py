@@ -96,11 +96,13 @@ def test_part_request_invite_sends_one_notification_for_all_parts():
     batch.assert_called_once()
     sent = batch.call_args.args[0]
     assert len(sent) == 1
-    assert sent[0].message == "Taller Hernández te invita a cotizar 2 piezas para un Nissan Altima 2010."
+    assert sent[0].title == "Taller Hernández te invita a cotizar"
+    assert sent[0].body == "2 piezas · Nissan Altima 2010"
     assert sent[0].navigateToUrl == "/join-request-invite/inv-1"
     assert sent[0].metaData == {"partRequests": parts, "partRequest": parts[0]}
 
 
 def test_part_request_invite_message_singular():
     sent = _fanout_invite([_invite_part()]).call_args.args[0]
-    assert sent[0].message == "Taller Hernández te invita a cotizar 1 pieza para un Nissan Altima 2010."
+    assert sent[0].title == "Taller Hernández te invita a cotizar"
+    assert sent[0].body == "1 pieza · Nissan Altima 2010"
