@@ -52,6 +52,7 @@ GRANT_SECTIONS: Dict[str, List[Section]] = {
     ],
     g.ORDERS_CHANGE_STATUS: [
         _api("POST /order/change-status (sin este permiso un repartidor solo marca recibido)"),
+        _api("POST /order/{id}/cancel-by-seller (la tienda no puede surtir la orden)"),
     ],
     g.REQUESTS_CREATE: [_app("Menú: Crear solicitud (/configure-request)")],
     g.STORE_EDIT_PROFILE: [
