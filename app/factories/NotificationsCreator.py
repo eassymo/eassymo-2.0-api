@@ -622,3 +622,37 @@ def create_delivery_notification(
         metaData={"orderId": order_id, "title": title, "body": body},
         guest_token=guest_token,
     )
+
+
+def structured_notification(
+    *,
+    type: NotificationType,
+    owner: str,
+    owner_group: str,
+    title: str,
+    body: str,
+    side: str,
+    navigate_to_url: str,
+    meta_data: Dict[str, Any],
+    vehicle: str = "",
+    action: Optional[Dict[str, str]] = None,
+    decision_key: Optional[str] = None,
+    visible_roles: Optional[List[str]] = None,
+) -> Notification:
+    """A v2 notice: title/body/side drive the screen and the push; message stays for older clients."""
+    return Notification(
+        type=type,
+        message=f"{title}. {body}" if body else title,
+        title=title,
+        body=body or None,
+        side=side,
+        vehicle=vehicle or None,
+        action=action,
+        decision_key=decision_key,
+        owner=owner,
+        ownerGroup=owner_group,
+        visibleRoles=visible_roles if visible_roles is not None else DEFAULT_ROLES,
+        navigateToUrl=navigate_to_url,
+        read=False,
+        metaData=meta_data,
+    )

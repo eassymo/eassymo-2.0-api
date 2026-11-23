@@ -21,6 +21,7 @@ def ensure_indexes() -> None:
     db[COLLECTION].create_index([("owner", ASCENDING), ("ownerGroup", ASCENDING), ("createdAt", DESCENDING)])
     db[COLLECTION].create_index([("owner", ASCENDING), ("read", ASCENDING)])
     db[COLLECTION].create_index([("uid", ASCENDING)], unique=True, sparse=True)
+    db[COLLECTION].create_index([("decision_key", ASCENDING), ("resolved_at", ASCENDING)], sparse=True)
     db[COLLECTION].create_index([("guest_token", ASCENDING), ("createdAt", DESCENDING)], sparse=True)
 
 
@@ -85,7 +86,39 @@ def mark_read(notification_id: str, owner: str) -> bool:
         {"_id": oid, "owner": owner},
         {"$set": {"read": True, "updatedAt": _now()}},
     )
+    # Some notices are decisions that opening them settles (a folio you were shown, a handoff you saw).
+    db[COLLECTION].update_one(
+        {"_id": oid, "owner": owner, "resolved_at": None, "$or": OPENED_IS_RESOLVED},
+        {"$set": {"resolved_at": utc_timestamp_ms(_now())}},
+    )
     return result.modified_count > 0
+
+
+OPENED_IS_RESOLVED = [
+    {"type": {"$in": ["MOSTRADOR_FOLIO_SHARED", "MOSTRADOR_FOLIO_ASSIGNED"]}},
+    {"type": "DELIVERY_HANDED_OFF", "decision_key": {"$ne": None}},
+]
+
+
+def resolve_by_decision_key(key: str, at_ms: int) -> int:
+    result = db[COLLECTION].update_many(
+        {"decision_key": key, "resolved_at": None},
+        {"$set": {"resolved_at": at_ms, "updatedAt": _now()}},
+    )
+    return result.modified_count
+
+
+def summary_for_user(owner: str, owner_group: str) -> Dict[str, int]:
+    base: Dict[str, Any] = {"owner": owner, "ownerGroup": owner_group}
+    unread = {**base, "read": False}
+    return {
+        "unread_buy": db[COLLECTION].count_documents({**unread, "side": "buy"}),
+        "unread_sell": db[COLLECTION].count_documents({**unread, "side": "sell"}),
+        "unread_total": db[COLLECTION].count_documents(unread),
+        "decisions_open": db[COLLECTION].count_documents(
+            {**base, "decision_key": {"$ne": None}, "resolved_at": None}
+        ),
+    }
 
 
 def mark_all_read(owner: str, owner_group: str, callcenter_only: Optional[bool] = None) -> int:
