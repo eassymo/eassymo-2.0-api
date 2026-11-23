@@ -176,3 +176,16 @@ def test_only_buyer_marked_parts_left_is_400(repo):
     with pytest.raises(HTTPException) as e:
         svc.complete_in_person_delivery("fid")
     assert e.value.detail == "No in-store pieces to deliver"
+
+
+def test_cannot_remove_the_order_of_a_delivered_part(repo, monkeypatch):
+    repo.doc = _folio([_piece("done", "tienda", status="entregada"), _piece("open", "tienda")])
+    removed = []
+    monkeypatch.setattr(svc.folioRepository, "set_piece_order", lambda *a, **k: removed.append(a) or True)
+    monkeypatch.setattr(svc, "sync_assigned_folio", lambda fid: None)
+    with pytest.raises(HTTPException) as err:
+        svc.unorder_piece("fid", "done")
+    assert err.value.status_code == 400 and "already delivered" in err.value.detail
+    assert removed == []
+    svc.unorder_piece("fid", "open")
+    assert len(removed) == 1
