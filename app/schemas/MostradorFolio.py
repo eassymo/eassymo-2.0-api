@@ -100,6 +100,7 @@ class MostradorPieceOrder(BaseModel):
     order_doc_id: Optional[str] = Field(None, description="set after confirm -> real Order id")
     delivery_address: Optional[DeliveryAddress] = Field(None)
     delivery_contact: Optional[DeliveryContact] = Field(None)
+    pickup_at: Optional[datetime] = Field(None, description="when the customer will pick up (pickup mode only)")
 
 
 class MostradorPiece(BaseModel):
