@@ -112,6 +112,8 @@ def _assert_order_status_transition(
     current = order.status
     if not isinstance(current, OrderStatus):
         current = OrderStatus(current)
+    if current == OrderStatus.CANCELED:
+        raise HTTPException(status_code=409, detail="Esta orden ya fue cancelada.")
 
     if new_enum == OrderStatus.WAITING_FOR_CUSTOMER_PICKUP:
         if current != OrderStatus.READY_TO_BE_DISPATCHED:
@@ -384,7 +386,10 @@ def change_order_status(
 
         order_data.pop("_id")
 
-        edited_order = orderRepository.edit(order_id, order_data)
+        edited_order = orderRepository.edit(order_id, order_data, unless_canceled=True)
+        if edited_order is None:
+            # a store member canceled between our read and this save
+            raise HTTPException(status_code=409, detail="Esta orden ya fue cancelada.")
 
         result = Order(**edited_order).toJson()
 

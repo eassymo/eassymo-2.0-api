@@ -120,6 +120,12 @@ def resolve_decisions(decision_key: str) -> int:
     return notificationRepository.resolve_by_decision_key(decision_key, int(time.time() * 1000))
 
 
+def resolve_decisions_prefix(prefix: str) -> int:
+    if not prefix:
+        return 0
+    return notificationRepository.resolve_by_decision_prefix(prefix, int(time.time() * 1000))
+
+
 def summary_for_user(owner: str, owner_group: str) -> Dict[str, int]:
     return notificationRepository.summary_for_user(owner, owner_group)
 

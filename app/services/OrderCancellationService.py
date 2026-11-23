@@ -94,33 +94,37 @@ def cancel_by_seller(order_id: str, uid: str, reason: str, note: Optional[str]) 
     order = Order(**doc)
     order.change_status("CANCELED")
     order_json = order.toJson()
+    request_id = str((doc.get("part_request") or {}).get("_id") or offer.get("request_id"))
+    offer_group = groupRepository.find_by_id(seller_group) or {}
+    last_cancellation = {
+        "order_id": str(oid),
+        "store_group_id": seller_group,
+        "store_name": display_name(offer_group.get("name")),
+        "reason": reason,
+        "note": clean_note,
+        "at": cancellation.at,
+    }
     # Only the status we just read may be canceled: if a teammate moved it meanwhile, we lose and change nothing.
     updated = orderRepository.cancel_if_status(oid, [status], {
         "status": order_json["status"],
         "status_history": order_json["status_history"],
         "updated_at": order_json["updated_at"],
         "cancellation": cancellation.model_dump(),
+        # the order carries a snapshot of its request; the buyer's Comprando reads the cancel from it
+        "part_request.last_cancellation": last_cancellation,
+        "part_request.isActive": True,
     })
     if updated is None:
         raise HTTPException(status_code=409, detail=LEFT_THE_STORE)
 
-    request_id = str((doc.get("part_request") or {}).get("_id") or offer.get("request_id"))
     offer_id = offer.get("_id")
     offerRepository.edit_offer(str(offer_id), {"status": OfferStatus.no_inventory.value})
     _mark_group_without_stock(seller_group, request_id)
 
-    offer_group = groupRepository.find_by_id(seller_group) or {}
     partRequestRepository.edit_part_request(request_id, {
         "status": "Created",
         "isActive": True,
-        "last_cancellation": {
-            "order_id": str(oid),
-            "store_group_id": seller_group,
-            "store_name": display_name(offer_group.get("name")),
-            "reason": reason,
-            "note": clean_note,
-            "at": cancellation.at,
-        },
+        "last_cancellation": last_cancellation,
     })
     PickupCodeService.delete_code(str(oid))
 

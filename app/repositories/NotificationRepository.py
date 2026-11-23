@@ -108,6 +108,15 @@ def resolve_by_decision_key(key: str, at_ms: int) -> int:
     return result.modified_count
 
 
+def resolve_by_decision_prefix(prefix: str, at_ms: int) -> int:
+    import re
+    result = db[COLLECTION].update_many(
+        {"decision_key": {"$regex": "^" + re.escape(prefix)}, "resolved_at": None},
+        {"$set": {"resolved_at": at_ms, "updatedAt": _now()}},
+    )
+    return result.modified_count
+
+
 def summary_for_user(owner: str, owner_group: str) -> Dict[str, int]:
     base: Dict[str, Any] = {"owner": owner, "ownerGroup": owner_group}
     unread = {**base, "read": False}

@@ -47,7 +47,7 @@ def _doc(**extra):
 def saved():
     store = {}
 
-    def edit(_id, data):
+    def edit(_id, data, **kw):
         store.clear()
         store.update(data)
         return {**data, "_id": _id}

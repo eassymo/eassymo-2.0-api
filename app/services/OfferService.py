@@ -368,7 +368,7 @@ def find_request_offers_by_groups(request_id: str):
             request_id, [seller["seller_id"]]))
 
         # Offers the store withdrew (No_Inventory, e.g. it canceled the order) or that were rejected don't count.
-        live = [o for o in offers if _status_value(o.get("status")) not in ("No_Inventory", "Rejected")]
+        live = [o for o in offers if _status_value(o.get("status")) != "No_Inventory"]
         if live:
             seller["has_offered"] = True
             best = min(live, key=lambda o: o.get("price") if o.get("price") is not None else float("inf"))
@@ -378,11 +378,7 @@ def find_request_offers_by_groups(request_id: str):
                 "created_at": created.isoformat() if hasattr(created, "isoformat") else (str(created) if created else ""),
             }
         elif offers:
-            statuses = {_status_value(o.get("status")) for o in offers}
-            if statuses == {"No_Inventory"}:
-                seller["no_stock"] = True
-            elif statuses == {"Rejected"}:
-                seller["rejected"] = True
+            seller["no_stock"] = True  # every offer this store made was withdrawn (it canceled)
 
         request_status = requestStatusByGroupRepository.find_by_group_and_request_id(
             seller["seller_id"], request_id)
@@ -562,6 +558,8 @@ def change_offer_status(request_id: str, offer_id: str, status: str, user_token:
         if offer_status == OfferStatus.selected and order_id:
             try:
                 NotificationService.resolve_decisions(f"request:{request_id}:choose")
+                NotificationService.resolve_decisions_prefix(f"request:{request_id}:quote:")
+                orderRepository.clear_request_cancellation(request_id)
             except Exception:
                 pass
             creator_group_doc = groupRepository.find_by_id(str(part_request.creatorGroup))

@@ -185,3 +185,11 @@ def test_end_to_end_buyer_group_gets_the_real_cancel_notice(env):
     assert n.title == "Autopartes Alex canceló tu pedido" and n.decision_key == "request:req-1:choose"
     assert n.body.startswith("Balata: no hay existencia.") and "Tienes 2 ofertas más" in n.body
     fake.patches[8].start()
+
+
+def test_the_order_carries_the_cancel_so_comprando_can_see_it(env):
+    fake = env()
+    _go()
+    last = fake.doc["part_request.last_cancellation"]
+    assert last["order_id"] == str(OID) and last["store_group_id"] == SELLER and last["reason"] == "sold"
+    assert fake.doc["part_request.isActive"] is True

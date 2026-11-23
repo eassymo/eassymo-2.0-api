@@ -108,3 +108,10 @@ def test_local_time_label_uses_mexico_city():
     assert local_time_label("2026-11-23T21:17:00Z") == "3:17 p. m."
     assert local_time_label("2026-11-23T14:05:00Z") == "8:05 a. m."
     assert local_time_label(None) == ""
+
+
+def test_single_request_invite_settles_when_the_store_quotes():
+    n = nc.create_part_request_invite_notification(
+        inviter_group_name="TALLER HERNANDEZ", inviter_user="u9", owner="u1", owner_group="g1", navigate_to_url="/x",
+        meta_data={"partRequests": [{"_id": "r9", "vehicleInformation": {}}]})
+    assert n.decision_key == "request:r9:quote:g1"

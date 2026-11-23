@@ -96,9 +96,17 @@ def test_monitor_groups_ignore_canceled_offers_and_expose_summary():
          patch.object(svc.requestStatusByGroupRepository, "find_by_group_and_request_id", return_value=None), \
          patch.object(svc.groupRepository, "find_by_id", side_effect=lambda gid: {"_id": gid, "name": f"Tienda {gid}"}):
         result = svc.find_request_offers_by_groups("req-1")
-    assert [g["_id"] for g in result["have_offered"]] == ["gA"]
+    # a Rejected offer still counts as offered (buyer-side rejection, e.g. commissioner flow); only No_Inventory leaves
+    assert [g["_id"] for g in result["have_offered"]] == ["gA", "gC"]
     summary = result["have_offered"][0]["offer_summary"]
+
     assert summary["price"] == 105.0 and summary["created_at"].startswith("2026-11-23")
     assert [g["_id"] for g in result["no_stock"]] == ["gB"]
-    assert [g["_id"] for g in result["rejected"]] == ["gC"]
+    assert result["rejected"] == []
     assert result["have_not_offered"] == []
+
+
+def test_selecting_clears_the_cancel_snapshot_on_every_order_of_the_request(sel):
+    _, _, orders, _ = sel
+    svc.change_offer_status("req-1", "offer-b", "selected", "tok")
+    orders.clear_request_cancellation.assert_called_once_with("req-1")

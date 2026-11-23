@@ -365,6 +365,9 @@ def create_part_request_invite_notification(
         body=_join(_pieces(len(part_requests)), vehicle_text),
         side="sell", vehicle=vehicle_text,
         action={"label": "Ver invitación", "href": navigate_to_url},
+        # one request: quoting (or saying no stock) settles it, like a reminder
+        decision_key=(f"request:{part_requests[0].get('_id')}:quote:{owner_group}"
+                      if len(part_requests) == 1 and part_requests[0].get("_id") else None),
         owner=owner, owner_group=owner_group, visible_roles=visible_roles,
         navigate_to_url=navigate_to_url, meta_data=meta_data,
     )

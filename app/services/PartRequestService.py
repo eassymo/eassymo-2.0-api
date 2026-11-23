@@ -1520,6 +1520,9 @@ def close_part_request(part_request_id: str, uid: str) -> Dict[str, Any]:
     )
     try:
         NotificationService.resolve_decisions(f"request:{part_request_id}:choose")
+        NotificationService.resolve_decisions_prefix(f"request:{part_request_id}:quote:")
+        from app.repositories import OrderRepository
+        OrderRepository.clear_request_cancellation(part_request_id, closed=True)
     except Exception:
         pass
     return {"_id": part_request_id, "isActive": False}
