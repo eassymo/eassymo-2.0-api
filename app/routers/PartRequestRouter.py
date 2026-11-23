@@ -277,6 +277,17 @@ def join_seller_to_part_request(
         return error_json_response(e)
 
 
+@partRequestRouter.post("/{part_request_id}/close", description="The buyer closes a request", tags=["PartRequest"])
+def close_part_request(request: Request, part_request_id: str):
+    try:
+        from app.services import authz
+
+        response = partRequestService.close_part_request(part_request_id, authz.caller_uid(request))
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+    except Exception as e:
+        return error_json_response(e)
+
+
 @partRequestRouter.post("/{part_request_id}/send-reminder", tags=["PartRequest"])
 def send_seller_reminder(part_request_id: str, payload=Body(...)):
     try:

@@ -1503,3 +1503,23 @@ def send_seller_reminder(part_request_id: str, pending_group_ids: List[str], sto
         pending_group_ids=pending_group_ids,
         store_name=store_name,
     )
+
+
+def close_part_request(part_request_id: str, uid: str) -> Dict[str, Any]:
+    """The buyer closes a request. A reopened one (a store canceled) had a pending 'choose' decision: settle it."""
+    from app.services import NotificationService, PickupCodeService
+
+    doc = partRequestRepository.find_one_by_id(part_request_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Part request not found")
+    if not PickupCodeService._user_in_group(uid, doc.get("creatorGroup")):
+        raise HTTPException(status_code=403, detail="Solo quien creó la solicitud puede cerrarla.")
+    partRequestRepository.edit_part_request(
+        part_request_id,
+        {"isActive": False, "last_cancellation": None, "updatedAt": datetime.now(ZoneInfo("UTC"))},
+    )
+    try:
+        NotificationService.resolve_decisions(f"request:{part_request_id}:choose")
+    except Exception:
+        pass
+    return {"_id": part_request_id, "isActive": False}
