@@ -730,6 +730,7 @@ def confirm_pickup(order_id: str, data: dict = Body(...)):
             signature_url=data.get("delivery_customer_signature_url"),
             received_by_name=data.get("delivery_received_by_name"),
             pictures=data.get("delivery_pictures_seller"),
+            notes=data.get("delivery_notes_seller"),
         )
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:

@@ -3098,9 +3098,24 @@ def confirm(folio_id: str, *, allow_when_assigned: bool = False) -> dict:
     })
 
 
+def _is_pending_store_piece(piece: dict) -> bool:
+    """
+    An ordered piece that is handed over in store and not delivered yet (no delivery_mode means tienda).
+    A part the customer marked as bought elsewhere (captured_by_buyer) is not the seller's to hand over.
+    """
+    order = piece.get("order") or {}
+    options = piece.get("options") or []
+    index = order.get("option_index")
+    chosen = options[index] if isinstance(index, int) and 0 <= index < len(options) else {}
+    if (chosen or {}).get("captured_by_buyer"):
+        return False
+    return bool(order) and (order.get("delivery_mode") or "tienda") == "tienda" and order.get("status") != "entregada"
+
+
 def complete_in_person_delivery(folio_id: str) -> dict:
     """
-    Mark all ordered pieces on a folio as delivered (entregada).
+    Mark the ordered pieces handed over in store as delivered (entregada). Pieces that go home (domicilio) or
+    are picked up later (pickup) are not touched; orders saved before delivery modes existed count as tienda.
     Confirms the folio first when real Order docs have not been created yet.
     """
     from app.repositories import OrderRepository as orderRepository
@@ -3114,6 +3129,8 @@ def complete_in_person_delivery(folio_id: str) -> dict:
     ordered = [p for p in (doc.get("pieces") or []) if p.get("order")]
     if not ordered:
         raise HTTPException(status_code=400, detail="No ordered pieces to deliver")
+    if not any(_is_pending_store_piece(p) for p in ordered):
+        raise HTTPException(status_code=400, detail="No in-store pieces to deliver")
 
     if doc.get("status") != FolioStatus.CONFIRMED.value:
         confirm(folio_id)
@@ -3125,7 +3142,7 @@ def complete_in_person_delivery(folio_id: str) -> dict:
     delivered_count = 0
     for piece in pieces:
         order_embed = piece.get("order")
-        if not order_embed or order_embed.get("status") == "entregada":
+        if not order_embed or not _is_pending_store_piece(piece):
             continue
         order_doc_id = order_embed.get("order_doc_id")
         if order_doc_id:
@@ -3136,11 +3153,11 @@ def complete_in_person_delivery(folio_id: str) -> dict:
                 order_data = order.toJson()
                 order_data.pop("_id", None)
                 orderRepository.edit(ObjectId(order_doc_id), order_data)
-        piece["order"] = {**order_embed, "status": "entregada"}
+        piece["order"] = {**order_embed, "status": "entregada", "delivered_at": _now()}
         delivered_count += 1
 
     if delivered_count == 0:
-        raise HTTPException(status_code=400, detail="All ordered pieces are already delivered")
+        raise HTTPException(status_code=400, detail="No in-store pieces to deliver")
 
     updated = folioRepository.edit(folio_id, {"pieces": pieces, "updated_at": _now()})
     return {"folio": _hydrate(updated), "delivered_count": delivered_count}
@@ -3151,6 +3168,7 @@ def confirm_pickup(
     signature_url: Optional[str],
     received_by_name: Optional[str],
     pictures: Optional[List[str]] = None,
+    notes: Optional[str] = None,
 ) -> dict:
     """In-person pickup completion. Reuses the delivery-proof fields (signature + received-by)."""
     from app.repositories import OrderRepository as orderRepository
@@ -3165,12 +3183,23 @@ def confirm_pickup(
     if not order_doc:
         raise HTTPException(status_code=404, detail="Order not found")
 
+    folio_id = order_doc.get("mostrador_folio_id")
+    folio = folioRepository.find_by_id(folio_id) if folio_id else None
+    if folio:
+        _require_seller_folio_editable(folio)
+        # Another device may have confirmed this pickup already: never overwrite its evidence.
+        embed = next((p.get("order") or {} for p in (folio.get("pieces") or []) if (p.get("order") or {}).get("order_doc_id") == order_id), {})
+        if embed.get("status") == "entregada":
+            raise HTTPException(status_code=400, detail="Order already delivered")
+
     order_doc = {
         **order_doc,
         "delivery_customer_signature_url": signature_url,
         "delivery_received_by_name": received_by_name,
         "delivery_pictures_seller": pictures or order_doc.get("delivery_pictures_seller") or [],
     }
+    if notes is not None:
+        order_doc["delivery_notes_seller"] = notes
     order = Order(**order_doc)
     order.change_status(OrderStatus.IN_PERSON_COMPLETED.name)
     order_data = order.toJson()
@@ -3178,15 +3207,12 @@ def confirm_pickup(
     edited = orderRepository.edit(ObjectId(order_id), order_data)
 
     # reflect completion on the folio piece order (best-effort)
-    folio_id = order_doc.get("mostrador_folio_id")
-    if folio_id:
-        folio = folioRepository.find_by_id(folio_id)
-        if folio:
-            pieces = [dict(p) for p in (folio.get("pieces") or [])]
-            for piece in pieces:
-                if (piece.get("order") or {}).get("order_doc_id") == order_id:
-                    piece["order"] = {**piece["order"], "status": "entregada"}
-            folioRepository.edit(folio_id, {"pieces": pieces, "updated_at": _now()})
+    if folio:
+        pieces = [dict(p) for p in (folio.get("pieces") or [])]
+        for piece in pieces:
+            if (piece.get("order") or {}).get("order_doc_id") == order_id:
+                piece["order"] = {**piece["order"], "status": "entregada", "delivered_at": _now()}
+        folioRepository.edit(folio_id, {"pieces": pieces, "updated_at": _now()})
 
     return Order(**edited).toJson()
 
