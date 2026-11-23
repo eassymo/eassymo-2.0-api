@@ -688,6 +688,7 @@ def order_piece(folio_id: str, data: dict = Body(...)):
             delivery_mode=data.get("delivery_mode", "tienda"),
             delivery_address=data.get("delivery_address"),
             delivery_contact=data.get("delivery_contact"),
+            pickup_at=data.get("pickup_at"),
         )
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:

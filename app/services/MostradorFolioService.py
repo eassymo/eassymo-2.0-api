@@ -1866,6 +1866,7 @@ def order_piece(
     delivery_mode: str = "tienda",
     delivery_address: Optional[dict] = None,
     delivery_contact: Optional[dict] = None,
+    pickup_at: Optional[str] = None,
     *,
     allow_when_assigned: bool = False,
 ) -> dict:
@@ -1906,6 +1907,14 @@ def order_piece(
     if mode == "domicilio":
         order["delivery_address"] = delivery_address
         order["delivery_contact"] = delivery_contact
+    if mode == "pickup" and pickup_at:
+        try:
+            parsed = datetime.fromisoformat(str(pickup_at).replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="pickup_at must be ISO 8601")
+        if parsed.tzinfo is None:
+            raise HTTPException(status_code=400, detail="pickup_at must be ISO 8601")
+        order["pickup_at"] = parsed.astimezone(ZoneInfo('UTC'))
     from app.schemas.MostradorFolio import MostradorPieceOrder
     normalized = MostradorPieceOrder(**order).model_dump()
     updated = folioRepository.set_piece_order(folio_id, piece_id, normalized, _now())
