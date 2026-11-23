@@ -19,6 +19,7 @@ def list_notifications(
     callcenter: Optional[bool] = Query(None),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
+    v: Optional[int] = Query(None, description="2 returns {items, summary}; omitted keeps the bare list"),
 ):
     try:
         uid = require_authenticated_uid(request)
@@ -30,9 +31,16 @@ def list_notifications(
             skip=skip,
             limit=limit,
         )
+        payload = items
+        if v == 2:
+            # counts come from the whole inbox, not from the page that was fetched
+            payload = {
+                "items": items,
+                "summary": notificationService.summary_for_user(uid, str(groupselected)),
+            }
         return JSONResponse(
             status_code=status.HTTP_200_OK,
-            content=get_successful_response(jsonable_encoder(items)),
+            content=get_successful_response(jsonable_encoder(payload)),
         )
     except Exception as exc:
         return error_json_response(exc)
