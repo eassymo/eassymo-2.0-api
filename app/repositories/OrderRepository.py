@@ -239,3 +239,9 @@ def resolve_delivery_failure(id: ObjectId, failure_id: str, resolution: dict):
 
 def aggregate(pipeline: list):
     return list(database.db["Orders"].aggregate(pipeline))
+
+
+def cancel_if_status(id: ObjectId, allowed: list, set_: Dict[str, Any]):
+    """Cancels only while the order is still in one of the allowed statuses; None when someone got there first."""
+    return database.db["Orders"].find_one_and_update(
+        {"_id": id, "status": {"$in": allowed}}, {"$set": set_}, return_document=True)

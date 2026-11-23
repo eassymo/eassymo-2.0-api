@@ -810,3 +810,8 @@ def fanout_delivery_failed(*, order: Dict[str, Any], failure: Dict[str, Any]) ->
             ))
     if notifications:
         send_notifications_batch(notifications)
+
+
+def fanout_order_canceled(*, order: Dict[str, Any], remaining_offers: int) -> None:
+    """The selling store backed out: tell the buyer group. Filled in with the notification catalog."""
+    return None
