@@ -1,6 +1,7 @@
 from app.repositories import OfferRepository as offerRepository
 from app.repositories import GroupRepository as groupRepository
 from app.repositories import PartRequestRepository as partRequestRepository
+from app.services import NotificationService
 from app.services import BrandService as brandService
 from app.services import GuaranteeService as guaranteeService
 from app.services import ListsService as listService
@@ -337,6 +338,10 @@ def __format_offer_list(offer_list):
     return formatted_offers
 
 
+def _status_value(status):
+    return status.value if hasattr(status, "value") else status
+
+
 def find_request_offers_by_groups(request_id: str):
     part_request_data = partRequestRepository.find_one_by_id(request_id)
     part_request = PartRequest(**part_request_data)
@@ -347,14 +352,29 @@ def find_request_offers_by_groups(request_id: str):
         "has_offered": False,
         "no_stock": False,
         "rejected": False,
+        "offer_summary": None,
     }, subscribed_sellers))
 
     for seller in seller_dict:
         offers = list(offerRepository.find_by_request_id_and_group(
             request_id, [seller["seller_id"]]))
 
-        if len(offers) > 0:
+        # Offers the store withdrew (No_Inventory, e.g. it canceled the order) or that were rejected don't count.
+        live = [o for o in offers if _status_value(o.get("status")) not in ("No_Inventory", "Rejected")]
+        if live:
             seller["has_offered"] = True
+            best = min(live, key=lambda o: o.get("price") if o.get("price") is not None else float("inf"))
+            created = best.get("createdAt")
+            seller["offer_summary"] = {
+                "price": best.get("price"),
+                "created_at": created.isoformat() if hasattr(created, "isoformat") else (str(created) if created else ""),
+            }
+        elif offers:
+            statuses = {_status_value(o.get("status")) for o in offers}
+            if statuses == {"No_Inventory"}:
+                seller["no_stock"] = True
+            elif statuses == {"Rejected"}:
+                seller["rejected"] = True
 
         request_status = requestStatusByGroupRepository.find_by_group_and_request_id(
             seller["seller_id"], request_id)
@@ -378,7 +398,7 @@ def find_request_offers_by_groups(request_id: str):
         group_json = GroupSchema(**group_data).toJson()
 
         if seller["has_offered"]:
-            have_offered.append(group_json)
+            have_offered.append({**group_json, "offer_summary": seller["offer_summary"]})
         elif not seller["no_stock"] and not seller["rejected"]:
             have_not_offered.append(group_json)
 
@@ -429,9 +449,10 @@ def find_offer_by_id(offer_uid: str):
 
 
 def _find_existing_order_for_selection(request_id: str) -> dict | None:
+    # A canceled order (the store backed out) leaves the request free to choose another offer.
     for query in (
-        {"part_request._id": request_id},
-        {"part_request.id": request_id},
+        {"part_request._id": request_id, "status": {"$ne": "CANCELED"}},
+        {"part_request.id": request_id, "status": {"$ne": "CANCELED"}},
     ):
         existing = orderRepository.find_one(query)
         if existing is not None:
@@ -489,6 +510,7 @@ def change_offer_status(request_id: str, offer_id: str, status: str, user_token:
                     )
 
                 part_request.update_status(PartRequestStatus.OFFER_SELECTED)
+                part_request.last_cancellation = None
                 offer.update_status(OfferStatus.selected)
 
                 order_created_at = datetime.now(ZoneInfo('UTC'))
@@ -526,6 +548,10 @@ def change_offer_status(request_id: str, offer_id: str, status: str, user_token:
         offer_json_for_notify = offer.toJson()
 
         if offer_status == OfferStatus.selected and order_id:
+            try:
+                NotificationService.resolve_decisions(f"request:{request_id}:choose")
+            except Exception:
+                pass
             creator_group_doc = groupRepository.find_by_id(str(part_request.creatorGroup))
             buyer_name = (creator_group_doc or {}).get("name") or ""
             notification_fanout.fanout_offer_selected(

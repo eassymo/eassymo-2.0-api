@@ -106,6 +106,9 @@ def _assert_order_status_transition(
             detail=f"Invalid order status: {new_status_name}",
         )
 
+    if new_enum == OrderStatus.CANCELED:
+        raise HTTPException(status_code=400, detail="Para cancelar usa No puedo surtir esta orden.")
+
     current = order.status
     if not isinstance(current, OrderStatus):
         current = OrderStatus(current)
