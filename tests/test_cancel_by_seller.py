@@ -172,3 +172,16 @@ def test_assigned_rider_gets_the_canceled_alert_with_assignment(env):
     alerted = fake.rider_alert.call_args.kwargs["order"]
     assert alerted["delivery_assignment"]["user_id"] == "rider-1"
     fake.delete_code.assert_called_once()
+
+
+def test_end_to_end_buyer_group_gets_the_real_cancel_notice(env):
+    fake = env()
+    fake.patches[8].stop()  # use the real fanout_order_canceled
+    fake.doc["offer_group"] = {"name": "AUTOPARTES ALEX"}
+    with patch("app.services.notification_fanout._users_by_group_ids", return_value=[{"_id": "buyer-1", "users": ["b1"]}]), \
+         patch("app.services.notification_fanout.send_notifications_batch") as batch:
+        _go(reason="no_stock", note=None)
+    n = batch.call_args.args[0][0]
+    assert n.title == "Autopartes Alex canceló tu pedido" and n.decision_key == "request:req-1:choose"
+    assert n.body.startswith("Balata: no hay existencia.") and "Tienes 2 ofertas más" in n.body
+    fake.patches[8].start()

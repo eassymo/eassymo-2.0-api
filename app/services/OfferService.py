@@ -98,6 +98,7 @@ def insert(payload: Offer, user_token: str):
         offer_payload.pop('_id')
 
         inserted_id = offerRepository.insert(offer_payload).inserted_id
+        _resolve_decisions_quietly(f"request:{payload.request_id}:quote:{payload.group_id}")
 
         if part_request is not None:
             from app.services import notification_fanout
@@ -338,6 +339,13 @@ def __format_offer_list(offer_list):
     return formatted_offers
 
 
+def _resolve_decisions_quietly(key: str) -> None:
+    try:
+        NotificationService.resolve_decisions(key)
+    except Exception:
+        pass
+
+
 def _status_value(status):
     return status.value if hasattr(status, "value") else status
 
@@ -538,6 +546,10 @@ def change_offer_status(request_id: str, offer_id: str, status: str, user_token:
         offer_json = offer.toJson()
         offer_json.pop('_id')
         offerRepository.edit_offer(offer_id, offer_json)
+
+        if previous_status in (OfferStatus.pending_approval, OfferStatus.workshop_approval_pending) \
+                and offer_status != previous_status:
+            _resolve_decisions_quietly(f"offer:{offer_id}:approve")
 
         if len(order_id) > 0:
             offer_json["order_id"] = order_id

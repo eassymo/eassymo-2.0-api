@@ -152,7 +152,7 @@ def test_failed_goes_to_the_selling_group_not_the_rider(sent):
     by_group.assert_called_once_with([SELLER])
     assert sorted(n["owner"] for n in stored) == ["clerk-uid", "owner-uid"]
     assert all(n["type"] == "DELIVERY_FAILED" and n["ownerGroup"] == SELLER for n in stored)
-    assert stored[0]["message"] == "No se pudo entregar. Balata delantera: no contestan."
+    assert stored[0]["message"] == "No pudimos entregar un pedido. Balata delantera: no contestan."
     assert stored[0]["visibleRoles"] == ["212", "213"]
     assert all("guest_token" not in n for n in stored)
 
@@ -167,11 +167,11 @@ def test_failed_reason_texts(sent, reason, text):
     stored, _ = sent
     with patch.object(fanout, "_users_by_group_ids", return_value=[{"_id": SELLER, "users": ["owner-uid"]}]):
         fanout.fanout_delivery_failed(order=_order(GUEST), failure={"reason": reason})
-    assert stored[0]["message"] == f"No se pudo entregar. Balata delantera: {text}."
+    assert stored[0]["message"] == f"No pudimos entregar un pedido. Balata delantera: {text}."
 
 
 def test_failed_other_reason_shows_the_note(sent):
     stored, _ = sent
     with patch.object(fanout, "_users_by_group_ids", return_value=[{"_id": SELLER, "users": ["owner-uid"]}]):
         fanout.fanout_delivery_failed(order=_order(GUEST), failure={"reason": "other", "note": "portón cerrado"})
-    assert stored[0]["message"] == "No se pudo entregar. Balata delantera: otro motivo (portón cerrado)."
+    assert stored[0]["message"] == "No pudimos entregar un pedido. Balata delantera: otro motivo (portón cerrado)."

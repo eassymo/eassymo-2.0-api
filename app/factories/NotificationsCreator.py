@@ -624,10 +624,21 @@ def create_delivery_notification(
     navigate_to_url: str,
     guest_token: Optional[str] = None,
     visible_roles: Optional[List[str]] = None,
+    *,
+    side: Optional[str] = None,
+    vehicle: str = "",
+    action: Optional[Dict[str, str]] = None,
+    decision_key: Optional[str] = None,
 ) -> Notification:
     return Notification(
         type=notification_type,
         message=f"{title}. {body}",
+        title=title,
+        body=body,
+        side=side,
+        vehicle=vehicle or None,
+        action=action,
+        decision_key=decision_key,
         owner=owner,
         ownerGroup=owner_group,
         visibleRoles=visible_roles,
@@ -635,4 +646,47 @@ def create_delivery_notification(
         read=False,
         metaData={"orderId": order_id, "title": title, "body": body},
         guest_token=guest_token,
+    )
+
+
+CANCEL_REASON_TEXT = {
+    "sold": "ya se vendió",
+    "no_stock": "no hay existencia",
+    "damaged": "la pieza está dañada",
+    "other": "otro motivo",
+}
+
+
+def create_order_canceled_notification(
+    store_name: str,
+    part_name: str,
+    reason: str,
+    remaining_offers: int,
+    request_id: str,
+    vehicle_id: str,
+    owner: str,
+    owner_group: str,
+    meta_data: Dict[str, Any],
+    visible_roles: Optional[List[str]] = None,
+    *,
+    vehicle: str = "",
+) -> Notification:
+    """The store backed out of the order: the buyer chooses another offer or widens the search."""
+    reason_text = CANCEL_REASON_TEXT.get(reason, CANCEL_REASON_TEXT["other"])
+    if remaining_offers > 0:
+        extra = f" Tienes {remaining_offers} {'oferta más' if remaining_offers == 1 else 'ofertas más'} para elegir."
+        label = f"Ver otras ofertas ({remaining_offers})"
+    else:
+        extra = " Envía tu solicitud a más tiendas."
+        label = "Ampliar búsqueda"
+    href = f"/request-monitor/{vehicle_id}?requestId={request_id}"
+    return structured_notification(
+        type=NotificationType.ORDER_CANCELED,
+        title=f"{display_name(store_name)} canceló tu pedido",
+        body=f"{sentence_case(part_name)}: {reason_text}.{extra}",
+        side="buy", vehicle=vehicle,
+        action={"label": label, "href": href},
+        decision_key=f"request:{request_id}:choose",
+        owner=owner, owner_group=owner_group, visible_roles=visible_roles,
+        navigate_to_url=href, meta_data=meta_data,
     )

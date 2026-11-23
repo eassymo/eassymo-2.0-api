@@ -392,6 +392,14 @@ def change_order_status(
 
         notification_fanout.fanout_order_status_change(order=result, new_status=new_status)
 
+        if OrderStatus[new_status] == OrderStatus.CONFIRMED:
+            # the seller confirmed: the "confirma la hora de entrega" decision is taken
+            from app.services import NotificationService
+            try:
+                NotificationService.resolve_decisions(f"order:{order_id}:confirm")
+            except Exception:
+                pass
+
         if became_ready_for_rider:
             _send_delivery_alert("fanout_delivery_ready", order_id, order=result)
 

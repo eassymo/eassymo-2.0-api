@@ -14,7 +14,7 @@ from app.repositories import GroupRepository as groupRepository
 from app.repositories import OrderRepository as orderRepository
 from app.schemas.DeliveryFailure import open_issue
 from app.schemas.Order import Order
-from app.services import OrderService, PickupCodeService, notification_fanout
+from app.services import NotificationService, OrderService, PickupCodeService, notification_fanout
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +162,10 @@ def resolve_issue(
     if updated is None:
         raise HTTPException(status_code=409, detail="This issue was already resolved")
     result = Order(**updated).toJson()
+    try:
+        NotificationService.resolve_decisions(f"order:{oid}:issue:{issue['id']}")
+    except Exception as exc:
+        logger.warning("resolve decisions failed for order %s: %s", oid, type(exc).__name__)
     if action == "cancel":
         if doc.get("delivery_assignment"):
             # the rider's copy, with picked_up_at intact so the wording says "devuélvela"

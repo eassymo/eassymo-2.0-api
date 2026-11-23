@@ -61,7 +61,7 @@ def test_handed_off_tells_the_store_and_flags_an_unverified_pickup(sent):
     fanout.fanout_delivery_handed_off(order=_order(ACCOUNT, picked_up_at="2026-11-21T20:00:00Z"))
     fanout.fanout_delivery_handed_off(order=_order(ACCOUNT), unverified=True)
     assert [t[0] for t in _texts(stored)] == ["DELIVERY_HANDED_OFF"] * 2
-    assert _texts(stored)[1][1] == "Recogida sin código"
+    assert _texts(stored)[1][1] == "Carla recogió sin código"
     assert {n["owner"] for n in stored} == {"owner-uid"}
 
 
@@ -70,7 +70,7 @@ def test_issue_alerts_the_store_and_for_a_delivery_the_buyer(sent):
     fanout.fanout_delivery_issue(order=_order(ACCOUNT), failure={"kind": "delivery", "reason": "no_answer"})
     by_owner = {n["owner"]: n for n in stored}
     assert set(by_owner) == {"owner-uid", "buyer-uid"}
-    assert by_owner["owner-uid"]["metaData"]["title"] == "No se pudo entregar"
+    assert by_owner["owner-uid"]["metaData"]["title"] == "No pudimos entregar un pedido"
     assert by_owner["owner-uid"]["metaData"]["body"] == "Balata delantera: no contestan."
     assert by_owner["buyer-uid"]["metaData"]["title"] == "No pudimos entregar tu pedido"
     assert all(n["type"] == "DELIVERY_ISSUE" for n in stored)
@@ -80,7 +80,7 @@ def test_a_pickup_issue_only_alerts_the_store(sent):
     stored, _ = sent
     fanout.fanout_delivery_issue(order=_order(ACCOUNT), failure={"kind": "pickup", "reason": "store_closed"})
     assert [(n["owner"], n["metaData"]["title"], n["metaData"]["body"]) for n in stored] == [
-        ("owner-uid", "No se pudo recoger", "Balata delantera: la tienda está cerrada.")]
+        ("owner-uid", "No se pudo recoger un pedido", "Balata delantera: la tienda está cerrada.")]
 
 
 @pytest.mark.parametrize("action,role,rider_body", [
