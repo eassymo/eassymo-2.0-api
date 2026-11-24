@@ -363,6 +363,9 @@ def find_request_offers_by_groups(request_id: str):
         "offer_summary": None,
     }, subscribed_sellers))
 
+    active_order = _find_existing_order_for_selection(request_id)
+    ordered_group = str((active_order or {}).get("offer", {}).get("group_id") or "")
+
     for seller in seller_dict:
         offers = list(offerRepository.find_by_request_id_and_group(
             request_id, [seller["seller_id"]]))
@@ -376,6 +379,8 @@ def find_request_offers_by_groups(request_id: str):
             seller["offer_summary"] = {
                 "price": best.get("price"),
                 "created_at": created.isoformat() if hasattr(created, "isoformat") else (str(created) if created else ""),
+                "ordered": bool(active_order) and str(seller["seller_id"]) == ordered_group,
+                "order_id": str(active_order["_id"]) if active_order and str(seller["seller_id"]) == ordered_group else None,
             }
         elif offers:
             seller["no_stock"] = True  # every offer this store made was withdrawn (it canceled)
