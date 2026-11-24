@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel
 
 from enum import Enum
@@ -55,3 +57,11 @@ class Notification(BaseModel):
     callcenterName: str | None = None
     # Guest riders have no account: their feed is keyed by the guest token (owner stays "").
     guest_token: str | None = None
+    # Structured copy (v2). Docs stored before this change have none of these; clients fall back by type.
+    title: str | None = None
+    body: str | None = None
+    side: Literal["buy", "sell"] | None = None
+    vehicle: str | None = None
+    action: dict | None = None  # {"label": str, "href": str}
+    decision_key: str | None = None
+    resolved_at: int | None = None  # ms, like timestamp

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
@@ -37,6 +38,13 @@ def _to_document(notification: Notification | Dict[str, Any]) -> Dict[str, Any]:
         "read": bool(data.get("read", False)),
         "callcenterId": data.get("callcenterId"),
         "callcenterName": data.get("callcenterName"),
+        "title": data.get("title"),
+        "body": data.get("body"),
+        "side": data.get("side"),
+        "vehicle": data.get("vehicle"),
+        "action": data.get("action"),
+        "decision_key": data.get("decision_key"),
+        "resolved_at": data.get("resolved_at"),
     }
     if data.get("guest_token"):
         doc["guest_token"] = data["guest_token"]
@@ -103,6 +111,23 @@ def list_for_user(
         skip=skip,
         limit=limit,
     )
+
+
+def resolve_decisions(decision_key: str) -> int:
+    """Close every open decision notice with this key (the decision was taken elsewhere)."""
+    if not decision_key:
+        return 0
+    return notificationRepository.resolve_by_decision_key(decision_key, int(time.time() * 1000))
+
+
+def resolve_decisions_prefix(prefix: str) -> int:
+    if not prefix:
+        return 0
+    return notificationRepository.resolve_by_decision_prefix(prefix, int(time.time() * 1000))
+
+
+def summary_for_user(owner: str, owner_group: str) -> Dict[str, int]:
+    return notificationRepository.summary_for_user(owner, owner_group)
 
 
 def mark_read(notification_id: str, owner: str) -> bool:

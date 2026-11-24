@@ -183,12 +183,23 @@ def find_one(filters):
     return database.db["Orders"].find_one(filters)
 
 
-def edit(id: ObjectId, new_data):
+def clear_request_cancellation(request_id: str, *, closed: bool = False):
+    """The orders carry a snapshot of their request: keep its cancel marker in step with the live request."""
+    update = {"part_request.last_cancellation": None}
+    if closed:
+        update["part_request.isActive"] = False
+    return database.db["Orders"].update_many(
+        {"$or": [{"part_request._id": request_id}, {"part_request.id": request_id}]}, {"$set": update})
+
+
+def edit(id: ObjectId, new_data, *, unless_canceled: bool = False):
     # delivery_failures is append-only through push_delivery_failure; a whole-order save
     # built from an older read must never write back (and erase) a newer attempt.
     new_data = {k: v for k, v in new_data.items() if k != "delivery_failures"}
+    # unless_canceled: a save built from an older read must not bring a canceled order back.
+    query = {"_id": id, "status": {"$ne": "CANCELED"}} if unless_canceled else {"_id": id}
     return database.db["Orders"].find_one_and_update(
-        {"_id": id},
+        query,
         {"$set": new_data},
         return_document=True
     )
@@ -239,3 +250,9 @@ def resolve_delivery_failure(id: ObjectId, failure_id: str, resolution: dict):
 
 def aggregate(pipeline: list):
     return list(database.db["Orders"].aggregate(pipeline))
+
+
+def cancel_if_status(id: ObjectId, allowed: list, set_: Dict[str, Any]):
+    """Cancels only while the order is still in one of the allowed statuses; None when someone got there first."""
+    return database.db["Orders"].find_one_and_update(
+        {"_id": id, "status": {"$in": allowed}}, {"$set": set_}, return_document=True)

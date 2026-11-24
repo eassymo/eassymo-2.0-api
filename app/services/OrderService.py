@@ -106,9 +106,14 @@ def _assert_order_status_transition(
             detail=f"Invalid order status: {new_status_name}",
         )
 
+    if new_enum == OrderStatus.CANCELED:
+        raise HTTPException(status_code=400, detail="Para cancelar usa No puedo surtir esta orden.")
+
     current = order.status
     if not isinstance(current, OrderStatus):
         current = OrderStatus(current)
+    if current == OrderStatus.CANCELED:
+        raise HTTPException(status_code=409, detail="Esta orden ya fue cancelada.")
 
     if new_enum == OrderStatus.WAITING_FOR_CUSTOMER_PICKUP:
         if current != OrderStatus.READY_TO_BE_DISPATCHED:
@@ -381,13 +386,24 @@ def change_order_status(
 
         order_data.pop("_id")
 
-        edited_order = orderRepository.edit(order_id, order_data)
+        edited_order = orderRepository.edit(order_id, order_data, unless_canceled=True)
+        if edited_order is None:
+            # a store member canceled between our read and this save
+            raise HTTPException(status_code=409, detail="Esta orden ya fue cancelada.")
 
         result = Order(**edited_order).toJson()
 
         from app.services import notification_fanout
 
         notification_fanout.fanout_order_status_change(order=result, new_status=new_status)
+
+        if OrderStatus[new_status] == OrderStatus.CONFIRMED:
+            # the seller confirmed: the "confirma la hora de entrega" decision is taken
+            from app.services import NotificationService
+            try:
+                NotificationService.resolve_decisions(f"order:{order_id}:confirm")
+            except Exception:
+                pass
 
         if became_ready_for_rider:
             _send_delivery_alert("fanout_delivery_ready", order_id, order=result)

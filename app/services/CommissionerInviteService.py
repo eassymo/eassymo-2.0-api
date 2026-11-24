@@ -14,6 +14,9 @@ from app.schemas.Groups import GroupSchema
 from app.schemas.Notification import Notification, NotificationType
 from app.services import ListsService as listsService
 from app.services import CommissionerInviteListsSync as commissionerInviteListsSync
+from app.factories.NotificationsCreator import structured_notification
+from app.services import NotificationService
+from app.utils.display_text import display_name
 from app.utils.notifications import send_notification
 
 
@@ -134,16 +137,18 @@ def create_invite(request: Request, census_id: str):
         if isinstance(uid, dict):
             owner_id = uid.get("_id") or uid.get("uid")
 
-        notification = Notification(
+        who = display_name(invite.commissioner_group_name) or "Un comisionado"
+        notification = structured_notification(
             type=NotificationType.COMMISSIONER_INVITE,
-            message=f'{invite.commissioner_group_name or "Un comisionado"} quiere agregarte como comisionado. Revisa los detalles y responde.',
-            owner=owner_id,
-            ownerGroup=str(invited_gid),
-            visibleRoles=None,
-            navigateToUrl=navigate,
-            read=False,
-            metaData={**invitation_meta},
+            title=f"{who} te invita como comisionado",
+            body="Comprarías piezas en su nombre.",
+            side=None,
+            action={"label": "Ver invitación", "href": navigate},
+            decision_key=f"commissioner_invite:{invite.id}",
+            owner=owner_id, owner_group=str(invited_gid), visible_roles=[],
+            navigate_to_url=navigate, meta_data={**invitation_meta},
         )
+        notification.visibleRoles = None
 
         send_notification(notification, token)
 
@@ -244,6 +249,10 @@ def respond_invite(
     inv.append_status(new_status)
 
     commissionerInviteRepository.update_by_id(invite_id, inv.to_update_document())
+    try:
+        NotificationService.resolve_decisions(f"commissioner_invite:{invite_id}")
+    except Exception:
+        pass
 
     if new_status == CommissionerInviteStatus.ACCEPTED:
         listsService.add_comisionado_group_to_commissionables_list(
@@ -263,20 +272,20 @@ def respond_invite(
             owner_id = uid
             if isinstance(uid, dict):
                 owner_id = uid.get("_id") or uid.get("uid")
-            notification = Notification(
+            notification = structured_notification(
                 type=NotificationType.COMMISSIONER_INVITE_ACCEPTED,
-                message=f'{inv.invited_group_name or "El taller"} ha aceptado trabajar como comisionado.',
-                owner=owner_id,
-                ownerGroup=inv.commissioner_group_id,
-                visibleRoles=None,
-                navigateToUrl="/commissioner/comisionados",
-                read=False,
-                metaData={
+                title=f"{display_name(inv.invited_group_name) or 'El taller'} aceptó ser tu comisionado",
+                body="Ya puede pedir piezas por ti.",
+                side=None,
+                owner=owner_id, owner_group=inv.commissioner_group_id, visible_roles=[],
+                navigate_to_url="/commissioner/comisionados",
+                meta_data={
                     "inviteId": invite_id,
                     "invitedGroupId": inv.invited_group_id,
                     "commissionerGroupId": inv.commissioner_group_id,
                 },
             )
+            notification.visibleRoles = None
             send_notification(notification, token)
 
     else:
@@ -285,20 +294,20 @@ def respond_invite(
             owner_id = uid
             if isinstance(uid, dict):
                 owner_id = uid.get("_id") or uid.get("uid")
-            notification = Notification(
+            notification = structured_notification(
                 type=NotificationType.COMMISSIONER_INVITE_REJECTED,
-                message=f'{inv.invited_group_name or "El grupo"} rechazó la invitación de comisionado.',
-                owner=owner_id,
-                ownerGroup=inv.commissioner_group_id,
-                visibleRoles=None,
-                navigateToUrl="/commissioner/comisionados",
-                read=False,
-                metaData={
+                title=f"{display_name(inv.invited_group_name) or 'El grupo'} no aceptó ser tu comisionado",
+                body="",
+                side=None,
+                owner=owner_id, owner_group=inv.commissioner_group_id, visible_roles=[],
+                navigate_to_url="/commissioner/comisionados",
+                meta_data={
                     "inviteId": invite_id,
                     "invitedGroupId": inv.invited_group_id,
                     "commissionerGroupId": inv.commissioner_group_id,
                 },
             )
+            notification.visibleRoles = None
             send_notification(notification, token)
 
     return inv.toJson()

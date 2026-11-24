@@ -96,11 +96,60 @@ def test_part_request_invite_sends_one_notification_for_all_parts():
     batch.assert_called_once()
     sent = batch.call_args.args[0]
     assert len(sent) == 1
-    assert sent[0].message == "Taller Hernández te invita a cotizar 2 piezas para un Nissan Altima 2010."
+    assert sent[0].title == "Taller Hernández te invita a cotizar"
+    assert sent[0].body == "2 piezas · Nissan Altima 2010"
     assert sent[0].navigateToUrl == "/join-request-invite/inv-1"
     assert sent[0].metaData == {"partRequests": parts, "partRequest": parts[0]}
 
 
 def test_part_request_invite_message_singular():
     sent = _fanout_invite([_invite_part()]).call_args.args[0]
-    assert sent[0].message == "Taller Hernández te invita a cotizar 1 pieza para un Nissan Altima 2010."
+    assert sent[0].title == "Taller Hernández te invita a cotizar"
+    assert sent[0].body == "1 pieza · Nissan Altima 2010"
+
+
+def _canceled_order(reason="sold"):
+    return {
+        "_id": "order-9",
+        "offer": {"group_id": "seller-g1"},
+        "offer_group": {"name": "AUTOPARTES ALEX"},
+        "cancellation": {"by": "seller", "reason": reason},
+        "part_request": {
+            "_id": "req-7", "creatorGroup": "buyer-g1", "vehicleId": "veh-3",
+            "part": {"tipoParteDescripcion": "Conector De La Linea Del Enfriador De Aceite"},
+            "vehicleInformation": {"maker": "Jeep", "model": "J10", "year": 1980},
+        },
+    }
+
+
+@pytest.mark.parametrize("remaining,body_tail,label", [
+    (3, "Tienes 3 ofertas más para elegir.", "Ver otras ofertas (3)"),
+    (0, "Envía tu solicitud a más tiendas.", "Ampliar búsqueda"),
+])
+def test_fanout_order_canceled_tells_only_the_buyer_group(remaining, body_tail, label):
+    with patch("app.services.notification_fanout._users_by_group_ids", return_value=[{"_id": "buyer-g1", "users": ["b1", "b2"]}]) as users, \
+         patch("app.services.notification_fanout.send_notifications_batch") as batch:
+        notification_fanout.fanout_order_canceled(order=_canceled_order(), remaining_offers=remaining)
+    users.assert_called_once_with(["buyer-g1"])
+    sent = batch.call_args.args[0]
+    assert [n.owner for n in sent] == ["b1", "b2"]
+    n = sent[0]
+    assert n.type.value == "ORDER_CANCELED" and n.side == "buy" and n.vehicle == "Jeep J10 1980"
+    assert n.title == "Autopartes Alex canceló tu pedido"
+    assert n.body == f"Conector de la linea del enfriador de aceite: ya se vendió. {body_tail}"
+    assert n.action == {"label": label, "href": "/request-monitor/veh-3?requestId=req-7"}
+    assert n.decision_key == "request:req-7:choose"
+
+
+def test_received_notifies_the_selling_group_not_the_buyer():
+    order = {
+        "_id": "order-1", "offer": {"group_id": "seller-g1"}, "offer_group": {"name": "AUTOPARTES ALEX"},
+        "request_group": {"name": "TALLER HERNANDEZ"}, "updated_at": "2026-11-23T18:40:00Z",
+        "part_request": {"creatorGroup": "buyer-g1", "part": {"tipoParteDescripcion": "Alternador"}},
+    }
+    with patch("app.services.notification_fanout._users_by_group_ids", return_value=[{"_id": "seller-g1", "users": ["s1"]}]) as users, \
+         patch("app.services.notification_fanout.send_notifications_batch") as batch:
+        notification_fanout.fanout_order_status_change(order=order, new_status="RECIEVED")
+    users.assert_called_once_with(["seller-g1"])
+    n = batch.call_args.args[0][0]
+    assert (n.title, n.body, n.side, n.ownerGroup) == ("Taller Hernandez recibió su pedido", "Alternador · 12:40 p. m.", "sell", "seller-g1")

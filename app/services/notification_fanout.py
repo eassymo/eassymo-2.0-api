@@ -15,6 +15,7 @@ from app.factories.NotificationsCreator import (
     create_offer_approval_request_notification,
     create_offer_notification,
     create_offer_selected_notification,
+    create_order_canceled_notification,
     create_order_confirmed_notification,
     create_order_delayed_notification,
     create_order_received_notification,
@@ -37,6 +38,7 @@ from app.utils.notification_routes import (
     seller_offer_creator_path,
     buyer_offer_notification_meta,
 )
+from app.utils.display_text import display_name, local_time_label, sentence_case, vehicle_label
 from app.utils.notifications import send_notifications_batch
 
 
@@ -54,6 +56,10 @@ def persist_notification_dict(notification: Optional[Dict[str, Any]]) -> None:
 def _group_name(group_id: str) -> str:
     doc = groupRepository.find_by_id(group_id)
     return (doc or {}).get("name") or ""
+
+
+def _vehicle(part_request: Dict[str, Any]) -> str:
+    return vehicle_label((part_request or {}).get("vehicleInformation"))
 
 
 def _users_by_group_ids(group_ids: List[str]) -> List[Dict[str, Any]]:
@@ -100,6 +106,7 @@ def fanout_part_request_created(
                     create_part_request_notification(
                         store_name=creator_group_name,
                         part_name=part_name,
+                        vehicle=_vehicle(part_request),
                         owner=str(user_id),
                         owner_group=group_id,
                         navigate_to_url=navigate_to_url,
@@ -126,6 +133,7 @@ def fanout_part_request_created(
             notifications.append(
                 create_callcenter_connected_group_selected_notification(
                     invited_group_name=invited_group_name,
+                    vehicle=_vehicle(part_request),
                     owner=str(cc_user.get("user_id") or ""),
                     owner_group=str(cc_user.get("callcenter_id") or ""),
                     navigate_to_url="/callcenter-selection",
@@ -159,6 +167,7 @@ def fanout_part_request_to_new_sellers(
                 create_part_request_notification(
                     store_name=creator_group_name,
                     part_name=part_name,
+                    vehicle=_vehicle(part_request),
                     owner=str(user_id),
                     owner_group=group_id,
                     navigate_to_url=navigate_to_url,
@@ -216,6 +225,10 @@ def fanout_offer_after_insert(
                 notifications.append(
                     create_offer_approval_request_notification(
                         call_center_name=cc_name or "Call Center",
+                        part_name=part_name,
+                        price=offer_payload.get("price"),
+                        vehicle=_vehicle(part_request),
+                        offer_id=offer_id,
                         owner=str(user_id),
                         owner_group=group_id,
                         navigate_to_url=navigate_to_url,
@@ -233,6 +246,8 @@ def fanout_offer_after_insert(
                     create_offer_notification(
                         store_name=store_name or "Tienda",
                         part_name=part_name,
+                        price=offer_payload.get("price"),
+                        vehicle=_vehicle(part_request),
                         owner=str(user_id),
                         owner_group=group_id,
                         navigate_to_url=navigate_to_url,
@@ -268,6 +283,8 @@ def fanout_offer_selected(
                     store_name=buyer_store_name or "Comprador",
                     part_name=part_name,
                     order_id=order_id,
+                    price=offer.get("price"),
+                    vehicle=_vehicle(part_request),
                     owner=str(user_id),
                     owner_group=group_id,
                     navigate_to_url=navigate_to_url,
@@ -302,6 +319,7 @@ def fanout_callcenter_offer_approved(
             create_callcenter_offer_approval_approved_notification(
                 group_name=approver_group_name or "Tienda",
                 part_name=part_name,
+                vehicle=_vehicle(part_request),
                 owner=str(cc_user.get("user_id") or ""),
                 owner_group=str(cc_user.get("callcenter_id") or ""),
                 navigate_to_url=navigate_to_url,
@@ -319,6 +337,8 @@ def fanout_callcenter_offer_approved(
                 create_offer_notification(
                     store_name=store_name or approver_group_name or "Tienda",
                     part_name=part_name,
+                    price=offer.get("price"),
+                    vehicle=_vehicle(part_request),
                     owner=str(user_id),
                     owner_group=group_id,
                     navigate_to_url=navigate_to_url,
@@ -348,6 +368,8 @@ def fanout_order_delayed(*, order: Dict[str, Any]) -> None:
         store_name=store_name or "Tienda",
         part_name=part_name,
         order_id=order_id,
+        delivery_time=order.get("to_be_delivered_time"),
+        vehicle=_vehicle(part_request),
         owner=owner,
         owner_group=owner_group,
         navigate_to_url=navigate_to_url,
@@ -378,6 +400,8 @@ def fanout_part_request_reminder(
                 create_part_request_reminder_notification(
                     store_name=store_name,
                     part_name=part_name,
+                    request_id=part_request_id,
+                    vehicle=_vehicle(part_request),
                     owner=str(user_id),
                     owner_group=group_id,
                     navigate_to_url=navigate_to_url,
@@ -446,64 +470,88 @@ def fanout_order_status_change(*, order: Dict[str, Any], new_status: str) -> Non
     part_name = (part_request.get("part") or {}).get("tipoParteDescripcion") or ""
     offer_group = order.get("offer_group") or {}
     store_name = offer_group.get("name") or _group_name(str(order.get("offer_group_id") or ""))
-
-    current_role = 2 if status_enum == OrderStatus.RECIEVED else 1
-    navigate_to_url = order_management_v2_path(order_id, current_role=current_role)
+    vehicle = _vehicle(part_request)
     meta_data = {"orderId": order_id}
 
     notifications: List[Notification] = []
-    for group_found in _users_by_group_ids([creator_group]):
-        group_id = str(group_found.get("_id") or creator_group)
-        for user_id in group_found.get("users") or []:
-            owner = str(user_id)
-            if notif_type == NotificationType.ORDER_CONFIRMED:
-                notifications.append(
-                    create_order_confirmed_notification(
-                        store_name=store_name,
-                        part_name=part_name,
-                        order_id=order_id,
-                        owner=owner,
-                        owner_group=group_id,
-                        navigate_to_url=navigate_to_url,
-                        meta_data=meta_data,
-                    )
-                )
-            elif notif_type == NotificationType.ORDER_READY_TO_BE_SENT:
-                notifications.append(
-                    create_order_ready_to_be_sent_notification(
-                        store_name=store_name,
-                        part_name=part_name,
-                        order_id=order_id,
-                        owner=owner,
-                        owner_group=group_id,
-                        navigate_to_url=navigate_to_url,
-                        meta_data=meta_data,
-                    )
-                )
-            elif notif_type == NotificationType.ORDER_SENT:
-                notifications.append(
-                    create_order_sent_notification(
-                        store_name=store_name,
-                        part_name=part_name,
-                        order_id=order_id,
-                        owner=owner,
-                        owner_group=group_id,
-                        navigate_to_url=navigate_to_url,
-                        meta_data=meta_data,
-                    )
-                )
-            elif notif_type == NotificationType.ORDER_RECIEVED:
+
+    if notif_type == NotificationType.ORDER_RECIEVED:
+        # The buyer confirmed it themselves; the selling store is the one who needs to know.
+        seller_group = _selling_group_id(order)
+        if not seller_group:
+            return
+        navigate_to_url = order_management_v2_path(order_id, current_role=2)
+        buyer_name = _buyer_name(order)
+        for group_found in _users_by_group_ids([seller_group]):
+            group_id = str(group_found.get("_id") or seller_group)
+            for user_id in group_found.get("users") or []:
                 notifications.append(
                     create_order_received_notification(
                         part_name=part_name,
                         order_id=order_id,
-                        owner=owner,
+                        buyer_name=buyer_name,
+                        received_at=order.get("updated_at"),
+                        vehicle=vehicle,
+                        owner=str(user_id),
                         owner_group=group_id,
                         navigate_to_url=navigate_to_url,
                         meta_data=meta_data,
                     )
                 )
+        if notifications:
+            send_notifications_batch(notifications)
+        return
 
+    navigate_to_url = order_management_v2_path(order_id, current_role=1)
+    rider = ""
+    if notif_type == NotificationType.ORDER_SENT and order.get("delivery_assignment"):
+        rider = _rider_name(order["delivery_assignment"])
+        rider = "" if rider == "otro repartidor" else rider
+    for group_found in _users_by_group_ids([creator_group]):
+        group_id = str(group_found.get("_id") or creator_group)
+        for user_id in group_found.get("users") or []:
+            owner = str(user_id)
+            common = dict(
+                store_name=store_name, part_name=part_name, order_id=order_id, vehicle=vehicle,
+                owner=owner, owner_group=group_id, navigate_to_url=navigate_to_url, meta_data=meta_data,
+            )
+            if notif_type == NotificationType.ORDER_CONFIRMED:
+                notifications.append(create_order_confirmed_notification(
+                    delivery_time=order.get("to_be_delivered_time"), **common))
+            elif notif_type == NotificationType.ORDER_READY_TO_BE_SENT:
+                notifications.append(create_order_ready_to_be_sent_notification(**common))
+            elif notif_type == NotificationType.ORDER_SENT:
+                notifications.append(create_order_sent_notification(rider_name=rider, **common))
+
+    if notifications:
+        send_notifications_batch(notifications)
+
+
+def fanout_order_canceled(*, order: Dict[str, Any], remaining_offers: int) -> None:
+    """The selling store backed out: tell every user of the buyer group, with the way forward."""
+    part_request = order.get("part_request") or {}
+    creator_group = str(part_request.get("creatorGroup") or "")
+    request_id = str(part_request.get("_id") or part_request.get("id") or "")
+    if not creator_group or not request_id:
+        return
+    order_id = _order_id(order)
+    cancellation = order.get("cancellation") or {}
+    store_name = _store_name(order)
+    meta_data = {"orderId": order_id, "requestId": request_id}
+    notifications: List[Notification] = []
+    for group_found in _users_by_group_ids([creator_group]):
+        group_id = str(group_found.get("_id") or creator_group)
+        for user_id in group_found.get("users") or []:
+            notifications.append(create_order_canceled_notification(
+                store_name=store_name,
+                part_name=((part_request.get("part") or {}).get("tipoParteDescripcion") or ""),
+                reason=str(cancellation.get("reason") or "other"),
+                remaining_offers=remaining_offers,
+                request_id=request_id,
+                vehicle_id=str(part_request.get("vehicleId") or ""),
+                vehicle=_vehicle(part_request),
+                owner=str(user_id), owner_group=group_id, meta_data=meta_data,
+            ))
     if notifications:
         send_notifications_batch(notifications)
 
@@ -679,20 +727,24 @@ def fanout_issue_resolved(*, order: Dict[str, Any], action: str, resolution: Dic
         _send_one(_rider_notification(
             order.get("delivery_assignment"), order, NotificationType.DELIVERY_ISSUE_RESOLVED, *rider_copy,
         ))
-    part = _part_name(order)
+    part = sentence_case(_part_name(order))
+    when_label = local_time_label(order.get("to_be_delivered_time"))
     if action == "fix_and_retry" and role != "store":
         _notify_selling_group(
-            order, NotificationType.DELIVERY_ISSUE_RESOLVED, "El comprador corrigió los datos",
+            order, NotificationType.DELIVERY_ISSUE_RESOLVED, f"{display_name(_buyer_name(order))} corrigió los datos",
             f"{part}: el repartidor lo intentará de nuevo.",
         )
     elif action in ("reschedule", "return_to_store") and role != "buyer":
         _notify_buyer_group(
             order, NotificationType.DELIVERY_ISSUE_RESOLVED, "Reprogramamos tu entrega",
-            f"{part}: " + (f"llegará a las {when}." if when and action == "reschedule" else "lo intentaremos de nuevo."),
+            f"{part}: " + (f"llega a las {when_label}." if when_label and action == "reschedule" else "lo intentaremos de nuevo."),
         )
 
 
-def _notify_selling_group(order: Dict[str, Any], notification_type: NotificationType, title: str, body: str) -> None:
+def _notify_selling_group(
+    order: Dict[str, Any], notification_type: NotificationType, title: str, body: str,
+    *, action: Optional[Dict[str, str]] = None, decision_key: Optional[str] = None,
+) -> None:
     """Every user of the selling group except the assigned rider (seller roles, push included)."""
     group_id = _selling_group_id(order)
     if not group_id:
@@ -710,6 +762,8 @@ def _notify_selling_group(order: Dict[str, Any], notification_type: Notification
                 notification_type, title, body, order_id,
                 owner=str(user_id), owner_group=owner_group, navigate_to_url=url,
                 visible_roles=DELIVERY_SELLER_ROLES,
+                side="sell", vehicle=_vehicle(order.get("part_request") or {}),
+                action=action and {**action, "href": url}, decision_key=decision_key,
             ))
     if notifications:
         send_notifications_batch(notifications)
@@ -718,17 +772,25 @@ def _notify_selling_group(order: Dict[str, Any], notification_type: Notification
 def fanout_delivery_handed_off(*, order: Dict[str, Any], unverified: bool = False) -> None:
     """The rider collected the order. Without the code, the store is asked to check the parcel."""
     rider = _rider_name(order.get("delivery_assignment") or {})
-    when = _local_hhmm(order.get("picked_up_at"))
+    when = local_time_label(order.get("picked_up_at"))
+    part = sentence_case(_part_name(order))
     if unverified:
-        title = "Recogida sin código"
-        body = f"{rider} recogió {_part_name(order)} con una foto. Revisa que se llevó el paquete correcto."
+        _notify_selling_group(
+            order, NotificationType.DELIVERY_HANDED_OFF, f"{rider} recogió sin código",
+            f"{part} · revisa la foto del paquete.",
+            action={"label": "Ver foto"}, decision_key=f"order:{_order_id(order)}:handoff",
+        )
     else:
-        title = f"{rider} recogió la orden"
-        body = f"{_part_name(order)}" + (f" · {when}" if when else "")
-    _notify_selling_group(order, NotificationType.DELIVERY_HANDED_OFF, title, body)
+        _notify_selling_group(
+            order, NotificationType.DELIVERY_HANDED_OFF, f"{rider} recogió un pedido",
+            f"{part} · con código" + (f", {when}" if when else ""),
+        )
 
 
-def _notify_buyer_group(order: Dict[str, Any], notification_type: NotificationType, title: str, body: str) -> None:
+def _notify_buyer_group(
+    order: Dict[str, Any], notification_type: NotificationType, title: str, body: str,
+    *, action: Optional[Dict[str, str]] = None, decision_key: Optional[str] = None,
+) -> None:
     creator_group = str((order.get("part_request") or {}).get("creatorGroup") or "")
     if not creator_group:
         return
@@ -741,6 +803,8 @@ def _notify_buyer_group(order: Dict[str, Any], notification_type: NotificationTy
             notifications.append(create_delivery_notification(
                 notification_type, title, body, order_id,
                 owner=str(user_id), owner_group=owner_group, navigate_to_url=url,
+                side="buy", vehicle=_vehicle(order.get("part_request") or {}),
+                action=action and {**action, "href": url}, decision_key=decision_key,
             ))
     if notifications:
         send_notifications_batch(notifications)
@@ -761,8 +825,8 @@ def fanout_pickup_code_guessing(*, order_id: str) -> None:
     order = {**order, "_id": str(order["_id"])}
     _notify_selling_group(
         order, NotificationType.DELIVERY_ISSUE, "Código de recogida bloqueado",
-        f"{_part_name(order)}: el repartidor falló el código muchas veces. "
-        "Ya no se acepta; si es quien esperas, puede recoger con una foto.",
+        f"{sentence_case(_part_name(order))}: el repartidor falló el código muchas veces. "
+        "Si es quien esperas, puede recoger con una foto.",
     )
 
 
@@ -774,12 +838,16 @@ def fanout_delivery_issue(*, order: Dict[str, Any], failure: Dict[str, Any]) -> 
     if failure.get("reason") == "other" and note:
         reason = f"{reason} ({note})"
     pickup = failure.get("kind") == "pickup"
-    title = "No se pudo recoger" if pickup else "No se pudo entregar"
-    _notify_selling_group(order, NotificationType.DELIVERY_ISSUE, title, f"{_part_name(order)}: {reason}.")
+    title = "No se pudo recoger un pedido" if pickup else "No pudimos entregar un pedido"
+    part = sentence_case(_part_name(order))
+    key = f"order:{_order_id(order)}:issue:{failure.get('id')}" if failure.get("id") else None
+    _notify_selling_group(order, NotificationType.DELIVERY_ISSUE, title, f"{part}: {reason}.",
+                          action={"label": "Resolver"}, decision_key=key)
     if not pickup:
         _notify_buyer_group(
             order, NotificationType.DELIVERY_ISSUE, "No pudimos entregar tu pedido",
-            f"{_part_name(order)}: {reason}. Corrige los datos para que lo intentemos de nuevo.",
+            f"{part}: {reason}.",
+            action={"label": "Corregir datos"}, decision_key=key,
         )
 
 
@@ -794,7 +862,8 @@ def fanout_delivery_failed(*, order: Dict[str, Any], failure: Dict[str, Any]) ->
         reason = f"{reason} ({note})"
     rider_uid = str((order.get("delivery_assignment") or {}).get("user_id") or "")
     order_id = _order_id(order)
-    title, body = "No se pudo entregar", f"{_part_name(order)}: {reason}."
+    title, body = "No pudimos entregar un pedido", f"{sentence_case(_part_name(order))}: {reason}."
+    key = f"order:{order_id}:issue:{failure.get('id')}" if failure.get("id") else None
     url = order_management_v2_path(order_id, current_role=2)
 
     notifications: List[Notification] = []
@@ -807,6 +876,8 @@ def fanout_delivery_failed(*, order: Dict[str, Any], failure: Dict[str, Any]) ->
                 NotificationType.DELIVERY_FAILED, title, body, order_id,
                 owner=str(user_id), owner_group=owner_group, navigate_to_url=url,
                 visible_roles=DELIVERY_SELLER_ROLES,
+                side="sell", vehicle=_vehicle(order.get("part_request") or {}),
+                action={"label": "Resolver", "href": url}, decision_key=key,
             ))
     if notifications:
         send_notifications_batch(notifications)

@@ -1937,6 +1937,9 @@ def unorder_piece(
         raise HTTPException(status_code=404, detail="Folio not found")
     if not allow_when_assigned:
         _require_seller_folio_editable(doc)
+    piece = next((p for p in doc.get("pieces") or [] if p.get("piece_id") == piece_id), None)
+    if ((piece or {}).get("order") or {}).get("status") == "entregada":
+        raise HTTPException(status_code=400, detail="Order already delivered")
     updated = folioRepository.set_piece_order(folio_id, piece_id, None, _now())
     if not updated:
         raise HTTPException(status_code=404, detail="Piece not found")

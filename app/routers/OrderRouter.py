@@ -1,12 +1,14 @@
 from fastapi.responses import JSONResponse
-from fastapi import APIRouter, Body, status, Query, Request
+from fastapi import APIRouter, Body, Depends, status, Query, Request
 from app.schemas.Order import Order, OrderStatus
 from app.services import OrderService
 from app.services import DeliveryService
 from app.services import authz
 from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response, error_json_response
 from typing import Any, Dict, Literal, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from app.authz import grant_keys as grant_keys
+from app.schemas.Order import CancelReason
 
 # Role value for delivery persons (DEALER_SHOP)
 _DELIVERY_PERSON_ROLE = "215"
@@ -260,6 +262,24 @@ def resolve_issue(request: Request, id: str, data: ResolveIssueBody):
             is_support=user.get("super_admin") is True,
             note=data.note, new_time=data.new_time, new_rider=data.new_rider, contact=data.contact,
         )
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+    except Exception as e:
+        return error_json_response(e)
+
+
+class CancelBySellerBody(BaseModel):
+    reason: CancelReason
+    note: Optional[str] = Field(None, max_length=200)
+
+
+@orderRouter.post("/{id}/cancel-by-seller", description="The selling store cancels an order that is still at the store",
+                  tags=["Orders"], dependencies=[Depends(authz.require_grant(grant_keys.ORDERS_CHANGE_STATUS))])
+def cancel_by_seller(request: Request, id: str, data: CancelBySellerBody):
+    try:
+        from app.services import OrderCancellationService
+
+        uid = authz.caller_uid(request)
+        response = OrderCancellationService.cancel_by_seller(id, uid, data.reason, data.note)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
         return error_json_response(e)

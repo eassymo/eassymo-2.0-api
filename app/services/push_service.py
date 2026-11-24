@@ -94,7 +94,7 @@ def send_push_from_notification(notification: Dict[str, Any]) -> int:
 
     return send_push_to_uid(
         str(owner),
-        title="Eassymo",
-        body=str(message),
+        title=str(notification.get("title") or "Eassymo"),
+        body=str(notification.get("body") or message),
         data=data,
     )

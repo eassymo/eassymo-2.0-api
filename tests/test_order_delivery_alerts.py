@@ -61,7 +61,7 @@ def _store(doc):
     """find_by_id returns doc; edit echoes what was saved."""
     return (
         patch.object(OrderService.orderRepository, "find_by_id", return_value=[doc]),
-        patch.object(OrderService.orderRepository, "edit", side_effect=lambda _id, data: {**data, "_id": _id}),
+        patch.object(OrderService.orderRepository, "edit", side_effect=lambda _id, data, **kw: {**data, "_id": _id}),
     )
 
 
