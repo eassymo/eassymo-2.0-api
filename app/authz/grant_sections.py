@@ -68,7 +68,10 @@ GRANT_SECTIONS: Dict[str, List[Section]] = {
     g.WHATSAPP_REQUEST_CREDITS: [_api("POST /whatsapp/usage/credit-requests")],
     g.ORDERS_VIEW: [_app("Menú: Mis pedidos / ventas (/order-management-v2)")],
     g.REQUESTS_VIEW: [_app("Panel principal (/dashboard-v2) para quien también entrega")],
-    g.OFFERS_VIEW_INCOMING: [_app("Panel principal (/dashboard-v2) para quien también entrega")],
+    g.OFFERS_VIEW_INCOMING: [
+        _app("Panel principal (/dashboard-v2) para quien también entrega"),
+        _api("GET /partRequest/{id}/buyer-route"),
+    ],
 }
 
 

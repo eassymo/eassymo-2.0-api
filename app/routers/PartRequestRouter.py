@@ -8,6 +8,8 @@ from fastapi.encoders import jsonable_encoder
 from typing import Optional
 from fastapi import Request, HTTPException
 from datetime import datetime
+from app.authz import grant_keys
+from app.services import RouteService, authz
 
 partRequestRouter = APIRouter(prefix="/partRequest")
 
@@ -169,6 +171,22 @@ def find_vehicle_requests_with_offers(
             status_code=status.HTTP_200_OK,
             content=get_successful_response(part_requests_with_offers),
         )
+    except Exception as e:
+        return error_json_response(e)
+
+
+@partRequestRouter.get("/{part_request_id}/buyer-route", response_description="Driving route from the selected store to the buyer")
+def buyer_route(request: Request, part_request_id: str):
+    try:
+        uid = authz.caller_uid(request)
+        gid = authz.selected_group(request)
+        grants = authz.effective_grants(uid, gid, request)
+        if grant_keys.OFFERS_VIEW_INCOMING not in grants and grant_keys.OFFERS_VIEW_ALL not in grants:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Missing grant: offers.view_incoming")
+        response = partRequestService.get_buyer_route(part_request_id, gid)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+    except (partRequestService.LocationMissing, RouteService.RouteEstimatesUnavailable) as e:
+        return JSONResponse(status_code=e.status_code, content={"code": e.code, "error": str(e.detail)})
     except Exception as e:
         return error_json_response(e)
 

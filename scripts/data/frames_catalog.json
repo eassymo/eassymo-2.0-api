@@ -1159,6 +1159,23 @@
   "sort_order": 29
  },
  {
+  "code": "V.N3.S1.B",
+  "name": "Tarjeta del comprador",
+  "description": "Hoja con los datos y la distancia de la tienda que compra",
+  "pov": "vendedor",
+  "route": "/dashboard-v3",
+  "sample": "solicitud entrante",
+  "element": "Hoja 'Tarjeta del comprador'",
+  "steps": "Tocar el encabezado del comprador",
+  "grants": [
+   "offers.view_incoming",
+   "offers.view_all"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 29
+ },
+ {
   "code": "V.N3.S5.A",
   "name": "Avisos del repartidor",
   "description": "Cambios en sus entregas: asignada, cambió la hora, reasignada, cancelada",

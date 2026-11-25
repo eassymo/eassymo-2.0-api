@@ -1,11 +1,13 @@
-"""Route-leg estimates through the Google Routes API, computeRoutes (POST /delivery/route-legs).
+"""Route estimates through the Google Routes API, computeRoutes (POST /delivery/route-legs and
+GET /partRequest/{id}/buyer-route).
 
 The legacy Directions API can't be enabled on new Google Cloud projects; Routes replaces it.
 Costs money per request, so it ships off: with GOOGLE_DIRECTIONS_API_KEY unset (the key must
 allow the Routes API) every call answers 503 {"code": "route_estimates_unavailable"} and the
 client shows approximate distance only. Kept in the Essentials SKU: DRIVE, TRAFFIC_UNAWARE,
 at most 10 intermediates (11 stops), no waypoint optimization, only leg distance and
-duration in the field mask. Waypoints keep the rider's order. Results are cached 5 minutes
+duration in the field mask (the buyer-route pair call adds only the encoded polyline, still
+Essentials). Waypoints keep the rider's order. Results are cached 5 minutes
 per origin + stops rounded to 4 decimals (~11 m). The key goes only in a request header to
 Google and is never logged or returned.
 """
@@ -47,6 +49,7 @@ def _now() -> float:
 
 def clear_cache() -> None:
     _cache.clear()
+    _pair_cache.clear()
 
 
 def _point(p: Dict[str, Any]) -> Tuple[float, float]:
@@ -133,3 +136,69 @@ def get_route_legs(
     while len(_cache) > CACHE_MAX_ENTRIES:
         _cache.popitem(last=False)
     return [dict(leg) for leg in legs]
+
+
+PAIR_FIELD_MASK = "routes.legs.distanceMeters,routes.legs.duration,routes.polyline.encodedPolyline"
+_pair_cache: "OrderedDict[Tuple, Tuple[float, Dict[str, Any]]]" = OrderedDict()
+
+
+def _parse_pair(payload: Dict[str, Any]) -> Dict[str, Any]:
+    routes = payload.get("routes") or []
+    if not routes:
+        raise ValueError("no route")
+    route = routes[0] or {}
+    legs = route.get("legs") or []
+    if len(legs) != 1:
+        raise ValueError("leg count mismatch")
+    meters = float(legs[0].get("distanceMeters") or 0)
+    seconds = _seconds(legs[0].get("duration"))
+    polyline = (route.get("polyline") or {}).get("encodedPolyline") or None
+    return {"km": round(meters / 1000, 1), "min": int(round(seconds / 60)), "polyline": polyline}
+
+
+def get_pair_route(
+    origin: Dict[str, Any],
+    destination: Dict[str, Any],
+    *,
+    http_post: Callable[..., Any] = requests.post,
+) -> Dict[str, Any]:
+    """Driving {km, min, polyline} between two points (the buyer card). Same SKU, key, cache
+    and 503 rules as get_route_legs; the field mask adds only the encoded polyline."""
+    key = (os.getenv(KEY_ENV) or "").strip()
+    if not key:
+        raise RouteEstimatesUnavailable()
+
+    cache_key = ("pair", _point(origin), _point(destination))
+    now = _now()
+    hit = _pair_cache.get(cache_key)
+    if hit and hit[0] > now:
+        return dict(hit[1])
+
+    body: Dict[str, Any] = {
+        "origin": _waypoint(origin),
+        "destination": _waypoint(destination),
+        "travelMode": "DRIVE",
+        "routingPreference": "TRAFFIC_UNAWARE",
+        "languageCode": "es-MX",
+        "units": "METRIC",
+    }
+    headers = {"Content-Type": "application/json", "X-Goog-Api-Key": key, "X-Goog-FieldMask": PAIR_FIELD_MASK}
+
+    try:
+        res = http_post(ROUTES_URL, json=body, headers=headers, timeout=REQUEST_TIMEOUT_SECONDS)
+        if res.status_code != 200:
+            status = ((res.json() or {}).get("error") or {}).get("status") if res.status_code < 500 else None
+            logger.warning("routes unavailable: http=%s status=%s", res.status_code, status)
+            raise RouteEstimatesUnavailable()
+        result = _parse_pair(res.json() or {})
+    except RouteEstimatesUnavailable:
+        raise
+    except Exception as exc:
+        logger.warning("routes request failed: %s", type(exc).__name__)
+        raise RouteEstimatesUnavailable()
+
+    _pair_cache[cache_key] = (now + CACHE_TTL_SECONDS, result)
+    _pair_cache.move_to_end(cache_key)
+    while len(_pair_cache) > CACHE_MAX_ENTRIES:
+        _pair_cache.popitem(last=False)
+    return dict(result)
