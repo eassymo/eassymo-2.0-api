@@ -21,13 +21,18 @@ def buyer_offer_review_path(
     return "/dashboard-v2"
 
 
-def order_management_v2_path(order_id: str, current_role: int | None = None) -> str:
+# Orders page opened by notifications. Keep in sync with the client's ORDERS_ROUTE
+# (src/common/utils/orders-route.ts); rollback = the v2 orders page.
+ORDERS_ROUTE = "/order-management-v3"
+
+
+def order_management_path(order_id: str, current_role: int | None = None) -> str:
     order_id = (order_id or "").strip()
     if not order_id:
-        return "/order-management-v2"
+        return ORDERS_ROUTE
     if current_role is not None:
-        return f"/order-management-v2/{order_id}?currentRole={current_role}"
-    return f"/order-management-v2/{order_id}"
+        return f"{ORDERS_ROUTE}/{order_id}?currentRole={current_role}"
+    return f"{ORDERS_ROUTE}/{order_id}"
 
 
 def buyer_offer_notification_meta(

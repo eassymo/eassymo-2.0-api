@@ -3064,13 +3064,14 @@ def confirm(folio_id: str, *, allow_when_assigned: bool = False) -> dict:
         customer = doc.get("customer") or {}
         if customer.get("type") == "eassymo" and customer.get("user_uid") and customer.get("group_id"):
             from app.factories import NotificationsCreator
+            from app.utils.notification_routes import ORDERS_ROUTE
             notif = NotificationsCreator.create_mostrador_order_created_notification(
                 store_name=store_name,
                 part_name=_piece_display_name(piece),
                 order_id=order.order_id,
                 owner=customer["user_uid"],
                 owner_group=customer["group_id"],
-                navigate_to_url="/order-management-v2",
+                navigate_to_url=ORDERS_ROUTE,
                 meta_data={"orderId": order_doc_id, "folioId": folio_id},
             )
             nd = notif.model_dump()

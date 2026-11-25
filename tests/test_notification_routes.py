@@ -10,6 +10,27 @@ def test_seller_path_falls_back_to_dashboard_without_id():
     assert seller_offer_creator_path("  ") == "/dashboard-v2"
 
 
+def test_order_notifications_open_the_v3_orders_page():
+    from app.utils.notification_routes import ORDERS_ROUTE, order_management_path
+
+    assert ORDERS_ROUTE == "/order-management-v3"
+    assert order_management_path("o1") == "/order-management-v3/o1"
+    assert order_management_path("o1", current_role=2) == "/order-management-v3/o1?currentRole=2"
+    assert order_management_path(" ") == "/order-management-v3"
+
+
+def test_no_notification_still_links_to_the_v2_orders_page():
+    import pathlib
+
+    app_dir = pathlib.Path(__file__).resolve().parents[1] / "app"
+    offenders = [
+        str(path.relative_to(app_dir))
+        for path in app_dir.rglob("*.py")
+        if "/order-management-v2" in path.read_text(encoding="utf-8")
+    ]
+    assert offenders == []
+
+
 # ── list payload v2 ──────────────────────────────────────────────────────────
 from unittest.mock import patch
 
