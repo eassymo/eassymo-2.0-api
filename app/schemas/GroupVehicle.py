@@ -25,6 +25,7 @@ class GroupVehicle(BaseModel):
     licensePlate: Optional[str] = Field(None,
         description="current license plate of the car")
     numberOfRequests: Optional[int] = Field(None, description="Number of requests")
+    lastRequestAt: Optional[datetime] = Field(None, description="When the newest part request of this vehicle was created")
     parent_request_id: Optional[str] = Field(None, description="Parent request id, this links the vehicle with all previous requests")
 
     @root_validator(pre=True)
@@ -37,4 +38,6 @@ class GroupVehicle(BaseModel):
         data = self.dict(by_alias=True)
 
         data["createdAt"] = str(data["createdAt"])
+        if data.get("lastRequestAt") is not None:
+            data["lastRequestAt"] = data["lastRequestAt"].isoformat()
         return data

@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import List
 
 from app.repositories import GroupCarRepository
@@ -32,6 +33,14 @@ def _check_if_license_plate_is_unique(license_plate: str):
     return len(list(GroupCarRepository.find({"licensePlate": license_plate}))) > 0
 
 
+def _latest_request_time(part_requests: list):
+    """Newest creation time among the vehicle's part requests (None when it has none)."""
+    times = [r.get("createdAt") for r in part_requests if isinstance(r.get("createdAt"), datetime)]
+    if not times:
+        times = [r["_id"].generation_time for r in part_requests if isinstance(r.get("_id"), ObjectId)]
+    return max(times) if times else None
+
+
 def find_by_group(group_id: str):
     try:
         vehicle_list = []
@@ -43,6 +52,7 @@ def find_by_group(group_id: str):
             vehicle_item.numberOfRequests = len(part_requests)
             if len(part_requests) > 0:
                 vehicle_item.parent_request_id = part_requests[0]["parent_request_uid"]
+            vehicle_item.lastRequestAt = _latest_request_time(part_requests)
             vehicle_list.append(vehicle_item.toJson())
 
         return vehicle_list
