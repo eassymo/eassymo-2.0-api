@@ -110,3 +110,22 @@ def test_selecting_clears_the_cancel_snapshot_on_every_order_of_the_request(sel)
     _, _, orders, _ = sel
     svc.change_offer_status("req-1", "offer-b", "selected", "tok")
     orders.clear_request_cancellation.assert_called_once_with("req-1")
+
+
+def test_monitor_group_that_got_the_order_says_so():
+    pr = _part_request_doc()
+    pr["subscribedSellers"] = ["gA", "gB"]
+    offers = {
+        "gA": [{"status": "Selected", "price": 105.0, "createdAt": datetime(2026, 11, 23, 11)}],
+        "gB": [{"status": "Created", "price": 140.0, "createdAt": datetime(2026, 11, 23, 10)}],
+    }
+    order = {"_id": "ord-1", "status": "CONFIRMED", "offer": {"group_id": "gA"}}
+    with patch.object(svc.partRequestRepository, "find_one_by_id", return_value=pr), \
+         patch.object(svc.offerRepository, "find_by_request_id_and_group", side_effect=lambda rid, gids: offers[gids[0]]), \
+         patch.object(svc.requestStatusByGroupRepository, "find_by_group_and_request_id", return_value=None), \
+         patch.object(svc, "_find_existing_order_for_selection", return_value=order), \
+         patch.object(svc.groupRepository, "find_by_id", side_effect=lambda gid: {"_id": gid, "name": f"Tienda {gid}"}):
+        result = svc.find_request_offers_by_groups("req-1")
+    by_id = {g["_id"]: g["offer_summary"] for g in result["have_offered"]}
+    assert by_id["gA"]["ordered"] is True and by_id["gA"]["order_id"] == "ord-1"
+    assert by_id["gB"]["ordered"] is False and by_id["gB"]["order_id"] is None

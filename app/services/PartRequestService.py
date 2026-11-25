@@ -31,6 +31,7 @@ from app.utils.notifications import send_notification
 from app.services import ListsService as listService
 from app.services import ArmadoraCompatibilityService
 from app.services import SistemasCompatibilityService
+from app.services import SellerReachService as sellerReachService
 
 import math
 import pymongo
@@ -125,7 +126,109 @@ def _vehicle_maker_from_information(vehicle_information: Any) -> Optional[str]:
     return maker_str or None
 
 
+def _now() -> datetime:
+    return datetime.now(ZoneInfo('UTC'))
+
+
+def _commissioner_reach(creator_group: str, commissioner_group: Optional[str]) -> tuple[List[str], List[Any]]:
+    """Stores near the buyer from the commissioner's lists (added to every part) and their users (for notifications)."""
+    if commissioner_group is None:
+        return [], []
+    connections = __find_commissioner_group_connections(
+        creator_group_id=creator_group,
+        commissioner_group_id=commissioner_group
+    )
+    store_ids = [group.id for group in connections["commissioner_groups_from_lists"]]
+    return store_ids, connections["users_from_groups"]
+
+
+def _part_audiences(
+    creator_group: str,
+    vehicle_maker: Optional[str],
+    part_list: List[Any],
+    base_sellers_for,
+    subscribed_followers: Optional[List[str]],
+    commissioner_store_ids: List[str],
+) -> List[dict]:
+    """Per part: base sellers + commissioner stores, accepted-comisionado expansion, then compatibility."""
+    expanded_by_base: Dict[tuple, List[str]] = {}
+    parts: List[dict] = []
+    for index, car_part in enumerate(part_list):
+        base = list(base_sellers_for(index) or [])
+        key = tuple(base)
+        if key not in expanded_by_base:
+            sellers = list(base)
+            for store_id in commissioner_store_ids:
+                if store_id not in sellers:
+                    sellers.append(store_id)
+            expanded_by_base[key] = expand_subscribed_sellers_with_accepted_comisionados(sellers, creator_group)
+        subscribed, non_compatible = __resolve_subscribed_and_non_compatible(
+            expanded_by_base[key],
+            vehicle_maker,
+            car_part,
+        )
+        parts.append({
+            "index": index,
+            "subscribed": subscribed,
+            "non_compatible": non_compatible,
+            "audience": sellerReachService.audience(subscribed, subscribed_followers),
+        })
+    return parts
+
+
+def compute_part_audiences(
+    creator_group: str,
+    vehicle_id: str,
+    part_list: List[Any],
+    subscribed_sellers: List[str],
+    subscribed_followers: List[str],
+    commissioner_group: Optional[str],
+) -> List[dict]:
+    """The sellers each part would reach, exactly as insert() resolves them. Reads only."""
+    vehicle_maker = _vehicle_maker_from_information(groupCarRepository.find_by_id(vehicle_id))
+    commissioner_store_ids, _ = _commissioner_reach(creator_group, commissioner_group)
+    return _part_audiences(
+        creator_group, vehicle_maker, part_list or [], lambda _index: subscribed_sellers,
+        subscribed_followers, commissioner_store_ids,
+    )
+
+
+def _validate_reach_plan(part_request: PartRequest) -> None:
+    plan = part_request.reach_plan
+    if plan is None:
+        return
+    selected = set(part_request.subscribedSellers or [])
+    outside = [seller for seller in plan.capped_sellers if seller not in selected]
+    if outside:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"reach_plan.capped_sellers must be among subscribedSellers: {outside}",
+        )
+    part_count = len(part_request.partList or [])
+    if any(index < 0 or index >= part_count for index in plan.wide_part_indexes):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="reach_plan.wide_part_indexes out of range",
+        )
+
+
+def _roll_back_insert(creator_group: str, reserved: List[tuple], inserted_ids: List[Any]) -> None:
+    """Undo a batch that failed before anyone was notified: drop inserted docs, give slots back."""
+    try:
+        partRequestRepository.delete_by_ids(inserted_ids)
+    except Exception as error:
+        print(f"Seller reach: failed to roll back part requests {inserted_ids}: {error}")
+    for day, request_id in reserved:
+        try:
+            sellerReachService.release(creator_group, day, request_id)
+        except Exception as error:
+            print(f"Seller reach: failed to release slot {request_id} ({day}): {error}")
+
+
 def insert(part_request: PartRequest, user_token: str = None):
+    reserved: List[tuple] = []  # (day, request_id) of slots this call reserved
+    inserted_ids = []
+    committed = False
     try:
         try:
             validate_delivery_fulfillment(
@@ -135,10 +238,7 @@ def insert(part_request: PartRequest, user_token: str = None):
             )
         except ValueError as e:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-
-        inserted_ids = []
-
-        users_from_groups: List[str] = []
+        _validate_reach_plan(part_request)
 
         if part_request.parent_request_uid != None and len(part_request.parent_request_uid) > 0:
             parent_request_uid = part_request.parent_request_uid
@@ -158,50 +258,58 @@ def insert(part_request: PartRequest, user_token: str = None):
         if creator_group_data != None:
             part_request.group_info = GroupSchema(**creator_group_data)
 
-        subscribed_sellers = list(part_request.subscribedSellers or [])
+        commissioner_store_ids, users_from_groups = _commissioner_reach(
+            part_request.creatorGroup, part_request.commissioner_group)
 
-        if part_request.commissioner_group != None:
-            nearby_commissioner_groups = __find_commissioner_group_connections(
-                creator_group_id=part_request.creatorGroup,
-                commissioner_group_id=part_request.commissioner_group
-            )
+        plan = part_request.reach_plan
+        wide_indexes = set(plan.wide_part_indexes) if plan is not None else set()
+        selected_sellers = list(part_request.subscribedSellers or [])
 
-            users_from_groups = nearby_commissioner_groups["users_from_groups"]
+        def base_sellers_for(index: int) -> List[str]:
+            if plan is not None and index not in wide_indexes:
+                return plan.capped_sellers
+            return selected_sellers
 
-            for commissioner_group in nearby_commissioner_groups["commissioner_groups_from_lists"]:
-                if commissioner_group.id not in subscribed_sellers:
-                    subscribed_sellers.append(commissioner_group.id)
-
-        subscribed_sellers = expand_subscribed_sellers_with_accepted_comisionados(
-            subscribed_sellers,
+        part_list = list(part_request.partList or [])
+        parts = _part_audiences(
             part_request.creatorGroup,
+            _vehicle_maker_from_information(vehicle_information),
+            part_list,
+            base_sellers_for,
+            part_request.subscribedFollowers,
+            commissioner_store_ids,
         )
 
-        vehicle_maker = _vehicle_maker_from_information(vehicle_information)
+        # Decide every part before inserting any; parts the buyer chose as wide take slots first.
+        request_ids = [ObjectId() for _ in parts]
+        decisions: List[Optional[dict]] = [None] * len(parts)
+        now = _now()
+        for index in sorted(range(len(parts)), key=lambda i: i not in wide_indexes):
+            decision = sellerReachService.decide(
+                part_request.creatorGroup, str(request_ids[index]), parts[index]["audience"], 0, None, now)
+            decisions[index] = decision
+            if decision["tier"] == "wide":
+                reserved.append((decision["day"], str(request_ids[index])))
 
-        for car_part in part_request.partList:
-            part_subscribed_sellers, non_compatible_sellers = (
-                __resolve_subscribed_and_non_compatible(
-                    subscribed_sellers,
-                    vehicle_maker,
-                    car_part,
-                )
-            )
+        for index, car_part in enumerate(part_list):
             part_request_payload = {
                 **part_req,
+                "_id": request_ids[index],
                 "part": car_part,
                 "vehicleInformation": vehicle_information,
                 "parent_request_uid": parent_request_uid,
                 "status": part_request.status.value,
                 "specific_order_uid": part_request.specific_order_uid,
-                "subscribedSellers": part_subscribed_sellers,
-                "nonCompatibleSellers": non_compatible_sellers,
-                "createdAt": datetime.now(ZoneInfo('UTC'))
+                "subscribedSellers": parts[index]["subscribed"],
+                "nonCompatibleSellers": parts[index]["non_compatible"],
+                "reach": decisions[index],
+                "createdAt": _now()
             }
             del part_request_payload["partList"]
             part_request_id = partRequestRepository.insert(
                 part_request_payload).inserted_id
             inserted_ids.append(part_request_id)
+        committed = True
 
         found_part_requests = list(partRequestRepository.find(
             {"_id": {"$in": inserted_ids}}, {}))
@@ -232,6 +340,10 @@ def insert(part_request: PartRequest, user_token: str = None):
 
         return found_part_requests
     except Exception as e:
+        if not committed:
+            _roll_back_insert(part_request.creatorGroup, reserved, inserted_ids)
+        if isinstance(e, HTTPException):
+            raise
         raise HTTPException(
             status_code=500, detail=f'Error while inserting part request {e}')
 
@@ -1310,8 +1422,12 @@ def __check_if_group_is_in_non_favorite_list(
 
 
 def edit_part_request(part_request_data: List[PartRequestEdit]):
+    reserved: List[tuple] = []  # (group, day, request_id) of slots this call reserved
     try:
         edited_ids = []
+        now = _now()
+        planned: List[dict] = []
+        # Phase 1: resolve every doc and decide its reach; nothing is written yet.
         for part_request_edit in part_request_data:
             if not part_request_edit.id:
                 raise HTTPException(
@@ -1369,6 +1485,34 @@ def edit_part_request(part_request_data: List[PartRequestEdit]):
                     )
                 )
 
+                reach_doc = current_part_request.reach
+                if merged.origin == "mostrador":
+                    decision = None
+                else:
+                    followers = current_part_request.subscribedFollowers
+                    new_audience = sellerReachService.audience(subs, followers)
+                    # Stored subs are already post-expansion, so they are a comparable baseline when sellers
+                    # change; with no seller change nothing was added by the buyer, so there is no growth.
+                    previous_audience = (
+                        new_audience if part_request_edit.subscribedSellers is None
+                        else sellerReachService.audience(list(previous_subs), followers)
+                    )
+                    current_tier = (reach_doc or {}).get("tier")
+                    if reach_doc is None:
+                        limits = sellerReachService.limits_for(merged.creatorGroup)
+                        if previous_audience >= limits.wide_threshold:
+                            current_tier = "wide"  # legacy doc already wide: never limited
+                    decision = sellerReachService.decide(
+                        merged.creatorGroup,
+                        part_request_edit.id,
+                        new_audience,
+                        previous_audience,
+                        current_tier,
+                        now,
+                    )
+                    if decision["tier"] == "wide" and current_tier != "wide":
+                        reserved.append((merged.creatorGroup, decision["day"], part_request_edit.id))
+
                 part_request_json = {
                     "part": {
                         **current_part_request.part,
@@ -1384,30 +1528,56 @@ def edit_part_request(part_request_data: List[PartRequestEdit]):
                     if merged.delivery_contact is not None else None,
                     "updatedAt": datetime.now(ZoneInfo('UTC')),
                 }
+                if decision is not None:
+                    part_request_json["reach"] = decision
 
-                edited_part_request = partRequestRepository.edit_part_request(
-                    part_request_edit.id, part_request_json)
-                edited_ids.append(str(edited_part_request["_id"]))
+                planned.append({
+                    "edit": part_request_edit,
+                    "json": part_request_json,
+                    "merged": merged,
+                    "new_seller_group_ids": new_seller_group_ids,
+                })
 
-                if new_seller_group_ids:
-                    from app.services import notification_fanout
+        # Phase 2: every doc passed; write. A doc's slot is kept once its write succeeds.
+        for item in planned:
+            part_request_edit = item["edit"]
+            merged = item["merged"]
+            new_seller_group_ids = item["new_seller_group_ids"]
+            edited_part_request = partRequestRepository.edit_part_request(
+                part_request_edit.id, item["json"])
+            edited_ids.append(str(edited_part_request["_id"]))
+            written_reach = item["json"].get("reach") or {}
+            slot = (merged.creatorGroup, written_reach.get("day"), part_request_edit.id)
+            if slot in reserved:
+                reserved.remove(slot)
 
-                    creator_group_doc = groupRepository.find_by_id(merged.creatorGroup)
-                    creator_name = (creator_group_doc or {}).get("name") or ""
-                    formatted = __format_part_request(edited_part_request)
-                    notification_fanout.fanout_part_request_to_new_sellers(
-                        part_request=formatted,
-                        creator_group_name=creator_name,
-                        new_seller_group_ids=new_seller_group_ids,
-                    )
+            if new_seller_group_ids:
+                from app.services import notification_fanout
+
+                creator_group_doc = groupRepository.find_by_id(merged.creatorGroup)
+                creator_name = (creator_group_doc or {}).get("name") or ""
+                formatted = __format_part_request(edited_part_request)
+                notification_fanout.fanout_part_request_to_new_sellers(
+                    part_request=formatted,
+                    creator_group_name=creator_name,
+                    new_seller_group_ids=new_seller_group_ids,
+                )
 
         return edited_ids
     except Exception as e:
+        for group_id, day, request_id in reserved:
+            try:
+                sellerReachService.release(group_id, day, request_id)
+            except Exception as release_error:
+                print(f"Seller reach: failed to release slot {request_id} ({day}): {release_error}")
+        if isinstance(e, HTTPException):
+            raise
         raise HTTPException(
             status_code=500, detail=f'Error while editing part request {e}')
 
 
 def join_seller_to_part_request(parent_request_id: str | None, new_seller_group_id: str | None):
+    reserved: List[tuple] = []  # (group, day, request_id) of slots this call reserved
     try:
         if parent_request_id is None or new_seller_group_id is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
@@ -1424,30 +1594,89 @@ def join_seller_to_part_request(parent_request_id: str | None, new_seller_group_
             raise HTTPException(status_code=status.HTTP_204_NO_CONTENT,
                                 detail="The requested part request is not found")
 
-        edited_part_request_ids: List[str] = []
         for part_request in part_requests:
-
             if part_request.status != PartRequestStatus.CREATED:
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
                                     detail="The part request status does not allow this operation")
 
-            if part_request.subscribedSellers and new_seller_group_id in part_request.subscribedSellers:
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
-                                    detail="The current seller already belongs to the request")
+        pending = [p for p in part_requests if new_seller_group_id not in (p.subscribedSellers or [])]
+        if not pending:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                                detail="The current seller already belongs to the request")
 
-            part_request.subscribedSellers.append(new_seller_group_id)
+        now = _now()
+        planned: List[tuple] = []  # (part_request, decision)
+        full_ids: List[str] = []
+        # Phase 1: decide every part the seller is not in yet; a refusal only skips that part.
+        for part_request in pending:
+            subs = list(part_request.subscribedSellers or [])
+            followers = part_request.subscribedFollowers
+            decision = None
+            if part_request.origin != "mostrador":
+                previous_audience = sellerReachService.audience(subs, followers)
+                current_tier = (part_request.reach or {}).get("tier")
+                if part_request.reach is None:
+                    limits = sellerReachService.limits_for(part_request.creatorGroup)
+                    if previous_audience >= limits.wide_threshold:
+                        current_tier = "wide"  # legacy doc already wide: never limited
+                try:
+                    decision = sellerReachService.decide(
+                        part_request.creatorGroup,
+                        part_request.id,
+                        sellerReachService.audience([*subs, new_seller_group_id], followers),
+                        previous_audience,
+                        current_tier,
+                        now,
+                    )
+                except sellerReachService.SellerReachError:
+                    full_ids.append(part_request.id)
+                    sellerReachService.repo.write_event(
+                        "join_skipped", part_request.creatorGroup, request_id=part_request.id,
+                        day=sellerReachService.local_day(now), seller_group_id=new_seller_group_id)
+                    continue
+                if decision["tier"] == "wide" and current_tier != "wide":
+                    reserved.append((part_request.creatorGroup, decision["day"], part_request.id))
+            planned.append((part_request, decision))
 
+        if not planned:
+            raise sellerReachService.SellerReachError(
+                "request_full",
+                "Esta solicitud ya está llena.",
+                {"full_ids": full_ids, "renews_at": sellerReachService.renews_at(now).isoformat()},
+            )
+
+        # Phase 2: write. A slot leaves `reserved` only once its doc is written.
+        edited_part_request_ids: List[str] = []
+        for part_request, decision in planned:
+            part_request.subscribedSellers = [*(part_request.subscribedSellers or []), new_seller_group_id]
             edit_payload = part_request.toJson()
-
             edit_payload.pop("_id")
-
+            if decision is not None:
+                edit_payload["reach"] = decision
             edited_part_request = partRequestRepository.edit_part_request(
                 part_request.id, edit_payload)
             edited_part_request_ids.append(str(edited_part_request["_id"]))
+            slot = (part_request.creatorGroup, (decision or {}).get("day"), part_request.id)
+            if slot in reserved:
+                reserved.remove(slot)
 
-        return edited_part_request_ids
+        return {"joined_ids": edited_part_request_ids, "full_ids": full_ids}
     except HTTPException as e:
+        for group_id, day, request_id in reserved:
+            try:
+                sellerReachService.release(group_id, day, request_id)
+            except Exception as release_error:
+                print(f"Seller reach: failed to release slot {request_id} ({day}): {release_error}")
+        if isinstance(e, sellerReachService.SellerReachError):
+            raise
         raise HTTPException(status_code=e.status_code, detail=e.detail)
+    except Exception:
+        for group_id, day, request_id in reserved:
+            try:
+                sellerReachService.release(group_id, day, request_id)
+            except Exception as release_error:
+                print(f"Seller reach: failed to release slot {request_id} ({day}): {release_error}")
+        raise
 
 
 def __build_and_send_commissioner_notifications(

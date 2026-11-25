@@ -1254,5 +1254,19 @@
   "status": "active",
   "notes": null,
   "sort_order": 69
+ },
+ {
+  "code": "E.A.9",
+  "name": "Alcance de vendedores",
+  "description": "Límites diarios de envío a tiendas: valores generales, excepciones por tienda y registro",
+  "pov": "eassymo",
+  "route": "/super-admin/seller-reach",
+  "sample": null,
+  "element": "Página completa",
+  "steps": null,
+  "grants": [],
+  "status": "active",
+  "notes": "Solo super admin",
+  "sort_order": 71
  }
 ]

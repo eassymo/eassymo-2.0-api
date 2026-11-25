@@ -15,6 +15,9 @@ def get_successful_response(body):
 
 
 def get_unsuccessful_response(exception: Exception):
+    code = getattr(exception, "code", None)
+    if isinstance(exception, HTTPException) and code is not None and hasattr(exception, "data"):
+        return {"error": exception.message, "code": code, "data": exception.data}
     if isinstance(exception, HTTPException):
         return {"error": str(exception)}
     if _IS_PROD:

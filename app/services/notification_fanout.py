@@ -34,7 +34,7 @@ from app.services import CallCenterService as callCenterService
 from app.services import GroupService as groupService
 from app.utils.notification_routes import (
     buyer_offer_review_path,
-    order_management_v2_path,
+    order_management_path,
     seller_offer_creator_path,
     buyer_offer_notification_meta,
 )
@@ -68,6 +68,27 @@ def _users_by_group_ids(group_ids: List[str]) -> List[Dict[str, Any]]:
     return groupService.find_users_by_groups_ids_v2(group_ids)
 
 
+def _callcenter_groups_for_part(
+    part_request: Dict[str, Any],
+    seller_ids: List[str],
+    follower_ids: List[str],
+    commissioner_group: Optional[str],
+) -> set:
+    """Selected groups this part actually went to (compatible or excluded for compatibility), plus followers.
+
+    Without a reach plan every selected seller is one or the other on each part, so this is the whole
+    selection; a capped part keeps only the sellers it was capped to."""
+    if commissioner_group:
+        return {str(commissioner_group)}
+    on_part = {str(gid) for gid in (part_request.get("subscribedSellers") or []) if gid}
+    on_part |= {
+        str(item.get("group_id"))
+        for item in (part_request.get("nonCompatibleSellers") or [])
+        if isinstance(item, dict) and item.get("group_id")
+    }
+    return {str(gid) for gid in seller_ids if gid and str(gid) in on_part} | {str(gid) for gid in follower_ids if gid}
+
+
 def fanout_part_request_created(
     *,
     part_requests: List[Dict[str, Any]],
@@ -98,9 +119,13 @@ def fanout_part_request_created(
         part_name = (part_request.get("part") or {}).get("tipoParteDescripcion") or ""
         navigate_to_url = seller_offer_creator_path(part_request_id)
         meta_data = {"requestId": part_request_id}
+        # Each part reaches only its own sellers (a capped part has fewer than its siblings).
+        part_sellers = {str(gid) for gid in (part_request.get("subscribedSellers") or []) if gid}
 
         for group_found in users_from_groups:
             group_id = str(group_found.get("_id") or "")
+            if group_id not in part_sellers:
+                continue
             for user_id in group_found.get("users") or []:
                 notifications.append(
                     create_part_request_notification(
@@ -126,8 +151,12 @@ def fanout_part_request_created(
     group_names = {str(gid): _group_name(str(gid)) for gid in callcenter_group_ids}
 
     for part_request in part_requests:
+        part_groups = _callcenter_groups_for_part(part_request, seller_ids, follower_ids, commissioner_group)
         for cc_user in callcenter_users:
-            invited_group_name = group_names.get(str(cc_user.get("group_id") or ""), "")
+            cc_group_id = str(cc_user.get("group_id") or "")
+            if cc_group_id not in part_groups:
+                continue
+            invited_group_name = group_names.get(cc_group_id, "")
             if not invited_group_name:
                 continue
             notifications.append(
@@ -271,7 +300,7 @@ def fanout_offer_selected(
         return
 
     part_name = (part_request.get("part") or {}).get("tipoParteDescripcion") or ""
-    navigate_to_url = order_management_v2_path(order_id, current_role=2)
+    navigate_to_url = order_management_path(order_id, current_role=2)
     meta_data = {"orderId": order_id}
 
     notifications: List[Notification] = []
@@ -361,7 +390,7 @@ def fanout_order_delayed(*, order: Dict[str, Any]) -> None:
     part_name = (part_request.get("part") or {}).get("tipoParteDescripcion") or ""
     offer_group = order.get("offer_group") or {}
     store_name = offer_group.get("name") or _group_name(str(order.get("group") or ""))
-    navigate_to_url = order_management_v2_path(order_id, current_role=1)
+    navigate_to_url = order_management_path(order_id, current_role=1)
     meta_data = {"orderId": order_id}
 
     notification = create_order_delayed_notification(
@@ -480,7 +509,7 @@ def fanout_order_status_change(*, order: Dict[str, Any], new_status: str) -> Non
         seller_group = _selling_group_id(order)
         if not seller_group:
             return
-        navigate_to_url = order_management_v2_path(order_id, current_role=2)
+        navigate_to_url = order_management_path(order_id, current_role=2)
         buyer_name = _buyer_name(order)
         for group_found in _users_by_group_ids([seller_group]):
             group_id = str(group_found.get("_id") or seller_group)
@@ -502,7 +531,7 @@ def fanout_order_status_change(*, order: Dict[str, Any], new_status: str) -> Non
             send_notifications_batch(notifications)
         return
 
-    navigate_to_url = order_management_v2_path(order_id, current_role=1)
+    navigate_to_url = order_management_path(order_id, current_role=1)
     rider = ""
     if notif_type == NotificationType.ORDER_SENT and order.get("delivery_assignment"):
         rider = _rider_name(order["delivery_assignment"])
@@ -751,7 +780,7 @@ def _notify_selling_group(
         return
     rider_uid = str((order.get("delivery_assignment") or {}).get("user_id") or "")
     order_id = _order_id(order)
-    url = order_management_v2_path(order_id, current_role=2)
+    url = order_management_path(order_id, current_role=2)
     notifications: List[Notification] = []
     for group_found in _users_by_group_ids([group_id]):
         owner_group = str(group_found.get("_id") or group_id)
@@ -795,7 +824,7 @@ def _notify_buyer_group(
     if not creator_group:
         return
     order_id = _order_id(order)
-    url = order_management_v2_path(order_id, current_role=1)
+    url = order_management_path(order_id, current_role=1)
     notifications: List[Notification] = []
     for group_found in _users_by_group_ids([creator_group]):
         owner_group = str(group_found.get("_id") or creator_group)
@@ -864,7 +893,7 @@ def fanout_delivery_failed(*, order: Dict[str, Any], failure: Dict[str, Any]) ->
     order_id = _order_id(order)
     title, body = "No pudimos entregar un pedido", f"{sentence_case(_part_name(order))}: {reason}."
     key = f"order:{order_id}:issue:{failure.get('id')}" if failure.get("id") else None
-    url = order_management_v2_path(order_id, current_role=2)
+    url = order_management_path(order_id, current_role=2)
 
     notifications: List[Notification] = []
     for group_found in _users_by_group_ids([group_id]):

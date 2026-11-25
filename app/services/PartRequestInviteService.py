@@ -4,6 +4,8 @@ from app.repositories import PartRequestRepository, PartRequestInviteRepository
 from app.repositories import GroupRepository, OfferRepository
 from app.schemas.PartRequest import PartRequest, PartRequestStatus
 from app.services import PartRequestService as partRequestService
+from app.services import SellerReachService as sellerReachService
+from datetime import datetime, timezone
 from app.schemas.Groups import GroupSchema
 from pymongo.errors import PyMongoError
 from bson import ObjectId
@@ -26,6 +28,17 @@ def insert(partRequestInvite: RequestInvite) -> RequestInvite:
             if part_request_item.status.value != PartRequestStatus.CREATED.value:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                                     detail="cannot create invites for part requests that have a status different that created")
+
+        parts = [PartRequest(**p) for p in part_request_data if p.get("origin") != "mostrador"]
+        if parts and sellerReachService.limits_for(parts[0].creatorGroup).enforce:
+            now = datetime.now(timezone.utc)
+            rooms = [sellerReachService.room(p, now) for p in parts]
+            if all(r == 0 for r in rooms):
+                raise sellerReachService.SellerReachError(
+                    "request_full",
+                    "Esta solicitud ya está llena.",
+                    {"full_ids": [p.id for p in parts], "renews_at": sellerReachService.renews_at(now).isoformat()},
+                )
 
         filters = {
             "parent_request_id": partRequestInvite.parent_request_id,
@@ -81,6 +94,8 @@ def insert(partRequestInvite: RequestInvite) -> RequestInvite:
                         )
 
         return invite
+    except sellerReachService.SellerReachError:
+        raise
     except (HTTPException, PyMongoError) as e:
         raise HTTPException(e)
 
