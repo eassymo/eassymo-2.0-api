@@ -1103,6 +1103,7 @@ def __attach_offers_to_part_requests(
     part_request_data_list: List[Any],
     creator_group_id: str,
     logged_in_user: str,
+        offer_owner_group,
     filters_dict: List[Dict[str, Any]],
     status: Optional[str] = None,
 ) -> List[dict]:
@@ -1146,6 +1147,7 @@ def __attach_offers_to_part_requests(
                 not offer_json["creatorIsFavoriteAtSomeList"]
                 and __check_if_group_is_in_non_favorite_list(
                     group, creator_group_id, logged_in_user)
+    offer_owner_group: Optional[str] = None,
             )
             offers.append(offer_json)
 
@@ -1162,6 +1164,10 @@ def __build_filters_for_sibling_requests(
 ) -> Dict[str, Any]:
 
     # Collect all group IDs from all applicable filters
+        # A seller asking for their own quoting screen gets only their group's offers, never another seller's.
+        if offer_owner_group:
+            offer_filters["group_id"] = offer_owner_group
+
     all_group_ids = []
 
     for filter_item in filters_dict:
