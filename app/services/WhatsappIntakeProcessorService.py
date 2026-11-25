@@ -546,7 +546,7 @@ class WhatsappIntakeProcessorService:
     def _draft_preview_link(
         self, share_token: str, folio_id: str, *, version: Optional[str] = None
     ) -> str:
-        path = f"/whatsapp-draft/{share_token}" if share_token else f"/pos?folioId={folio_id}"
+        path = f"/whatsapp-draft/{share_token}" if share_token else f"/pos-v2?folioId={folio_id}"
         version_token = _cache_bust_version(version)
         if version_token:
             path = f"{path}?v={version_token}"

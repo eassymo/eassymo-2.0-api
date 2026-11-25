@@ -44,6 +44,8 @@ from app.routers import NotificationRouter as notificationRouter
 from app.routers import WhatsappLinksRouter as whatsappLinksRouter
 from app.routers import WhatsappUsageRouter as whatsappUsageRouter
 from app.routers import AdminWhatsappUsageRouter as adminWhatsappUsageRouter
+from app.routers import SellerReachRouter as sellerReachRouter
+from app.routers import AdminSellerReachRouter as adminSellerReachRouter
 from app.routers import MeRouter as meRouter
 
 
@@ -241,6 +243,8 @@ app.include_router(groupRouter.groupRouter)
 app.include_router(whatsappLinksRouter.whatsappLinksRouter)
 app.include_router(whatsappUsageRouter.whatsappUsageRouter)
 app.include_router(adminWhatsappUsageRouter.adminWhatsappUsageRouter)
+app.include_router(sellerReachRouter.sellerReachRouter)
+app.include_router(adminSellerReachRouter.adminSellerReachRouter)
 app.include_router(listRouter.listRouter)
 app.include_router(groupCarRouter.groupCarRouter)
 app.include_router(partRequestRouter.partRequestRouter)

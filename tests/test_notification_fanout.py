@@ -153,3 +153,52 @@ def test_received_notifies_the_selling_group_not_the_buyer():
     users.assert_called_once_with(["seller-g1"])
     n = batch.call_args.args[0][0]
     assert (n.title, n.body, n.side, n.ownerGroup) == ("Taller Hernandez recibió su pedido", "Alternador · 12:40 p. m.", "sell", "seller-g1")
+
+
+def test_fanout_part_request_created_notifies_each_part_only_to_its_own_sellers():
+    part_requests = [
+        {"_id": "pr-wide", "part": {"tipoParteDescripcion": "Filtro"}, "subscribedSellers": ["g-a"]},
+        {"_id": "pr-capped", "part": {"tipoParteDescripcion": "Balata"}, "subscribedSellers": ["g-b"]},
+    ]
+    users = [{"_id": "g-a", "users": ["ua"]}, {"_id": "g-b", "users": ["ub"]}]
+
+    with patch("app.services.notification_fanout._users_by_group_ids", return_value=users) as lookup, \
+         patch("app.services.notification_fanout.callCenterService.get_users_of_callcenters_from_group_ids", return_value=[]), \
+         patch("app.services.notification_fanout._group_name", return_value=""), \
+         patch("app.services.notification_fanout.send_notifications_batch") as batch:
+        notification_fanout.fanout_part_request_created(
+            part_requests=part_requests,
+            creator_group_name="Taller Demo",
+            subscribed_sellers=["g-a", "g-b"],
+        )
+    lookup.assert_called_once_with(["g-a", "g-b"])
+    sent = {(n.owner, n.metaData["requestId"]) for n in batch.call_args.args[0]}
+    assert sent == {("ua", "pr-wide"), ("ub", "pr-capped")}
+
+
+def test_fanout_part_request_created_scopes_callcenter_notices_per_part():
+    part_requests = [
+        {"_id": "pr-wide", "part": {}, "subscribedSellers": ["g-a"]},
+        {"_id": "pr-capped", "part": {}, "subscribedSellers": [],
+         "nonCompatibleSellers": [{"group_id": "g-b", "reason": "armadora"}]},
+    ]
+    cc_users = [
+        {"group_id": "g-a", "user_id": "cc-a", "callcenter_id": "cc1"},
+        {"group_id": "g-b", "user_id": "cc-b", "callcenter_id": "cc1"},
+        {"group_id": "g-f", "user_id": "cc-f", "callcenter_id": "cc1"},
+    ]
+
+    with patch("app.services.notification_fanout._users_by_group_ids", return_value=[]), \
+         patch("app.services.notification_fanout.callCenterService.get_users_of_callcenters_from_group_ids", return_value=cc_users) as cc, \
+         patch("app.services.notification_fanout._group_name", side_effect=lambda gid: f"name-{gid}"), \
+         patch("app.services.notification_fanout.send_notifications_batch") as batch:
+        notification_fanout.fanout_part_request_created(
+            part_requests=part_requests,
+            creator_group_name="Taller Demo",
+            subscribed_sellers=["g-a", "g-b", "g-c"],
+            subscribed_followers=["g-f"],
+        )
+    cc.assert_called_once_with(["g-a", "g-b", "g-c", "g-f"])
+    sent = {(n.owner, n.metaData["partRequest"]["_id"]) for n in batch.call_args.args[0]}
+    # g-c was selected but reaches no part (capped out); followers reach every part.
+    assert sent == {("cc-a", "pr-wide"), ("cc-f", "pr-wide"), ("cc-b", "pr-capped"), ("cc-f", "pr-capped")}

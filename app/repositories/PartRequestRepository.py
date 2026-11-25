@@ -11,6 +11,12 @@ def insert(part_request):
     return database.db["PartRequests"].insert_one(part_request)
 
 
+def delete_by_ids(ids: List[ObjectId]) -> None:
+    """Roll back docs inserted earlier in a batch that failed before anyone was notified."""
+    if ids:
+        database.db["PartRequests"].delete_many({"_id": {"$in": list(ids)}})
+
+
 def find_by_id(id) -> Optional[dict]:
     try:
         return database.db["PartRequests"].find_one({"_id": ObjectId(id)})

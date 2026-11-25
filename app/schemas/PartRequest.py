@@ -83,6 +83,12 @@ def validate_delivery_fulfillment(
         )
 
 
+class ReachPlan(BaseModel):
+    """Buyer's choice on the review sheet: which parts take a wide slot, and the stores the rest go to."""
+    wide_part_indexes: List[int] = []
+    capped_sellers: List[str] = []
+
+
 class PartRequest(BaseModel):
     id: Optional[str] = Field(None, alias="_id")
     creatorGroup: str = Field(
@@ -143,6 +149,9 @@ class PartRequest(BaseModel):
         default=None,
         description="Original part request ids recycled by the seller into this batch",
     )
+    reach: Optional[dict] = Field(
+        None, description="{tier, day, audience}: seller reach cap decision (wide | normal | capped)")
+    reach_plan: Optional[ReachPlan] = Field(None, exclude=True)
 
     @root_validator(pre=True)
     def convert_objectId(cls, values):
