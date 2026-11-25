@@ -32,7 +32,10 @@ from app.services import ListsService as listService
 from app.services import ArmadoraCompatibilityService
 from app.services import SistemasCompatibilityService
 
+import math
 import pymongo
+
+from app.services import RouteService
 
 
 def _empty_commissioner_connections() -> Dict[str, Any]:
@@ -606,6 +609,44 @@ def find_unquoted_for_seller(group_id: str, limit: int = 200):
     return {"items": items, "total": partRequestRepository.count_unquoted(filters, excluded)}
 
 
+class LocationMissing(HTTPException):
+    """A store has no usable pin, so there is no route to draw."""
+
+    def __init__(self, code: str):
+        self.code = code
+        super().__init__(status_code=422, detail=code)
+
+
+def _group_point(group_id: str, code: str) -> Dict[str, float]:
+    group = groupRepository.find_by_id(group_id, {"location": 1}) or {}
+    coords = (group.get("location") or {}).get("coordinates") or []
+    if len(coords) != 2 or not all(isinstance(c, (int, float)) and math.isfinite(c) for c in coords):
+        raise LocationMissing(code)
+    lng, lat = coords
+    if (lng == 0 and lat == 0) or abs(lat) > 90 or abs(lng) > 180:
+        raise LocationMissing(code)
+    return {"lat": lat, "lng": lng}
+
+
+def get_buyer_route(part_request_id: str, seller_group_id: str) -> Dict[str, Any]:
+    """Driving route from the seller's store to the request's buyer. Both points come from the
+    database, never from the caller. A request the seller can't see answers 404 with no
+    location data (closed requests still count as visible)."""
+    if not ObjectId.is_valid(part_request_id):
+        raise HTTPException(status_code=404, detail="Request not found")
+    filters = __format_grouped_filters(seller_group_id, str(GroupType.CAR_SHOP.value), None, None, None, None, None)
+    filters["$and"].append({"_id": ObjectId(part_request_id)})
+    if not partRequestRepository.find_open_ids(filters):
+        raise HTTPException(status_code=404, detail="Request not found")
+    request_doc = partRequestRepository.find_one_by_id(part_request_id) or {}
+    buyer_group_id = str(request_doc.get("creatorGroup") or "")
+    if not ObjectId.is_valid(buyer_group_id):
+        raise LocationMissing("buyer_location_missing")
+    origin = _group_point(seller_group_id, "seller_location_missing")
+    destination = _group_point(buyer_group_id, "buyer_location_missing")
+    return RouteService.get_pair_route(origin, destination)
+
+
 def find_distinct_vehicle_ids_in_requests(
     group_id: Optional[str],
     group_role: Optional[str],
@@ -1062,6 +1103,7 @@ def find_sibling_requests_with_offers(
         logged_in_user,
         filters_dict,
         status,
+        offer_owner_group,
     )
 
 
@@ -1105,6 +1147,7 @@ def __attach_offers_to_part_requests(
     logged_in_user: str,
     filters_dict: List[Dict[str, Any]],
     status: Optional[str] = None,
+    offer_owner_group: Optional[str] = None,
 ) -> List[dict]:
     part_requests_with_offers = []
     follower_group_ids = set(
@@ -1120,6 +1163,10 @@ def __attach_offers_to_part_requests(
 
         if status is not None:
             offer_filters["status"] = status
+
+        # A seller asking for their own quoting screen gets only their group's offers, never another seller's.
+        if offer_owner_group:
+            offer_filters["group_id"] = offer_owner_group
 
         if filters_dict and len(filters_dict) > 0:
             custom_filters = __build_filters_for_sibling_requests(

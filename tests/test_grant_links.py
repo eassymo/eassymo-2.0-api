@@ -27,6 +27,7 @@ TESTED_API_KEYS = {
     g.ORDERS_CHANGE_STATUS,
     g.WHATSAPP_VIEW_USAGE,
     g.WHATSAPP_REQUEST_CREDITS,
+    g.OFFERS_VIEW_INCOMING,
 }
 
 
@@ -259,6 +260,18 @@ def test_usage_endpoints_follow_their_grant(key, call, granted):
         repo.by_seller.return_value = []
         repo.find_pending_credit_request.return_value = {"id": "x"}
         assert (call(r, req).status_code == 200) is granted
+
+
+@pytest.mark.parametrize("held,allowed", [
+    (g.OFFERS_VIEW_INCOMING, True),
+    (g.OFFERS_VIEW_ALL, True),
+    (g.WHATSAPP_POS_INTAKE, False),
+])
+def test_buyer_route_follows_offers_grant(held, allowed):
+    from app.routers import PartRequestRouter as r
+
+    with _grants(held), patch.object(r.partRequestService, "get_buyer_route", return_value={"km": 1.0, "min": 2, "polyline": None}):
+        assert (r.buyer_route(_request(), str(ObjectId())).status_code == 200) is allowed
 
 
 # ── completeness ────────────────────────────────────────────────
