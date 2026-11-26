@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Body, status, Query, Request
+from fastapi import APIRouter, Body, Depends, status, Query, Request
+from app.authz import grant_keys
+from app.services import authz
 from app.schemas.Lists import ListsSchema
 from app.utils import TypeUtilities as typeUtilities
 from app.services import ListsService as listService
@@ -48,6 +50,21 @@ def update(request: Request, list_id: str, payload: ListsSchema = Body(...)):
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
     except Exception as e:
         return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=get_unsuccessful_response(str(e)))
+
+
+# Registered before DELETE /{list_id} so the more specific path always wins.
+@listRouter.delete("/connections/{other_group_id}", response_description="ids of the lists the store left", tags=["Lists"])
+def remove_connection(request: Request, other_group_id: str,
+                      group_id: str = Depends(authz.require_grant(grant_keys.NETWORK_MANAGE_LISTS))):
+    response = listService.remove_connection(authz.caller_uid(request), group_id, other_group_id)
+    return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+
+
+@listRouter.delete("/{list_id}", response_description="id of the deleted list", tags=["Lists"])
+def delete_list(request: Request, list_id: str,
+                group_id: str = Depends(authz.require_grant(grant_keys.NETWORK_MANAGE_LISTS))):
+    response = listService.delete_list(authz.caller_uid(request), group_id, list_id)
+    return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
 
 
 @listRouter.get("/groups-from-lists", response_description="Returns the groups belonging to all of the accumulated lists")

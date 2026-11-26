@@ -103,10 +103,14 @@ def insert_group_to_list(list_id: str, group_id: str):
     return database.db["Lists"].update_one({"_id": ObjectId(list_id)}, {"$addToSet": {"groups": group_id}})
 
 
-def remove_group_from_list(list_id: str, group_id: str):
+def remove_group_from_list(list_id: str, group_id: str, *, any_form: bool = False):
+    """Pull group_id from the list. any_form also pulls it when stored as an ObjectId."""
+    value: Any = group_id
+    if any_form and ObjectId.is_valid(group_id):
+        value = {"$in": [group_id, ObjectId(group_id)]}
     return database.db["Lists"].update_one(
         {"_id": ObjectId(list_id)},
-        {"$pull": {"groups": group_id}},
+        {"$pull": {"groups": value}},
     )
 
 
@@ -148,3 +152,20 @@ def update(list_id: str, payload: Dict[str, Any]) -> UpdateResult:
     utc_date = datetime.now(ZoneInfo('UTC'))
     payload["last_modified"] = utc_date
     return database.db["Lists"].find_one_and_update({"_id": id}, {"$set": payload}, return_document=True)
+
+
+def archive_and_delete(list_doc: Dict[str, Any], deleted_by: str) -> None:
+    """Copy the list into ListsArchive (who deleted it and when), then remove it from Lists."""
+    original_id = list_doc["_id"]
+    archived = {k: v for k, v in list_doc.items() if k != "_id"}
+    archived.update({
+        "original_id": original_id,
+        "deleted_by": deleted_by,
+        "deleted_at": datetime.now(ZoneInfo('UTC')),
+    })
+    database.db["ListsArchive"].insert_one(archived)
+    database.db["Lists"].delete_one({"_id": ObjectId(str(original_id))})
+
+
+def insert_network_event(event: Dict[str, Any]):
+    return database.db["NetworkEvents"].insert_one(event)
