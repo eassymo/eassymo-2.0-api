@@ -108,7 +108,7 @@ def env():
         svc.preview.return_value = {"today": TODAY, "parts": []}
         a, b = str(ObjectId()), str(ObjectId())
         prr.find_by_specific_order_uid.return_value = [_doc(a, "capped"), _doc(b, "wide", [f"s{i}" for i in range(60)])]
-        offr.distinct.return_value = ["gA", "gB"]
+        offr.find.return_value = [{"group_id": "gA", "price": 900.0}, {"group_id": "gB", "price": 750.0}]
         repo.get_settings.return_value = dict(SETTINGS)
         repo.update_settings.side_effect = lambda f, actor: {**SETTINGS, **f}
         repo.get_override.return_value = None
@@ -141,14 +141,17 @@ def test_requests_reach_shape(env):
     r = env.user.get("/seller-reach/requests/so1")
     assert r.status_code == 200
     body = r.json()["body"]
-    assert set(body) == {"today", "audience_total", "responded_total", "parts"}
+    assert set(body) == {"today", "audience_total", "responded_total", "offers_total", "lowest_price", "parts"}
     assert body["audience_total"] == 60 and body["responded_total"] == 2
+    assert body["offers_total"] == 2 and body["lowest_price"] == 750.0
     a, b = env.ids
     assert body["parts"] == [
         {"id": a, "name": "Balata", "amount": 2, "unit": "Juego", "audience": 20, "tier": "capped", "room": 0},
         {"id": b, "name": "Balata", "amount": 2, "unit": "Juego", "audience": 60, "tier": "wide", "room": None},
     ]
-    env.offr.distinct.assert_called_once_with("group_id", {"request_id": {"$in": [a, b]}})
+    env.offr.find.assert_called_once_with(
+        {"request_id": {"$in": [a, b]}, "status": {"$in": ["Created", "Selected"]}}, {"group_id": 1, "price": 1}
+    )
 
 
 def test_requests_reach_forbidden_and_missing(env):
