@@ -2,6 +2,7 @@ from pymongo.errors import PyMongoError
 from app.config import database
 from bson import ObjectId
 from pymongo import ReturnDocument
+from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 
 from app.schemas.PartRequest import PartRequest, PartRequestStatus
@@ -275,37 +276,97 @@ def distinct(property_name: str, filters: Dict[str, Any]):
     return database.db["PartRequests"].distinct(property_name, filters)
 
 
+def _iso_text(value: datetime) -> str:
+    """The text form JS and toJson() wrote: UTC, milliseconds, "Z" (sorts like the date it names)."""
+    utc = value.astimezone(timezone.utc) if value.tzinfo else value
+    return utc.strftime("%Y-%m-%dT%H:%M:%S.") + f"{utc.microsecond // 1000:03d}Z"
+
+
+# createdAt as a date: a BSON date or ISO text (old writers). A text that is not a date becomes null instead of
+# failing the whole aggregation.
+_CREATED_AT = {"$convert": {"input": "$createdAt", "to": "date", "onError": None, "onNull": None}}
+
+# A request without a parent uid is its own batch (by its order, else by itself), never one "" bucket.
+_BATCH_KEY = {
+    "$cond": [
+        {"$gt": [{"$strLenCP": {"$ifNull": ["$parent_request_uid", ""]}}, 0]},
+        "$parent_request_uid",
+        {"$ifNull": ["$specific_order_uid", {"$toString": "$_id"}]},
+    ]
+}
+
+
+def open_turn_days(seller_group_id: str, since: datetime, tz: str) -> List[dict]:
+    """Open requests for a seller since `since`, as one row per (local day, batch) with that day's part ids.
+
+    createdAt is a BSON date on most docs and ISO text on some: both are read through `_CREATED_AT`.
+    """
+    try:
+        created = _CREATED_AT
+        rows = database.db["PartRequests"].aggregate([
+            {"$match": {
+                "subscribedSellers": seller_group_id,
+                "status": PartRequestStatus.CREATED.value,
+                "$expr": {"$gte": [created, since]},
+            }},
+            {"$project": {
+                "day": {"$dateToString": {"format": "%Y-%m-%d", "date": created, "timezone": tz}},
+                "parent_request_uid": 1,
+                "specific_order_uid": 1,
+            }},
+            {"$group": {"_id": {"day": "$day", "batch": _BATCH_KEY}, "part_ids": {"$push": "$_id"}}},
+        ])
+        return [{"day": row["_id"]["day"], "batch": row["_id"]["batch"], "part_ids": row["part_ids"]} for row in rows]
+    except PyMongoError as e:
+        raise PyMongoError(f"Error while finding open turn days for seller {seller_group_id}: {str(e)}")
+
+
 def find_grouped_by_parent_request_uid(
     creator_group_id: Optional[str],
     seller_group_id: Optional[str],
     status: Optional[PartRequestStatus],
     specific_order_uid: Optional[str] = None,
+    created_from: Optional[datetime] = None,
+    created_to: Optional[datetime] = None,
 ):
+    """Open batches ("turns"), oldest arrival first. `created_from`/`created_to` limit them to one day."""
     try:
         filters = {}
 
         if creator_group_id != None and len(creator_group_id.strip()) > 0:
             filters["creatorGroup"] = creator_group_id
-        
+
         if seller_group_id != None and len(seller_group_id.strip()) > 0:
             filters["subscribedSellers"] = seller_group_id
 
         if specific_order_uid != None and len(specific_order_uid.strip()) > 0:
             filters["specific_order_uid"] = specific_order_uid
-        
+
         if status != None:
             filters["status"] = status.value
+
+        if created_from is not None or created_to is not None:
+            # createdAt is a BSON date on most docs and ISO text on some (old writers): match the day in both.
+            as_date, as_text = {}, {}
+            if created_from is not None:
+                as_date["$gte"] = created_from
+                as_text["$gte"] = _iso_text(created_from)
+            if created_to is not None:
+                as_date["$lt"] = created_to
+                as_text["$lt"] = _iso_text(created_to)
+            filters["$or"] = [{"createdAt": as_date}, {"createdAt": as_text}]
 
         return database.db["PartRequests"].aggregate([
             {"$match": filters},
             {
                 "$group": {
-                    "_id": "$parent_request_uid",
+                    "_id": _BATCH_KEY,
+                    "first_created": {"$min": _CREATED_AT},
                     "part_requests": {"$push": "$$ROOT"}
                 }
             },
             {
-                "$sort": {"_id": -1}
+                "$sort": {"first_created": 1, "_id": 1}
             }
         ])
     except PyMongoError as e:
