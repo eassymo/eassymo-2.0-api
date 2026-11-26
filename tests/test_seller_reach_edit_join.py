@@ -362,3 +362,18 @@ def test_join_write_failure_releases_only_unwritten_docs_slots():
             prs.join_seller_to_part_request(PARENT, "new-seller")
     assert repo.released == [B]
     assert repo.ids == [A]
+
+
+def test_adding_stores_stamps_last_widened_at():
+    """The monitor's 30-minute wait to widen again restarts from here."""
+    repo = FakeReachRepo(wide_used=0)
+    with World(repo, [_doc(A, 10, NORMAL)]) as w:
+        prs.edit_part_request([_edit(A, add=_sellers(3, "n"))])
+    assert w.written[0][1]["last_widened_at"] == NOW
+
+
+def test_an_edit_that_adds_no_store_leaves_last_widened_at_alone():
+    repo = FakeReachRepo(wide_used=0)
+    with World(repo, [_doc(A, 10, NORMAL)]) as w:
+        prs.edit_part_request([_edit(A, comment="nuevo")])
+    assert "last_widened_at" not in w.written[0][1]

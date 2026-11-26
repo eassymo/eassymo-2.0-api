@@ -285,6 +285,48 @@ def _build_relationship_rows(
     }
 
 
+def history_with(reviewer_group_id: str, counterpart_group_id: str, direction: RelationshipDirection) -> Dict[str, Any]:
+    """What the store has done with one counterpart in one direction (the buyer card's history row): orders in total,
+    open, delivered and canceled, the date of the last one, and the store's latest check-in answer about them."""
+    reviewer_group_id = _normalize_group_id(reviewer_group_id)
+    counterpart_group_id = _normalize_group_id(counterpart_group_id)
+    if not reviewer_group_id or not counterpart_group_id:
+        raise HTTPException(status_code=400, detail="Tienda no válida.")
+    seller, buyer = (
+        (reviewer_group_id, counterpart_group_id)
+        if direction == RelationshipDirection.VENDIENDO
+        else (counterpart_group_id, reviewer_group_id)
+    )
+    filters = {"$and": [_group_field_filter("offer.group_id", seller), _group_field_filter("group", buyer)]}
+    open_count = completed = canceled = 0
+    last: Optional[datetime] = None
+    orders = list(orderRepository.find(filters))
+    for order_doc in orders:
+        status = _order_status_value(order_doc)
+        if status in COMPLETED_STATUSES:
+            completed += 1
+        elif status == OrderStatus.CANCELED.value:
+            canceled += 1
+        else:
+            open_count += 1
+        created = _parse_datetime_value(order_doc.get("created_at"))
+        if created and (last is None or created > last):
+            last = created
+    perception = next(
+        (doc for doc in relationshipRepository.find_latest_perceptions(reviewer_group_id, direction.value)
+         if str(doc.get("counterpart_group_id")) == counterpart_group_id),
+        None,
+    )
+    return {
+        "orders": len(orders),
+        "open": open_count,
+        "completed": completed,
+        "canceled": canceled,
+        "last_order_at": last.isoformat() if last else None,
+        "answer_label": _answer_label((perception or {}).get("answer")),
+    }
+
+
 def list_relationships(reviewer_group_id: str, direction: RelationshipDirection) -> Dict[str, Any]:
     reviewer_group_id = _normalize_group_id(reviewer_group_id)
     if not reviewer_group_id:

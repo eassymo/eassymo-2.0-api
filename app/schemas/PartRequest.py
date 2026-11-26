@@ -141,6 +141,10 @@ class PartRequest(BaseModel):
     mostrador_piece_id: Optional[str] = Field(None)
     last_cancellation: Optional[dict] = Field(
         None, description="{order_id, store_group_id, store_name, reason, note, at} of the latest seller cancel")
+    last_reminder_at: Optional[datetime] = Field(
+        None, description="When the buyer last reminded the stores; the next reminder waits an hour from here")
+    last_widened_at: Optional[datetime] = Field(
+        None, description="When the buyer last added stores; widening again waits 30 minutes from here")
     mostrador_delivery_mode: Optional[str] = Field(
         None,
         description="tienda|domicilio|pickup, mirrors MostradorPieceOrder.delivery_mode",
@@ -194,6 +198,10 @@ class PartRequest(BaseModel):
         if data.get("status") is not None:
             status = self.status
             data["status"] = status.value if isinstance(status, PartRequestStatus) else status
+
+        for key in ("last_reminder_at", "last_widened_at"):
+            if isinstance(data.get(key), datetime):
+                data[key] = serialize_datetime(data[key])
 
         if isinstance(data.get("last_cancellation"), dict) and isinstance(data["last_cancellation"].get("at"), datetime):
             data["last_cancellation"] = {**data["last_cancellation"], "at": serialize_datetime(data["last_cancellation"]["at"])}
