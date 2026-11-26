@@ -25,7 +25,7 @@ def _catalog():
 def test_catalog_codes_unique_and_grants_known():
     catalog = _catalog()
     codes = [f["code"] for f in catalog]
-    assert len(codes) == len(set(codes)) == 81
+    assert len(codes) == len(set(codes)) == 84
     for frame in catalog:
         assert set(frame["grants"]) <= set(ALL_KEYS), frame["code"]
         assert frame["status"] in ("active", "pending")

@@ -8,9 +8,24 @@ from typing import Dict, Any, List
 from bson import ObjectId
 from fastapi import HTTPException, status
 from pymongo import DESCENDING
+from datetime import datetime, timezone
 
 from functools import wraps
 import warnings
+
+
+_UNDELETABLE_LISTS = ("Mi Red", "Comisionistas", "Comisionables")
+
+
+_COMMISSIONER_REMOVAL_DETAIL = (
+    "Para quitar un comisionista usa «Quitar» en Mis listas; "
+    "así se corta la relación y también se actualiza el comisionado."
+)
+
+
+_COMMISSIONABLE_REMOVAL_DETAIL = (
+    "Esta tienda es parte de tus comisionables; se quita cuando termina la relación con el comisionista."
+)
 
 
 def deprecated(func):
@@ -246,16 +261,24 @@ def update(user_info: Dict[str, Any], list_id: str, payload: ListsSchema):
             if removed:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=(
-                        "Para quitar un comisionista usa «Quitar» en Mis listas; "
-                        "así se corta la relación y también se actualiza el comisionado."
-                    ),
+                    detail=_COMMISSIONER_REMOVAL_DETAIL,
                 )
         elif incoming_name_norm == "Comisionistas":
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="El nombre «Comisionistas» está reservado para la relación con comisionados.",
             )
+
+        if prev_name_norm == "Comisionables":
+            # A store leaves Comisionables only when its commissioner relationship ends; adding stays allowed
+            # (the request creator and shop creator add stores here through this PUT).
+            old_g = {str(x) for x in (prev.get("groups") or [])}
+            new_g = {str(x) for x in (payload.groups or [])}
+            if old_g - new_g:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=_COMMISSIONABLE_REMOVAL_DETAIL,
+                )
 
         json_payload = payload.toJson()
 
@@ -405,5 +428,71 @@ def get_followers_list(user_uid: str, group_id: str) -> List[Dict[str, Any]]:
         follower_list = [GroupSchema(**group) for group in groups_found]
 
         return [follower.toJson() for follower in follower_list]
+    except PyMongoError as error:
+        raise InternalServerError(str(error))
+
+
+def delete_list(caller_uid: str, group_id: str, list_id: str) -> Dict[str, Any]:
+    """Archive and delete one of the caller's lists in the selected group. System lists stay."""
+    not_found = HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lista no encontrada.")
+    if not ObjectId.is_valid(list_id):
+        raise not_found
+    try:
+        docs = list(listsRepository.find({"_id": ObjectId(list_id)}))
+        if not docs:
+            raise not_found
+        list_doc = docs[0]
+        if str(list_doc.get("user_uid")) != str(caller_uid) or str(list_doc.get("group_id")) != str(group_id):
+            raise not_found
+
+        name = (list_doc.get("name") or "").strip()
+        if name in _UNDELETABLE_LISTS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"«{name}» no se puede eliminar.",
+            )
+
+        listsRepository.archive_and_delete(list_doc, deleted_by=caller_uid)
+        return {"deleted": list_id}
+    except PyMongoError as error:
+        raise InternalServerError(str(error))
+
+
+def remove_connection(caller_uid: str, group_id: str, other_group_id: str) -> Dict[str, Any]:
+    """Drop other_group_id from every list the caller owns in group_id and log a NetworkEvents entry."""
+    try:
+        group_forms: List[Any] = [other_group_id]
+        if ObjectId.is_valid(other_group_id):
+            group_forms.append(ObjectId(other_group_id))
+        found = listsRepository.find({
+            "user_uid": caller_uid,
+            "group_id": group_id,
+            "groups": {"$in": group_forms},
+        })
+        own_lists = [
+            doc for doc in found
+            if str(doc.get("user_uid")) == str(caller_uid) and str(doc.get("group_id")) == str(group_id)
+        ]
+        if not own_lists:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Esta tienda no está en tu red.")
+        names = {(doc.get("name") or "").strip() for doc in own_lists}
+        if "Comisionistas" in names:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_COMMISSIONER_REMOVAL_DETAIL)
+        if "Comisionables" in names:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_COMMISSIONABLE_REMOVAL_DETAIL)
+
+        list_ids = [str(doc.get("_id")) for doc in own_lists]
+        for list_id in list_ids:
+            listsRepository.remove_group_from_list(list_id, other_group_id, any_form=True)
+
+        listsRepository.insert_network_event({
+            "type": "connection_removed",
+            "user_uid": caller_uid,
+            "group_id": group_id,
+            "other_group_id": other_group_id,
+            "list_ids": list_ids,
+            "at": datetime.now(timezone.utc),
+        })
+        return {"removed_from": list_ids}
     except PyMongoError as error:
         raise InternalServerError(str(error))

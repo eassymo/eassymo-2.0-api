@@ -241,10 +241,10 @@
  },
  {
   "code": "C.N3.S7",
-  "name": "Mi red",
-  "description": "Tiendas con las que el grupo trabaja",
+  "name": "Red Eassymo",
+  "description": "Buscar tiendas cerca o por nombre y conectarlas o invitarlas",
   "pov": "ambos",
-  "route": "/profile/network-manager/{uid}",
+  "route": "/profile/red-eassymo",
   "sample": null,
   "element": "Página completa",
   "steps": null,
@@ -289,8 +289,8 @@
  },
  {
   "code": "C.N3.S6",
-  "name": "Mis listas",
-  "description": "Listas de tiendas",
+  "name": "Mi red",
+  "description": "Resumen de la red: conexiones, listas, seguidores y Red Eassymo",
   "pov": "ambos",
   "route": "/profile/my-lists/{uid}",
   "sample": null,
@@ -298,6 +298,54 @@
   "steps": null,
   "grants": [
    "network.manage_lists"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 18
+ },
+ {
+  "code": "C.N3.S6.C",
+  "name": "Mis conexiones",
+  "description": "Tiendas con las que el grupo trabaja, en una sola lista",
+  "pov": "ambos",
+  "route": "/profile/conexiones",
+  "sample": null,
+  "element": "Página completa",
+  "steps": null,
+  "grants": [
+   "network.view"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 18
+ },
+ {
+  "code": "C.N3.S6.L",
+  "name": "Mis listas",
+  "description": "Crear, renombrar y ordenar listas de tiendas",
+  "pov": "ambos",
+  "route": "/profile/listas",
+  "sample": null,
+  "element": "Página completa",
+  "steps": null,
+  "grants": [
+   "network.manage_lists"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 18
+ },
+ {
+  "code": "C.N3.S6.F",
+  "name": "Me siguen",
+  "description": "Tiendas que agregaron al grupo a su red",
+  "pov": "ambos",
+  "route": "/profile/me-siguen",
+  "sample": null,
+  "element": "Página completa",
+  "steps": null,
+  "grants": [
+   "network.view"
   ],
   "status": "active",
   "notes": null,
