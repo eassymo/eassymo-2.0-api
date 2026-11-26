@@ -7,7 +7,7 @@ from typing import List, Dict, Any
 from fastapi.encoders import jsonable_encoder
 from typing import Optional
 from fastapi import Request, HTTPException
-from datetime import datetime
+from datetime import datetime, timezone
 from app.authz import grant_keys
 from app.services import RouteService, authz
 
@@ -96,6 +96,20 @@ def find_unquoted(
         return error_json_response(e)
 
 
+@partRequestRouter.get("/turn-days", response_description="days with open turns for a seller, with what is left to quote", tags=["PartRequest"])
+def find_open_turn_days(
+    seller_group_id: Optional[str] = Query(None, title="seller_group_id", description="seller group"),
+    tz: Optional[str] = Query(None, description="IANA time zone of the seller; defaults to America/Mexico_City"),
+):
+    try:
+        if not seller_group_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="seller_group_id is required")
+        response = partRequestService.find_open_turn_days(seller_group_id, tz, datetime.now(timezone.utc))
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(response)))
+    except Exception as e:
+        return error_json_response(e)
+
+
 @partRequestRouter.get("/vehicles-available-in-requests", tags=["PartRequest"])
 def vehicles_available_in_requests(
     group_id: Optional[str] = Query(None, title="group_id", description=""),
@@ -121,13 +135,23 @@ def find_grouped_by_parent_request_uid(
     seller_group_id: Optional[str] = Query(None, title="seller_group_id"),
     part_request_status: Optional[str] = Query(None, title="part_request_status"),
     specific_order_uid: Optional[str] = Query(None, title="specific_order_uid"),
+    created_from: Optional[str] = Query(None, description="ISO instant, inclusive: start of the day to list"),
+    created_to: Optional[str] = Query(None, description="ISO instant, exclusive: end of the day to list"),
 ):
     try:
+        try:
+            window_from = datetime.fromisoformat(created_from) if created_from else None
+            window_to = datetime.fromisoformat(created_to) if created_to else None
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="created_from / created_to must be ISO dates")
+
         results = partRequestService.find_grouped_by_parent_request_uid(
             creator_group_id,
             seller_group_id,
             part_request_status,
             specific_order_uid,
+            created_from=window_from,
+            created_to=window_to,
         )
 
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(jsonable_encoder(results)))

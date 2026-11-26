@@ -11,6 +11,7 @@ from app.schemas.Offer import OfferStatus
 from app.repositories import GroupCarRepository as groupCarRepository
 from app.repositories import GroupRepository as groupRepository
 from app.repositories import OfferRepository as offerRepository
+from app.repositories import RequestStatusByGroupRepository as requestStatusByGroupRepository
 from app.repositories import ListsRepository as listRepository
 from app.repositories import CommissionerInviteRepository as commissionerInviteRepository
 from app.schemas.Groups import GroupType, GroupSchema
@@ -21,7 +22,7 @@ from bson import ObjectId
 from typing import List, Any, Dict, Optional
 from datetime import datetime, timedelta
 from dateutil import parser as date_parser
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from app.services import GroupService as groupService
 from app.utils.notification_routes import seller_offer_creator_path
 from app.factories.NotificationsCreator import (
@@ -1649,8 +1650,8 @@ def join_seller_to_part_request(parent_request_id: str | None, new_seller_group_
         edited_part_request_ids: List[str] = []
         for part_request, decision in planned:
             part_request.subscribedSellers = [*(part_request.subscribedSellers or []), new_seller_group_id]
-            edit_payload = part_request.toJson()
-            edit_payload.pop("_id")
+            # Only what joining changes. Writing toJson() back stored createdAt/updatedAt as ISO text.
+            edit_payload = {"subscribedSellers": part_request.subscribedSellers, "updatedAt": now}
             if decision is not None:
                 edit_payload["reach"] = decision
             edited_part_request = partRequestRepository.edit_part_request(
@@ -1725,40 +1726,96 @@ def __build_and_send_commissioner_notifications(
             f"✅ All commissioner notifications sent successfully ({len(users_from_groups)} users)")
 
 
+TURN_DAYS_WINDOW = 60
+DEFAULT_SELLER_TZ = "America/Mexico_City"
+
+
+def _seller_zone(tz: Optional[str]) -> str:
+    """`tz` when it names a known IANA zone, else the default."""
+    if not tz:
+        return DEFAULT_SELLER_TZ
+    try:
+        ZoneInfo(tz)
+    except (ZoneInfoNotFoundError, ValueError):
+        return DEFAULT_SELLER_TZ
+    return tz
+
+
+def answered_request_ids(seller_group_id: str, request_ids) -> set:
+    """Parts this seller answered: an offer in any status, or a discard in the cotizador."""
+    ids = [str(rid) for rid in request_ids]  # Offers store request_id as text; part _ids arrive as ObjectIds
+    offered = offerRepository.distinct_request_ids_for_group(seller_group_id, ids)
+    discarded = requestStatusByGroupRepository.distinct_request_ids_for_group(seller_group_id, ids)
+    return {str(rid) for rid in [*offered, *discarded]}
+
+
+def find_open_turn_days(seller_group_id: str, tz: Optional[str], now: datetime) -> List[dict]:
+    """Days (seller's local calendar, last 60 incl. today) with open turns, newest first.
+
+    `to_quote` counts the day's batches with at least one part of that day still unanswered.
+    """
+    zone = _seller_zone(tz)
+    local_today = now.astimezone(ZoneInfo(zone)).replace(hour=0, minute=0, second=0, microsecond=0)
+    since = (local_today - timedelta(days=TURN_DAYS_WINDOW - 1)).astimezone(ZoneInfo("UTC"))
+
+    rows = partRequestRepository.open_turn_days(seller_group_id, since, zone)
+    answered = answered_request_ids(seller_group_id, [pid for row in rows for pid in row["part_ids"]])
+
+    days: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        day = days.setdefault(row["day"], {"day": row["day"], "turns": 0, "to_quote": 0})
+        day["turns"] += 1
+        if any(str(pid) not in answered for pid in row["part_ids"]):
+            day["to_quote"] += 1
+    return sorted(days.values(), key=lambda d: d["day"], reverse=True)
+
+
 def find_grouped_by_parent_request_uid(
     creator_group_id: Optional[str],
     seller_group_id: Optional[str],
     status: Optional[str],
     specific_order_uid: Optional[str] = None,
+    created_from: Optional[datetime] = None,
+    created_to: Optional[datetime] = None,
 ):
+    """Turns for the cotizador: each batch with its buyer, car, arrival and how many parts this seller answered."""
+    from app.utils.datetime_utils import serialize_datetime
+
     try:
         status_enum = PartRequestStatus(status) if status else None
-        
+
         results = list(partRequestRepository.find_grouped_by_parent_request_uid(
             creator_group_id,
             seller_group_id,
             status_enum,
             specific_order_uid,
+            created_from=created_from,
+            created_to=created_to,
         ))
 
+        quoted_ids: set = set()
+        if seller_group_id:
+            all_ids = [pr["_id"] for group in results for pr in group.get("part_requests") or []]
+            quoted_ids = answered_request_ids(seller_group_id, all_ids)
+
+        buyer_names: Dict[str, str] = {}
         for group_result in results:
-            base_request = group_result.get("part_requests")[0]
+            part_requests = group_result.get("part_requests") or []
+            base_request = part_requests[0]
+            buyer_id = str(base_request.get("creatorGroup") or "")
+            if buyer_id not in buyer_names:
+                buyer_names[buyer_id] = ((groupRepository.find_by_id(buyer_id) if buyer_id else None) or {}).get("name") or ""
 
-            vehicle_information = base_request.get("vehicleInformation")
-            
-            creator_group_data = groupRepository.find_by_id(base_request.get("creatorGroup"))
+            vehicle = base_request.get("vehicleInformation") or {}
+            car = " ".join(str(vehicle.get(key)) for key in ("maker", "model", "year") if vehicle.get(key))
 
-            group_result["creator_group"] = creator_group_data.get("name")
-            group_result["car_data"] = f'{vehicle_information.get("maker")} {vehicle_information.get("model")} {vehicle_information.get("year")}'
-
-            part_requests_jsons = []
-
-            for part_request_data in group_result.get("part_requests"):
-                part_request_data = PartRequest(**part_request_data).toJson()
-
-                part_requests_jsons.append(part_request_data)
-            
-            group_result["part_requests"] = part_requests_jsons
+            group_result["creator_group_id"] = buyer_id
+            group_result["creator_group"] = buyer_names[buyer_id]
+            group_result["car_data"] = car
+            group_result["created_at"] = serialize_datetime(group_result.pop("first_created", None) or base_request.get("createdAt"))
+            group_result["part_count"] = len(part_requests)
+            group_result["quoted_count"] = sum(1 for pr in part_requests if str(pr.get("_id")) in quoted_ids)
+            group_result["part_requests"] = [PartRequest(**pr).toJson() for pr in part_requests]
 
         return results
     except Exception as e:

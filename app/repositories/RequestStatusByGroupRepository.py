@@ -58,3 +58,15 @@ def delete(id: str) -> bool:
         return result.deleted_count == 1
     except PyMongoError as e:
         raise PyMongoError(f"Error while deleting request status {id}")
+
+
+def distinct_request_ids_for_group(group_id: str, request_ids) -> list:
+    """Which of `request_ids` this seller group discarded in the cotizador (has a status doc for)."""
+    ids = {str(rid) for rid in request_ids or []}
+    if not ids:
+        return []
+    candidates = [*ids, *(ObjectId(rid) for rid in ids if ObjectId.is_valid(rid))]
+    try:
+        return db.distinct("request_id", {"group_id": group_id, "request_id": {"$in": candidates}})
+    except PyMongoError as e:
+        raise PyMongoError(f"Error while finding request statuses for group_id={group_id}: {str(e)}")

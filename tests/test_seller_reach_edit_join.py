@@ -231,6 +231,20 @@ def test_join_handles_missing_subscribed_sellers():
     assert w.docs[A]["subscribedSellers"] == ["new-seller"]
 
 
+def test_join_writes_only_what_changed_and_keeps_dates_as_dates():
+    """Writing the whole toJson() back turned createdAt into ISO text, which broke every date filter on it."""
+    repo = FakeReachRepo(wide_used=0)
+    created = datetime(2026, 11, 25, 21, 41, 21, tzinfo=timezone.utc)
+    doc = _doc(A, 3)
+    doc["createdAt"] = created
+    with JoinWorld(repo, [doc]) as w, patch.object(prs.partRequestRepository, "edit_part_request", side_effect=w._write) as write:
+        prs.join_seller_to_part_request(PARENT, "new-seller")
+    payload = write.call_args[0][1]
+    assert set(payload) == {"subscribedSellers", "updatedAt", "reach"}
+    assert isinstance(payload["updatedAt"], datetime)
+    assert w.docs[A]["createdAt"] == created
+
+
 def test_join_shadow_mode_joins_every_part():
     repo = FakeReachRepo(wide_used=2, enforcement="shadow")
     docs = [_doc(A, 20, EXH_CAPPED_20)]
