@@ -401,6 +401,22 @@
   "sort_order": 24
  },
  {
+  "code": "C.N3.F1.S",
+  "name": "Solicitud enviada",
+  "description": "Confirmación y seguimiento de una solicitud recién enviada",
+  "pov": "comprador",
+  "route": "/configure-request/success/{parent_request}",
+  "sample": "solicitud enviada",
+  "element": "Página completa",
+  "steps": null,
+  "grants": [
+   "requests.create"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 25
+ },
+ {
   "code": "C.N3.S1.I",
   "name": "Invitar refaccionarias a cotizar",
   "description": "Invitar tiendas y enviar recordatorios",
@@ -414,7 +430,7 @@
   ],
   "status": "active",
   "notes": "Ruta corregida: el recordatorio vive en el monitor del vehículo",
-  "sort_order": 25
+  "sort_order": 26
  },
  {
   "code": "C.N3.S1.G",
@@ -430,7 +446,7 @@
   ],
   "status": "active",
   "notes": null,
-  "sort_order": 26
+  "sort_order": 27
  },
  {
   "code": "C.N3.S2",
@@ -447,7 +463,7 @@
   ],
   "status": "active",
   "notes": null,
-  "sort_order": 27
+  "sort_order": 28
  },
  {
   "code": "C.N3.S2.A",
@@ -464,7 +480,7 @@
   ],
   "status": "active",
   "notes": null,
-  "sort_order": 28
+  "sort_order": 29
  },
  {
   "code": "V.N3.S1",
@@ -481,7 +497,7 @@
   ],
   "status": "active",
   "notes": null,
-  "sort_order": 29
+  "sort_order": 30
  },
  {
   "code": "V.N3.F1.C",
@@ -498,7 +514,7 @@
   ],
   "status": "active",
   "notes": "Separado de V.N3.F1",
-  "sort_order": 30
+  "sort_order": 31
  },
  {
   "code": "V.N3.F1.E",
@@ -514,7 +530,23 @@
   ],
   "status": "active",
   "notes": "Separado de V.N3.F1",
-  "sort_order": 31
+  "sort_order": 32
+ },
+ {
+  "code": "V.N3.F1.D",
+  "name": "Eliminar opción",
+  "description": "Eliminar una opción sin enviar o enviada",
+  "pov": "vendedor",
+  "route": "/offer-creator-v4/{request}",
+  "sample": "solicitud entrante",
+  "element": "Fila 'Eliminar opción'",
+  "steps": "Abrir una opción",
+  "grants": [
+   "offers.edit"
+  ],
+  "status": "active",
+  "notes": null,
+  "sort_order": 33
  },
  {
   "code": "V.N3.F1.A",
@@ -530,7 +562,7 @@
   ],
   "status": "pending",
   "notes": "Excel: TBD. El flujo aún no existe",
-  "sort_order": 32
+  "sort_order": 34
  },
  {
   "code": "V.N3.S3.1",
@@ -546,7 +578,7 @@
   ],
   "status": "active",
   "notes": "Fotos de recepción; las de empaque (vendedor) están en Asignar repartidor",
-  "sort_order": 33
+  "sort_order": 35
  },
  {
   "code": "C.N3.S4",
@@ -563,7 +595,7 @@
   ],
   "status": "active",
   "notes": null,
-  "sort_order": 34
+  "sort_order": 36
  },
  {
   "code": "C.N3.S4.M",
@@ -579,7 +611,7 @@
   ],
   "status": "active",
   "notes": null,
-  "sort_order": 35
+  "sort_order": 37
  },
  {
   "code": "C.N3.S4.1",
@@ -596,7 +628,7 @@
   ],
   "status": "active",
   "notes": null,
-  "sort_order": 36
+  "sort_order": 38
  },
  {
   "code": "C.N3.S4.R",
@@ -612,7 +644,7 @@
   ],
   "status": "active",
   "notes": null,
-  "sort_order": 37
+  "sort_order": 39
  },
  {
   "code": "V.N3.S4.T",
@@ -628,7 +660,7 @@
   ],
   "status": "active",
   "notes": "Pantalla anterior de pedidos",
-  "sort_order": 38
+  "sort_order": 40
  },
  {
   "code": "V.N3.S4.D",
@@ -644,7 +676,7 @@
   ],
   "status": "active",
   "notes": null,
-  "sort_order": 39
+  "sort_order": 41
  },
  {
   "code": "V.N3.S4.P",
@@ -660,7 +692,7 @@
   ],
   "status": "pending",
   "notes": "Excel: TBD. La función aún no existe",
-  "sort_order": 40
+  "sort_order": 42
  },
  {
   "code": "V.N3.S4.K",
@@ -676,7 +708,7 @@
   ],
   "status": "pending",
   "notes": "Excel: TBD. La función aún no existe",
-  "sort_order": 41
+  "sort_order": 43
  },
  {
   "code": "V.N3.S5",
@@ -692,7 +724,7 @@
   ],
   "status": "active",
   "notes": null,
-  "sort_order": 42
+  "sort_order": 44
  },
  {
   "code": "V.N3.S5.M",
@@ -708,7 +740,7 @@
   ],
   "status": "active",
   "notes": null,
-  "sort_order": 43
+  "sort_order": 45
  },
  {
   "code": "V.N3.S5.1",
@@ -724,7 +756,7 @@
   ],
   "status": "active",
   "notes": null,
-  "sort_order": 44
+  "sort_order": 46
  },
  {
   "code": "V.N3.S6",
@@ -742,7 +774,7 @@
   ],
   "status": "active",
   "notes": null,
-  "sort_order": 45
+  "sort_order": 47
  },
  {
   "code": "V.N3.F2.Q",
@@ -759,7 +791,7 @@
   ],
   "status": "active",
   "notes": null,
-  "sort_order": 46
+  "sort_order": 48
  },
  {
   "code": "V.N3.F2.S",
@@ -775,7 +807,7 @@
   ],
   "status": "active",
   "notes": null,
-  "sort_order": 47
+  "sort_order": 49
  },
  {
   "code": "V.N3.F2.V",
@@ -791,7 +823,7 @@
   ],
   "status": "active",
   "notes": "Por confirmar: también confirmar folio en /pos",
-  "sort_order": 48
+  "sort_order": 50
  },
  {
   "code": "V.N3.F2.K",
@@ -807,7 +839,7 @@
   ],
   "status": "pending",
   "notes": "Por confirmar: no encontré el control para vincular cliente en /pos",
-  "sort_order": 49
+  "sort_order": 51
  },
  {
   "code": "SCC.M.1",
@@ -823,7 +855,7 @@
   ],
   "status": "active",
   "notes": null,
-  "sort_order": 50
+  "sort_order": 52
  },
  {
   "code": "SCC.M.2",
@@ -839,7 +871,7 @@
   ],
   "status": "active",
   "notes": null,
-  "sort_order": 51
+  "sort_order": 53
  },
  {
   "code": "SCC.M.3",
@@ -856,7 +888,7 @@
   ],
   "status": "active",
   "notes": null,
-  "sort_order": 52
+  "sort_order": 54
  },
  {
   "code": "V.N3.S7",
@@ -872,7 +904,7 @@
   ],
   "status": "active",
   "notes": null,
-  "sort_order": 53
+  "sort_order": 55
  },
  {
   "code": "SCC.W.1",
@@ -888,7 +920,7 @@
   ],
   "status": "active",
   "notes": null,
-  "sort_order": 54
+  "sort_order": 56
  },
  {
   "code": "SCC.R.1",
@@ -904,7 +936,7 @@
   ],
   "status": "active",
   "notes": null,
-  "sort_order": 55
+  "sort_order": 57
  },
  {
   "code": "SCC.V.1",
@@ -920,7 +952,7 @@
   ],
   "status": "pending",
   "notes": "Por confirmar: el diálogo existe pero no está en ninguna pantalla",
-  "sort_order": 56
+  "sort_order": 58
  },
  {
   "code": "SCC.V.2",
@@ -936,7 +968,7 @@
   ],
   "status": "pending",
   "notes": "Por confirmar: la sección existe pero no está en ninguna pantalla",
-  "sort_order": 57
+  "sort_order": 59
  },
  {
   "code": "E.A.1",
@@ -952,7 +984,7 @@
   ],
   "status": "active",
   "notes": "Solo super admin",
-  "sort_order": 58
+  "sort_order": 60
  },
  {
   "code": "E.A.2",
@@ -968,7 +1000,7 @@
   ],
   "status": "active",
   "notes": "Solo super admin",
-  "sort_order": 59
+  "sort_order": 61
  },
  {
   "code": "E.A.3",
@@ -984,7 +1016,7 @@
   ],
   "status": "pending",
   "notes": "La pantalla aún no existe",
-  "sort_order": 60
+  "sort_order": 62
  },
  {
   "code": "E.A.4",
@@ -1000,7 +1032,7 @@
   ],
   "status": "pending",
   "notes": "La pantalla aún no existe",
-  "sort_order": 61
+  "sort_order": 63
  },
  {
   "code": "V.N3.I3",
@@ -1017,7 +1049,7 @@
   ],
   "status": "active",
   "notes": null,
-  "sort_order": 62
+  "sort_order": 64
  },
  {
   "code": "V.N3.I1",
@@ -1034,7 +1066,7 @@
   ],
   "status": "active",
   "notes": null,
-  "sort_order": 63
+  "sort_order": 65
  },
  {
   "code": "V.N3.I2",
@@ -1051,7 +1083,7 @@
   ],
   "status": "active",
   "notes": null,
-  "sort_order": 64
+  "sort_order": 66
  },
  {
   "code": "SCC.W.2",
@@ -1067,7 +1099,7 @@
   ],
   "status": "active",
   "notes": "Se muestra solo si el plan de la tienda tiene límite",
-  "sort_order": 65
+  "sort_order": 67
  },
  {
   "code": "SCC.W.3",
@@ -1083,7 +1115,7 @@
   ],
   "status": "active",
   "notes": "Solo la ve quien administra la tienda",
-  "sort_order": 66
+  "sort_order": 68
  },
  {
   "code": "E.A.5",
@@ -1097,7 +1129,7 @@
   "grants": [],
   "status": "active",
   "notes": "Solo super admin",
-  "sort_order": 67
+  "sort_order": 69
  },
  {
   "code": "E.A.6",
@@ -1111,7 +1143,7 @@
   "grants": [],
   "status": "active",
   "notes": "Solo super admin",
-  "sort_order": 68
+  "sort_order": 70
  },
  {
   "code": "E.A.7",
@@ -1125,7 +1157,7 @@
   "grants": [],
   "status": "active",
   "notes": "Solo super admin",
-  "sort_order": 69
+  "sort_order": 71
  },
  {
   "code": "E.A.8",
@@ -1139,7 +1171,7 @@
   "grants": [],
   "status": "active",
   "notes": "Solo super admin",
-  "sort_order": 70
+  "sort_order": 72
  },
  {
   "code": "V.N3.S1.P",
@@ -1156,7 +1188,7 @@
   ],
   "status": "active",
   "notes": null,
-  "sort_order": 29
+  "sort_order": 30
  },
  {
   "code": "V.N3.S1.B",
@@ -1173,7 +1205,7 @@
   ],
   "status": "active",
   "notes": null,
-  "sort_order": 29
+  "sort_order": 30
  },
  {
   "code": "V.N3.S5.A",
@@ -1189,7 +1221,7 @@
   ],
   "status": "active",
   "notes": null,
-  "sort_order": 65
+  "sort_order": 67
  },
  {
   "code": "V.N3.S5.AG",
@@ -1205,7 +1237,7 @@
   ],
   "status": "active",
   "notes": null,
-  "sort_order": 66
+  "sort_order": 68
  },
  {
   "code": "V.N3.S5.AA",
@@ -1221,7 +1253,7 @@
   ],
   "status": "active",
   "notes": null,
-  "sort_order": 67
+  "sort_order": 69
  },
  {
   "code": "V.N3.S5.NP",
@@ -1237,7 +1269,7 @@
   ],
   "status": "active",
   "notes": null,
-  "sort_order": 68
+  "sort_order": 70
  },
  {
   "code": "V.N3.S5.IR",
@@ -1253,7 +1285,7 @@
   ],
   "status": "active",
   "notes": null,
-  "sort_order": 69
+  "sort_order": 71
  },
  {
   "code": "E.A.9",
@@ -1267,6 +1299,6 @@
   "grants": [],
   "status": "active",
   "notes": "Solo super admin",
-  "sort_order": 71
+  "sort_order": 73
  }
 ]

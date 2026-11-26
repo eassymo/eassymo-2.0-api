@@ -1251,6 +1251,7 @@ def find_vehicle_requests_with_offers(
         logged_in_user,
         filters_dict,
         status,
+        offer_owner_group=offer_owner_group,
     )
 
 
@@ -1276,6 +1277,9 @@ def __attach_offers_to_part_requests(
 
         if status is not None:
             offer_filters["status"] = status
+        elif not offer_owner_group:
+            # The buyer can't pick an offer the store withdrew (it canceled the order); sellers still see theirs.
+            offer_filters["status"] = {"$ne": OfferStatus.no_inventory.value}
 
         # A seller asking for their own quoting screen gets only their group's offers, never another seller's.
         if offer_owner_group:
@@ -1531,6 +1535,9 @@ def edit_part_request(part_request_data: List[PartRequestEdit]):
                 }
                 if decision is not None:
                     part_request_json["reach"] = decision
+                if new_seller_group_ids:
+                    # The monitor's 30-minute wait before widening again restarts from here.
+                    part_request_json["last_widened_at"] = now
 
                 planned.append({
                     "edit": part_request_edit,
@@ -1823,6 +1830,20 @@ def find_grouped_by_parent_request_uid(
             status_code=500, detail=f'Error while finding part requests grouped by parent_request_uid: {e}')
 
 
+REMINDER_AFTER = timedelta(hours=1)
+
+
+def _created_at_utc(value) -> Optional[datetime]:
+    """A part request's createdAt (datetime or ISO string; naive means UTC)."""
+    if value is None:
+        return None
+    try:
+        created = value if isinstance(value, datetime) else date_parser.parse(str(value))
+    except (ValueError, OverflowError):
+        return None
+    return created if created.tzinfo else created.replace(tzinfo=ZoneInfo("UTC"))
+
+
 def send_seller_reminder(part_request_id: str, pending_group_ids: List[str], store_name: str) -> int:
     from app.services import notification_fanout
 
@@ -1830,12 +1851,24 @@ def send_seller_reminder(part_request_id: str, pending_group_ids: List[str], sto
     if not part_request_data:
         raise HTTPException(status_code=404, detail="Part request not found")
 
+    # Stores get an hour to answer before the buyer can nudge them, after creating the request and after each
+    # reminder (the monitor shows the wait).
+    now = datetime.now(ZoneInfo("UTC"))
+    created = _created_at_utc(part_request_data.get("createdAt"))
+    if created and now - created < REMINDER_AFTER:
+        raise HTTPException(status_code=409, detail="Podrás enviar un recordatorio una hora después de crear la solicitud.")
+    last_reminder = _created_at_utc(part_request_data.get("last_reminder_at"))
+    if last_reminder and now - last_reminder < REMINDER_AFTER:
+        raise HTTPException(status_code=409, detail="Podrás enviar otro recordatorio una hora después del anterior.")
+
     formatted = __format_part_request(part_request_data)
-    return notification_fanout.fanout_part_request_reminder(
+    sent = notification_fanout.fanout_part_request_reminder(
         part_request=formatted,
         pending_group_ids=pending_group_ids,
         store_name=store_name,
     )
+    partRequestRepository.edit_part_request(part_request_id, {"last_reminder_at": now})
+    return sent
 
 
 def close_part_request(part_request_id: str, uid: str) -> Dict[str, Any]:

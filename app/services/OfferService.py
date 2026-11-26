@@ -1,3 +1,4 @@
+from bson import ObjectId
 from app.repositories import OfferRepository as offerRepository
 from app.repositories import GroupRepository as groupRepository
 from app.repositories import PartRequestRepository as partRequestRepository
@@ -195,6 +196,11 @@ def find_by_request_id_and_group(request: Request, part_request_id: str, group_i
         found_offers_dicts = list(offerRepository.find_by_request_id_and_group(
             part_request_id, group_ids, acts_as_callcenter))
 
+        if not group_ids:
+            # The buyer can't pick an offer the store withdrew (it canceled the order); sellers still see theirs.
+            found_offers_dicts = [o for o in found_offers_dicts
+                                  if _status_value(o.get("status")) != OfferStatus.no_inventory.value]
+
         if len(found_offers_dicts) == 0:
             return []
 
@@ -207,6 +213,9 @@ def find_by_request_id_and_group(request: Request, part_request_id: str, group_i
         creator_group_id = part_request.creatorGroup
 
         for offer in found_offers:
+            if _status_value(offer.get('status')) == OfferStatus.selected.value:
+                order = _live_order_for_offer(str(offer.get('_id')))
+                offer['order_id'] = str(order['_id']) if order else None
             offer_group_id = offer.get('group_id')
             offer['createdByFollower'] = str(offer_group_id) in follower_group_ids
 
@@ -430,6 +439,9 @@ def edit_offer(offer_uid: str, payload: Offer):
         offer_json = payload.toJson()
         offer_json.pop("_id")
         edited_offer = offerRepository.edit_offer(offer_uid, offer_json)
+        if edited_offer is None:
+            # The store withdrew it (moved to OffersArchive) while this editor was still open.
+            raise HTTPException(status_code=404, detail="Esta opción ya no existe.")
 
         brand_payload = Brand(label=payload.brand, user_uid=payload.user_uid)
         brandService.insert(brand_payload)
@@ -440,6 +452,8 @@ def edit_offer(offer_uid: str, payload: Offer):
 
         edited_offer["_id"] = str(edited_offer["_id"])
         return edited_offer
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f'Error while editing offer {e}')
@@ -455,6 +469,12 @@ def find_offer_by_id(offer_uid: str):
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f'Error while fetching offer {e}')
+
+
+def _live_order_for_offer(offer_id: str) -> dict | None:
+    """The order (not canceled) placed on this offer; orders keep the offer id as a string."""
+    ids = [offer_id] + ([ObjectId(offer_id)] if ObjectId.is_valid(offer_id) else [])
+    return orderRepository.find_one({"offer._id": {"$in": ids}, "status": {"$ne": "CANCELED"}})
 
 
 def _find_existing_order_for_selection(request_id: str) -> dict | None:
@@ -480,6 +500,9 @@ def change_offer_status(request_id: str, offer_id: str, status: str, user_token:
     try:
         part_request: PartRequest = _get_part_request_data(request_id)
         offer: Offer = _get_offer_data(offer_id)
+        if offer is None:
+            # Withdrawn by its store (moved to OffersArchive): it can't be chosen or moved any more.
+            raise HTTPException(status_code=409, detail="Esta oferta ya no está disponible.")
         previous_status = offer.status
         offer_status = OfferStatus[status.lower()]
         order_id: str = ""
@@ -517,6 +540,12 @@ def change_offer_status(request_id: str, offer_id: str, status: str, user_token:
                         status_code=409,
                         detail="Part request already has a selected offer",
                     )
+
+                # Claim the offer before any order exists: if its store withdrew it (or it changed) meanwhile, the
+                # claim fails here, and a withdraw arriving later finds it Selected and refuses.
+                claimed_from = previous_status.value if isinstance(previous_status, OfferStatus) else str(previous_status)
+                if not offerRepository.claim_status(offer_id, claimed_from, OfferStatus.selected.value):
+                    raise HTTPException(status_code=409, detail="Esta oferta ya no está disponible.")
 
                 part_request.update_status(PartRequestStatus.OFFER_SELECTED)
                 part_request.last_cancellation = None

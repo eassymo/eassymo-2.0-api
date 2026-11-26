@@ -51,6 +51,23 @@ def list_relationships(
         return _error_response(e)
 
 
+@relationshipRouter.get("/historial/{counterpart_group_id}")
+def history_with(
+    request: Request,
+    counterpart_group_id: str,
+    direction: RelationshipDirection = Query(RelationshipDirection.VENDIENDO),
+):
+    """The selected store's orders with one counterpart, for the buyer card ("Tu historial")."""
+    try:
+        reviewer_group_id = _require_group(request)
+        result = RelationshipService.history_with(reviewer_group_id, counterpart_group_id, direction)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(result))
+    except HTTPException as e:
+        return _error_response(e, status_code=e.status_code)
+    except Exception as e:
+        return _error_response(e)
+
+
 @relationshipRouter.post("/percepcion")
 def submit_perception(request: Request, payload: SubmitPerceptionRequest = Body(...)):
     try:

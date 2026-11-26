@@ -127,6 +127,21 @@ def edit_offer(offer_uid: str, offer_data: dict):
     return database.db["Offers"].find_one_and_update({"_id": offer_id}, {"$set": offer_data}, return_document=ReturnDocument.AFTER)
 
 
+def claim_status(offer_id: str, from_status: str, to_status: str) -> bool:
+    """Move the offer to `to_status` only if it is still `from_status`; False when someone moved or removed it first."""
+    return database.db["Offers"].find_one_and_update(
+        {"_id": ObjectId(offer_id), "status": from_status}, {"$set": {"status": to_status}}) is not None
+
+
+def delete_if_status(offer_id: str, status: str) -> bool:
+    """Remove the offer only if it still has `status` (a teammate or the buyer may have moved it meanwhile)."""
+    return database.db["Offers"].delete_one({"_id": ObjectId(offer_id), "status": status}).deleted_count == 1
+
+
+def insert_with_id(doc: dict) -> None:
+    database.db["Offers"].insert_one(doc)
+
+
 def find_offer_by_id(offer_uid: str):
     offer_id = ObjectId(offer_uid)
     return database.db["Offers"].find_one({"_id": offer_id})

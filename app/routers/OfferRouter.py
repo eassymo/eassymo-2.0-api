@@ -1,5 +1,7 @@
 from fastapi.responses import JSONResponse
-from fastapi import APIRouter, Body, status, Query, Request
+from fastapi import APIRouter, Body, Depends, status, Query, Request
+from app.authz import grant_keys
+from app.services import authz
 from app.schemas.Offer import Offer
 from app.services import OfferService as offerService
 from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response, error_json_response
@@ -96,6 +98,30 @@ def find_by_group(
             role=role,
             status=status,
         )
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+    except Exception as e:
+        return error_json_response(e)
+
+
+@offerRouter.post("/{offer_id}/withdraw", description="The store takes back one of its offers (archived, never deleted)",
+                  tags=["Offers"])
+def withdraw_offer(request: Request, offer_id: str, group_id: str = Depends(authz.require_grant(grant_keys.OFFERS_EDIT))):
+    try:
+        from app.services import OfferWithdrawalService
+
+        response = OfferWithdrawalService.withdraw(offer_id, authz.caller_uid(request), group_id)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+    except Exception as e:
+        return error_json_response(e)
+
+
+@offerRouter.post("/{offer_id}/restore", description="Undo withdrawing a draft offer",
+                  tags=["Offers"])
+def restore_offer(request: Request, offer_id: str, group_id: str = Depends(authz.require_grant(grant_keys.OFFERS_EDIT))):
+    try:
+        from app.services import OfferWithdrawalService
+
+        response = OfferWithdrawalService.restore(offer_id, authz.caller_uid(request), group_id)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
         return error_json_response(e)
