@@ -73,11 +73,11 @@ def test_closing_a_request_also_closes_the_quote_reminders_and_the_orders_snapsh
     doc = {"_id": "req-1", "creatorGroup": "b"}
     with patch.object(PartRequestService.partRequestRepository, "find_one_by_id", return_value=doc), \
          patch.object(PartRequestService.partRequestRepository, "edit_part_request"), \
-         patch("app.services.PickupCodeService._user_in_group", return_value=True), \
+         patch.object(PartRequestService, "_user_in_group", return_value=True), \
          patch.object(NotificationService, "resolve_decisions"), \
          patch.object(NotificationService, "resolve_decisions_prefix") as prefix, \
          patch("app.repositories.OrderRepository.clear_request_cancellation") as clear:
-        PartRequestService.close_part_request("req-1", "u")
+        PartRequestService.close_part_request("req-1", "u", "b")
     prefix.assert_called_once_with("request:req-1:quote:")
     clear.assert_called_once_with("req-1", closed=True)
 

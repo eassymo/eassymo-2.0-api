@@ -127,6 +127,19 @@ def restore_offer(request: Request, offer_id: str, group_id: str = Depends(authz
         return error_json_response(e)
 
 
+@offerRouter.post("/{offer_id}/confirm-current", description="The store says its offer still stands after the buyer "
+                  "changed the part (clears before_change)", tags=["Offers"])
+def confirm_offer_current(request: Request, offer_id: str,
+                          group_id: str = Depends(authz.require_grant(grant_keys.OFFERS_EDIT))):
+    try:
+        from app.services import OfferChangeService
+
+        response = OfferChangeService.confirm_current(offer_id, authz.caller_uid(request), group_id)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+    except Exception as e:
+        return error_json_response(e)
+
+
 @offerRouter.get("/{id}", description="Find an offer by id", tags=["Offers"])
 def find_offer_by_id(id: str):
     try:

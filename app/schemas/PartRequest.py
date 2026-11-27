@@ -218,6 +218,8 @@ class PartRequestEdit(BaseModel):
     id: Optional[str] = Field(None)
     comment: Optional[str] = Field(None)
     amount: Optional[int] = Field(None)
+    position: Optional[str] = Field(None, description="None leaves the saved position as it is")
+    unitOfMeasure: Optional[str] = Field(None, description="None leaves the saved unit as it is")
     subscribedSellers: Optional[List[str]] = Field(None)
     fulfillment_type: Optional[FulfillmentType] = Field(None)
     delivery_address: Optional[DeliveryAddress] = Field(None)

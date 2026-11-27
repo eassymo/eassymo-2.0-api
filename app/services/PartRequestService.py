@@ -11,12 +11,19 @@ from app.schemas.Offer import OfferStatus
 from app.repositories import GroupCarRepository as groupCarRepository
 from app.repositories import GroupRepository as groupRepository
 from app.repositories import OfferRepository as offerRepository
+from app.repositories import OfferArchiveRepository as offerArchiveRepository
+from app.services import PartRemovalService as partRemovalService
+from app.services import authz
+from app.services.PartRemovalService import REASON as PART_REMOVED_REASON
+from app.utils.datetime_utils import serialize_datetime
 from app.repositories import RequestStatusByGroupRepository as requestStatusByGroupRepository
 from app.repositories import ListsRepository as listRepository
 from app.repositories import CommissionerInviteRepository as commissionerInviteRepository
 from app.schemas.Groups import GroupType, GroupSchema
 from app.schemas.Offer import Offer
 from fastapi import HTTPException, Request, status
+from fastapi.encoders import jsonable_encoder
+from pydantic import ValidationError
 from uuid import uuid4
 from bson import ObjectId
 from typing import List, Any, Dict, Optional
@@ -26,18 +33,24 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from app.services import GroupService as groupService
 from app.utils.notification_routes import seller_offer_creator_path
 from app.factories.NotificationsCreator import (
+    create_part_changed_notification,
     create_part_request_notification,
 )
-from app.utils.notifications import send_notification
+from app.utils.display_text import vehicle_label
+from app.utils.notifications import send_notification, send_notifications_batch
 from app.services import ListsService as listService
 from app.services import ArmadoraCompatibilityService
 from app.services import SistemasCompatibilityService
 from app.services import SellerReachService as sellerReachService
 
+import logging
 import math
+import unicodedata
 import pymongo
 
 from app.services import RouteService
+
+logger = logging.getLogger(__name__)
 
 
 def _empty_commissioner_connections() -> Dict[str, Any]:
@@ -547,28 +560,62 @@ def find_by_id(id, request: Request | None = None):
             }
             found_request = _default_fulfillment_type_on_dict(found_request)
 
-            found_request["partList"] = __find_sister_part_list(
-                found_request["specific_order_uid"])
+            found_request["partList"] = __find_sister_part_list(found_request["specific_order_uid"]) \
+                if found_request.get("specific_order_uid") else __alone_part_list(found_request)
 
-            if request is not None:
-                user_info = request.state._state.get("user") or {}
-                logged_in_user = user_info.get("uid")
-                creator_group_id = found_request.get("creatorGroup")
-                if logged_in_user and creator_group_id:
-                    enriched_requests = __attach_offers_to_part_requests(
-                        [found_request],
-                        creator_group_id,
-                        logged_in_user,
-                        [],
-                        None,
-                    )
-                    if enriched_requests:
-                        found_request = enriched_requests[0]
+            creator_group_id = found_request.get("creatorGroup")
+            logged_in_user, store, is_buyer = _viewer(request, creator_group_id)
+            enriched = False
+            if creator_group_id and (is_buyer or store):
+                # The buyer's store gets every offer; another store only its own (and what it lost to a removal).
+                enriched_requests = __attach_offers_to_part_requests(
+                    [found_request],
+                    creator_group_id,
+                    logged_in_user,
+                    [],
+                    None,
+                    None if is_buyer else store,
+                )
+                if enriched_requests:
+                    found_request = enriched_requests[0]
+                    enriched = True
+
+            # Only the buyer's store reads who changed or removed a part, and other stores' offers and entries.
+            if not is_buyer:
+                if not enriched:
+                    found_request = {**__unenriched_part(found_request), "offers": []}
+                found_request = __store_view(found_request, store)
+                found_request["partList"] = [
+                    {k: v for k, v in __store_view(part, store).items() if k != "offers"}
+                    for part in found_request.get("partList") or []
+                ]
 
         return found_request
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f'Error while inserting group vehicle {e}')
+
+
+def _viewer(request: Request | None, creator_group_id) -> tuple:
+    """(uid, store, is_buyer) for a read: `store` is the selected store (GroupSelected) when the caller belongs to it,
+    else None; `is_buyer` when that store is the request's creator group. No caller or no store: (uid, None, False)."""
+    if request is None:
+        return None, None, False
+    uid = (request.state._state.get("user") or {}).get("uid")
+    try:
+        selected = authz.selected_group(request)
+    except HTTPException:
+        selected = None
+    store = selected if uid and selected and _user_in_group(uid, selected) else None
+    return uid, store, bool(store and creator_group_id and store == str(creator_group_id))
+
+
+def __alone_part_list(part_request: dict) -> List[dict]:
+    """The part list of a part with no order uid: just the part, never the shared "" bucket of every buyer's parts
+    without one. Same rule as the sister query: an open part that wasn't removed."""
+    if part_request.get("status") != PartRequestStatus.CREATED.value or part_request.get("removed"):
+        return []
+    return [_default_fulfillment_type_on_dict({"_id": str(part_request["_id"]), "part": part_request.get("part")})]
 
 
 def __find_sister_part_list(specific_order_uid: str):
@@ -1136,9 +1183,6 @@ def find_sibling_requests_with_offers(
     status: Optional[str],
     filters_dict: List[Dict[str, Any]]
 ):
-    user_info = request.state._state.get('user')
-    logged_in_user = user_info.get("uid")
-
     from app.config import database
 
     # Build aggregation pipeline to handle createdAt as both Date and String
@@ -1210,14 +1254,8 @@ def find_sibling_requests_with_offers(
 
     sibling_part_requests = list[Any](database.db["PartRequests"].aggregate(pipeline_time_window))
 
-    return __attach_offers_to_part_requests(
-        sibling_part_requests,
-        newest_part_request.creatorGroup,
-        logged_in_user,
-        filters_dict,
-        status,
-        offer_owner_group,
-    )
+    return __attach_offers_for_viewer(
+        request, sibling_part_requests, newest_part_request.creatorGroup, filters_dict, status, offer_owner_group)
 
 
 def find_vehicle_requests_with_offers(
@@ -1229,9 +1267,6 @@ def find_vehicle_requests_with_offers(
     filters_dict: List[Dict[str, Any]],
     limit: int = 50,
 ):
-    user_info = request.state._state.get('user')
-    logged_in_user = user_info.get("uid")
-
     from app.config import database
 
     match_stage = {"vehicleId": vehicle_id, "creatorGroup": creator_group_id}
@@ -1245,14 +1280,33 @@ def find_vehicle_requests_with_offers(
         .limit(limit)
     )
 
-    return __attach_offers_to_part_requests(
-        vehicle_part_requests,
-        creator_group_id,
-        logged_in_user,
-        filters_dict,
-        status,
-        offer_owner_group=offer_owner_group,
-    )
+    return __attach_offers_for_viewer(
+        request, vehicle_part_requests, creator_group_id, filters_dict, status, offer_owner_group)
+
+
+def __attach_offers_for_viewer(
+    request: Request,
+    part_request_data_list: List[Any],
+    creator_group_id: str,
+    filters_dict: List[Dict[str, Any]],
+    status: Optional[str],
+    offer_owner_group: Optional[str],
+) -> List[dict]:
+    """A request's list as the caller may read it, by the same rule as find_by_id. The buyer's store gets the buyer
+    view (`offer_owner_group` as asked). Another store the caller belongs to gets only its own offers and entries,
+    whatever `offer_owner_group` it asks for. A caller with no store of its own gets the parts without offers or
+    entries."""
+    logged_in_user, store, is_buyer = _viewer(request, creator_group_id)
+    if is_buyer:
+        return __attach_offers_to_part_requests(
+            part_request_data_list, creator_group_id, logged_in_user, filters_dict, status,
+            offer_owner_group=offer_owner_group, skip_removed=True)
+    if store:
+        return [__store_view(part, store) for part in __attach_offers_to_part_requests(
+            part_request_data_list, creator_group_id, logged_in_user, filters_dict, status,
+            offer_owner_group=store, skip_removed=True)]
+    return [__store_view({**__unenriched_part(part), "offers": []}, None)
+            for part in part_request_data_list if not part.get("removed")]
 
 
 def __attach_offers_to_part_requests(
@@ -1262,14 +1316,29 @@ def __attach_offers_to_part_requests(
     filters_dict: List[Dict[str, Any]],
     status: Optional[str] = None,
     offer_owner_group: Optional[str] = None,
+    skip_removed: bool = False,
 ) -> List[dict]:
+    """skip_removed: the buyer's lists leave out parts they removed; a single-part read (find_by_id) keeps them."""
     part_requests_with_offers = []
     follower_group_ids = set(
         listService.get_followers_not_in_my_lists(logged_in_user, creator_group_id)
     )
 
     for part_request_data in part_request_data_list:
-        part_request_dict = PartRequest(**part_request_data).toJson()
+        removed = part_request_data.get("removed")
+        discarded_offers = None
+        if removed and not offer_owner_group and skip_removed:
+            continue  # the buyer removed it: gone from their own lists
+        if removed and offer_owner_group:
+            # A store sees a part the buyer removed only if it had quoted it, with what it lost.
+            discarded_offers = __discarded_offers(str(part_request_data.get("_id")), offer_owner_group)
+            if not discarded_offers:
+                continue
+
+        # A store never gets the buyer's uid: it reads when and what, not who.
+        part_request_dict = __serialized_part(part_request_data, hide_who=bool(offer_owner_group))
+        if discarded_offers is not None:
+            part_request_dict["discarded_offers"] = discarded_offers
 
         offer_filters = {
             "request_id": part_request_dict.get("_id"),
@@ -1291,6 +1360,11 @@ def __attach_offers_to_part_requests(
                 creator_group_id,
                 logged_in_user,
             )
+            if offer_owner_group and "group_id" in custom_filters:
+                # A store filter only narrows a store's own offers; it never names other stores in.
+                allowed = {str(group_id) for group_id in custom_filters.pop("group_id").get("$in", [])}
+                if str(offer_owner_group) not in allowed:
+                    offer_filters["group_id"] = {"$in": []}
             offer_filters.update(custom_filters)
 
         part_request_offers = list[Any](offerRepository.find(offer_filters))
@@ -1303,6 +1377,7 @@ def __attach_offers_to_part_requests(
             offer_json["group_info"] = group.toJson()
 
             offer_json["createdByFollower"] = str(offer_json.get("group_id")) in follower_group_ids
+            offer_json["before_change"] = bool(offer_data.get("before_change"))
 
             offer_json["creatorIsFavoriteAtSomeList"] = __check_if_group_is_favorite(
                 group, creator_group_id, logged_in_user)
@@ -1317,6 +1392,94 @@ def __attach_offers_to_part_requests(
         part_requests_with_offers.append(part_request_dict)
 
     return part_requests_with_offers
+
+
+def __with_serialized_at(record: Optional[dict], hide_who: bool = False) -> Optional[dict]:
+    """A stored {"at": datetime, ...} record (last_change, removed) as JSON, without `by` when hide_who; None when the
+    part has none."""
+    if not record:
+        return None
+    at = record.get("at")
+    serialized = {**record, "at": serialize_datetime(at) if isinstance(at, datetime) else at}
+    if hide_who:
+        serialized.pop("by", None)
+    return serialized
+
+
+def __serialized_part(part_request_data: dict, hide_who: bool) -> dict:
+    """A stored part as JSON (dates as text), with its last_change and removed records; `by` left out when hide_who."""
+    part_request_dict = PartRequest(**part_request_data).toJson()
+    part_request_dict["last_change"] = __with_serialized_at(part_request_data.get("last_change"), hide_who)
+    part_request_dict["removed"] = __with_serialized_at(part_request_data.get("removed"), hide_who)
+    return part_request_dict
+
+
+def __unenriched_part(part_request_data: dict) -> dict:
+    """A part read without offers, as JSON. A legacy doc the schema can't read still answers: its stored fields as
+    JSON, minus the removal claim."""
+    try:
+        return __serialized_part(part_request_data, hide_who=True)
+    except ValidationError:
+        logger.warning("Part request %s doesn't fit the schema; answering its stored fields",
+                       part_request_data.get("_id"))
+        raw = {k: v for k, v in part_request_data.items() if k not in ("removing", "reach_plan")}
+        return jsonable_encoder(raw, custom_encoder={datetime: serialize_datetime, ObjectId: str})
+
+
+def _own_entries(entries: Optional[list], store: Optional[str]) -> Optional[list]:
+    """A stored list of per-store entries (group ids, or {"group_id", ...}) keeping only `store`'s: [] without a store.
+    None (not stored) stays None: part-request-chat reads "no followers stored" differently from "none"."""
+    if entries is None:
+        return None
+
+    def group_of(entry):
+        return entry.get("group_id") if isinstance(entry, dict) else getattr(entry, "group_id", entry)
+
+    return [entry for entry in entries if store is not None and str(group_of(entry)) == store]
+
+
+def __store_view(part: dict, store: Optional[str]) -> dict:
+    """What a caller outside the buyer's store reads of a part: no `by`, and of the per-store entries only those of
+    `store` (its selected store, which it belongs to), so "am I subscribed / capped / was it my cancel" still works.
+    No store: none of them."""
+    part = __without_who(part)
+
+    def mine(group_id) -> bool:
+        return store is not None and str(group_id) == store
+
+    for key in ("subscribedSellers", "subscribedFollowers", "capped_sellers", "nonCompatibleSellers"):
+        if key in part:
+            part[key] = _own_entries(part[key], store)
+    if isinstance(part.get("reach_plan"), dict) and "capped_sellers" in part["reach_plan"]:
+        part["reach_plan"] = {**part["reach_plan"],
+                              "capped_sellers": _own_entries(part["reach_plan"]["capped_sellers"], store)}
+    if "last_cancellation" in part:
+        cancellation = part.get("last_cancellation")
+        part["last_cancellation"] = cancellation \
+            if isinstance(cancellation, dict) and mine(cancellation.get("store_group_id")) else None
+    return part
+
+
+def __without_who(part: dict) -> dict:
+    """The part without the buyer's uid in its records (last_change, removed, removing, change_log)."""
+    part = dict(part)
+    for key in ("last_change", "removed", "removing"):
+        if part.get(key):
+            part[key] = __with_serialized_at(part[key], hide_who=True)
+    if part.get("change_log"):
+        part["change_log"] = [__with_serialized_at(entry, hide_who=True) for entry in part["change_log"]]
+    return part
+
+
+def __discarded_offers(part_request_id: str, group_id: str) -> List[dict]:
+    """This store's offers archived when the buyer removed the part, as [{"price", "count"}] by price."""
+    counts: Dict[Optional[float], int] = {}
+    for offer in offerArchiveRepository.find(
+            {"request_id": part_request_id, "discard.reason": PART_REMOVED_REASON, "group_id": group_id}):
+        price = offer.get("price")
+        price = float(price) if price is not None else None
+        counts[price] = counts.get(price, 0) + 1
+    return [{"price": price, "count": count} for price, count in counts.items()]
 
 
 def __build_filters_for_sibling_requests(
@@ -1426,138 +1589,261 @@ def __check_if_group_is_in_non_favorite_list(
     return len(non_favorite_lists) > 0
 
 
-def edit_part_request(part_request_data: List[PartRequestEdit]):
+# The fields a buyer can change on a sent part, in the order they are recorded and said.
+CHANGE_FIELDS = ("amount", "unitOfMeasure", "position", "comments")
+
+EDIT_GONE = "Esta pieza ya no existe."
+EDIT_NOT_CREATOR = "Solo quien creó la solicitud puede cambiar piezas."
+EDIT_ORDERED = "Ya pediste esta pieza. Para cambiarla, cancela el pedido primero."
+# The sheet's defaults are not changes: these all mean "no position" / the default unit. Positions are compared
+# against this set without accents, like the client's `isNotApplicable`.
+_NO_POSITION = {"", "no aplica", "selecciona posicion"}
+_DEFAULT_UNIT = {"", "pieza"}
+
+
+def _without_accents(text: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFD", text) if not unicodedata.combining(c))
+
+
+def _comparable(field: str, value: Any) -> Any:
+    if field == "amount":
+        if value is None:
+            return 1  # a part saved without an amount is one piece
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return value
+    text = str(value if value is not None else "").strip()
+    if field == "comments":
+        return text
+    folded = text.casefold()
+    if field == "position":
+        return "" if _without_accents(folded) in _NO_POSITION else folded
+    return "" if folded in _DEFAULT_UNIT else folded
+
+
+def _edited_part(before_part: dict, edit: PartRequestEdit) -> dict:
+    """The part as the edit leaves it: comment and amount are always written; a None position or unit keeps its value."""
+    part = {**(before_part or {}), "comments": edit.comment, "amount": edit.amount}
+    if edit.position is not None:
+        part["position"] = edit.position
+    if edit.unitOfMeasure is not None:
+        part["unitOfMeasure"] = edit.unitOfMeasure
+    return part
+
+
+def changed_fields(before_part: dict, edit: PartRequestEdit) -> List[dict]:
+    """What the edit changes on the part, as {"field", "before", "after"}; [] when nothing changes.
+    Notes are trimmed ("" equals None), amounts are ints, and the sheet's defaults (no position, "Pieza") are not
+    changes. The client's `partChanges` mirrors these rules."""
+    before_part = before_part or {}
+    after_part = _edited_part(before_part, edit)
+    return [
+        {"field": field, "before": before_part.get(field), "after": after_part.get(field)}
+        for field in CHANGE_FIELDS
+        if _comparable(field, before_part.get(field)) != _comparable(field, after_part.get(field))
+    ]
+
+
+def _flag_and_notify_change(part_request: dict, change: dict) -> None:
+    """The part is already saved; flag the offers made before the change and tell, once per user, only the stores
+    that quoted it. A failure here is logged and never fails the edit."""
+    request_id = str(part_request.get("_id"))
+    try:
+        group_ids = list(dict.fromkeys(
+            str(offer["group_id"]) for offer in offerRepository.find(
+                offerRepository.live_offers_filter(request_id), {"group_id": 1})
+            if offer.get("group_id")))
+        if not group_ids:
+            return
+        offerRepository.flag_before_change(request_id, change["at"])
+    except Exception:
+        logger.exception("Could not flag the offers of changed part %s", request_id)
+        return
+    try:
+        store_name = (groupRepository.find_by_id(str(part_request.get("creatorGroup") or "")) or {}).get("name") \
+            or "Comprador"
+        part_name = (part_request.get("part") or {}).get("tipoParteDescripcion") or "pieza"
+        navigate_to_url = seller_offer_creator_path(request_id)
+        fields = [item["field"] for item in change["fields"]]
+        vehicle = vehicle_label(part_request.get("vehicleInformation"))
+        send_notifications_batch([
+            create_part_changed_notification(
+                store_name=store_name,
+                part_name=part_name,
+                owner=str(user_id),
+                owner_group=str(group.get("_id") or ""),
+                navigate_to_url=navigate_to_url,
+                meta_data={"requestId": request_id},
+                fields=fields,
+                vehicle=vehicle,
+            )
+            for group in groupService.find_users_by_groups_ids_v2(group_ids)
+            for user_id in group.get("users") or []
+        ])
+    except Exception:
+        logger.exception("Could not notify stores about changed part %s", request_id)
+
+
+def _user_in_group(uid: Optional[str], group_id: Optional[str]) -> bool:
+    return authz.is_member(uid, group_id)
+
+
+def _checked_edits(part_request_data: List[PartRequestEdit], by: Optional[str], group_id: Optional[str]) -> List[tuple]:
+    """Every item checked before anything is written: (edit, stored doc) for each part to save. The part must exist,
+    belong to the store the caller acts for (and the caller to it), and not change once ordered. A part the buyer
+    removed is left out: an edit (a stale list, a retry) never rewrites it or reaches stores."""
+    checked = []
+    for part_request_edit in part_request_data:
+        if not part_request_edit.id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Each edit item must include id")
+        found = list(partRequestRepository.find_by_id(part_request_edit.id)) \
+            if ObjectId.is_valid(part_request_edit.id) else []
+        if not found:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=EDIT_GONE)
+        doc = found[0]
+        if not group_id or str(doc.get("creatorGroup") or "") != group_id or not _user_in_group(by, group_id):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=EDIT_NOT_CREATOR)
+        if doc.get("removed"):
+            continue
+        if changed_fields(PartRequest(**doc).part, part_request_edit) \
+                and partRemovalService.has_live_order(part_request_edit.id):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=EDIT_ORDERED)
+        checked.append((part_request_edit, doc))
+    return checked
+
+
+def edit_part_request(part_request_data: List[PartRequestEdit], by: Optional[str], group_id: Optional[str]):
+    """`by` is the caller and `group_id` the store they act for (where the grant was checked)."""
     reserved: List[tuple] = []  # (group, day, request_id) of slots this call reserved
     try:
         edited_ids = []
         now = _now()
         planned: List[dict] = []
-        # Phase 1: resolve every doc and decide its reach; nothing is written yet.
-        for part_request_edit in part_request_data:
-            if not part_request_edit.id:
+        checked = _checked_edits(part_request_data, by, group_id)
+        # Phase 1: decide every doc's reach; nothing is written yet.
+        for part_request_edit, stored_doc in checked:
+            current_part_request = PartRequest(**stored_doc)
+            merged = current_part_request.model_copy(deep=True)
+
+            if part_request_edit.fulfillment_type is not None:
+                merged.fulfillment_type = part_request_edit.fulfillment_type
+            if part_request_edit.delivery_address is not None:
+                merged.delivery_address = part_request_edit.delivery_address
+            if part_request_edit.delivery_contact is not None:
+                merged.delivery_contact = part_request_edit.delivery_contact
+
+            if merged.fulfillment_type == FulfillmentType.pickup:
+                merged.delivery_address = None
+                merged.delivery_contact = None
+
+            try:
+                validate_delivery_fulfillment(
+                    merged.fulfillment_type,
+                    merged.delivery_address,
+                    merged.delivery_contact,
+                )
+            except ValueError as e:
                 raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Each edit item must include id",
-                )
-            found_part_request = list(
-                partRequestRepository.find_by_id(part_request_edit.id))
-            if len(found_part_request) > 0:
+                    status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
-                current_part_request = PartRequest(**found_part_request[0])
-                merged = current_part_request.model_copy(deep=True)
+            subs = list(current_part_request.subscribedSellers or [])
+            previous_subs = set(subs)
+            if part_request_edit.subscribedSellers is not None:
+                subs = list(set(subs + part_request_edit.subscribedSellers))
 
-                if part_request_edit.fulfillment_type is not None:
-                    merged.fulfillment_type = part_request_edit.fulfillment_type
-                if part_request_edit.delivery_address is not None:
-                    merged.delivery_address = part_request_edit.delivery_address
-                if part_request_edit.delivery_contact is not None:
-                    merged.delivery_contact = part_request_edit.delivery_contact
+            subs = expand_subscribed_sellers_with_accepted_comisionados(
+                subs,
+                merged.creatorGroup,
+            )
 
-                if merged.fulfillment_type == FulfillmentType.pickup:
-                    merged.delivery_address = None
-                    merged.delivery_contact = None
+            new_seller_group_ids = sorted(set(subs) - previous_subs)
 
-                try:
-                    validate_delivery_fulfillment(
-                        merged.fulfillment_type,
-                        merged.delivery_address,
-                        merged.delivery_contact,
-                    )
-                except ValueError as e:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-
-                subs = list(current_part_request.subscribedSellers or [])
-                previous_subs = set(subs)
-                if part_request_edit.subscribedSellers is not None:
-                    subs = list(set(subs + part_request_edit.subscribedSellers))
-
-                subs = expand_subscribed_sellers_with_accepted_comisionados(
+            vehicle_maker = _vehicle_maker_from_information(
+                current_part_request.vehicleInformation
+            )
+            subs, non_compatible_sellers = (
+                __resolve_subscribed_and_non_compatible(
                     subs,
+                    vehicle_maker,
+                    current_part_request.part,
+                )
+            )
+
+            reach_doc = current_part_request.reach
+            if merged.origin == "mostrador":
+                decision = None
+            else:
+                followers = current_part_request.subscribedFollowers
+                new_audience = sellerReachService.audience(subs, followers)
+                # Stored subs are already post-expansion, so they are a comparable baseline when sellers
+                # change; with no seller change nothing was added by the buyer, so there is no growth.
+                previous_audience = (
+                    new_audience if part_request_edit.subscribedSellers is None
+                    else sellerReachService.audience(list(previous_subs), followers)
+                )
+                current_tier = (reach_doc or {}).get("tier")
+                if reach_doc is None:
+                    limits = sellerReachService.limits_for(merged.creatorGroup)
+                    if previous_audience >= limits.wide_threshold:
+                        current_tier = "wide"  # legacy doc already wide: never limited
+                decision = sellerReachService.decide(
                     merged.creatorGroup,
+                    part_request_edit.id,
+                    new_audience,
+                    previous_audience,
+                    current_tier,
+                    now,
                 )
+                if decision["tier"] == "wide" and current_tier != "wide":
+                    reserved.append((merged.creatorGroup, decision["day"], part_request_edit.id))
 
-                new_seller_group_ids = sorted(set(subs) - previous_subs)
+            fields = changed_fields(current_part_request.part, part_request_edit)
+            part_request_json = {
+                "part": _edited_part(current_part_request.part, part_request_edit),
+                "subscribedSellers": subs,
+                "nonCompatibleSellers": non_compatible_sellers,
+                "fulfillment_type": merged.fulfillment_type.value,
+                "delivery_address": merged.delivery_address.model_dump()
+                if merged.delivery_address is not None else None,
+                "delivery_contact": merged.delivery_contact.model_dump()
+                if merged.delivery_contact is not None else None,
+                "updatedAt": datetime.now(ZoneInfo('UTC')),
+            }
+            if decision is not None:
+                part_request_json["reach"] = decision
+            if new_seller_group_ids:
+                # The monitor's 30-minute wait before widening again restarts from here.
+                part_request_json["last_widened_at"] = now
+            change = {"at": now, "by": by, "fields": fields} if fields else None
+            if change:
+                part_request_json["last_change"] = change
 
-                vehicle_maker = _vehicle_maker_from_information(
-                    current_part_request.vehicleInformation
-                )
-                subs, non_compatible_sellers = (
-                    __resolve_subscribed_and_non_compatible(
-                        subs,
-                        vehicle_maker,
-                        current_part_request.part,
-                    )
-                )
-
-                reach_doc = current_part_request.reach
-                if merged.origin == "mostrador":
-                    decision = None
-                else:
-                    followers = current_part_request.subscribedFollowers
-                    new_audience = sellerReachService.audience(subs, followers)
-                    # Stored subs are already post-expansion, so they are a comparable baseline when sellers
-                    # change; with no seller change nothing was added by the buyer, so there is no growth.
-                    previous_audience = (
-                        new_audience if part_request_edit.subscribedSellers is None
-                        else sellerReachService.audience(list(previous_subs), followers)
-                    )
-                    current_tier = (reach_doc or {}).get("tier")
-                    if reach_doc is None:
-                        limits = sellerReachService.limits_for(merged.creatorGroup)
-                        if previous_audience >= limits.wide_threshold:
-                            current_tier = "wide"  # legacy doc already wide: never limited
-                    decision = sellerReachService.decide(
-                        merged.creatorGroup,
-                        part_request_edit.id,
-                        new_audience,
-                        previous_audience,
-                        current_tier,
-                        now,
-                    )
-                    if decision["tier"] == "wide" and current_tier != "wide":
-                        reserved.append((merged.creatorGroup, decision["day"], part_request_edit.id))
-
-                part_request_json = {
-                    "part": {
-                        **current_part_request.part,
-                        "comments": part_request_edit.comment,
-                        "amount": part_request_edit.amount
-                    },
-                    "subscribedSellers": subs,
-                    "nonCompatibleSellers": non_compatible_sellers,
-                    "fulfillment_type": merged.fulfillment_type.value,
-                    "delivery_address": merged.delivery_address.model_dump()
-                    if merged.delivery_address is not None else None,
-                    "delivery_contact": merged.delivery_contact.model_dump()
-                    if merged.delivery_contact is not None else None,
-                    "updatedAt": datetime.now(ZoneInfo('UTC')),
-                }
-                if decision is not None:
-                    part_request_json["reach"] = decision
-                if new_seller_group_ids:
-                    # The monitor's 30-minute wait before widening again restarts from here.
-                    part_request_json["last_widened_at"] = now
-
-                planned.append({
-                    "edit": part_request_edit,
-                    "json": part_request_json,
-                    "merged": merged,
-                    "new_seller_group_ids": new_seller_group_ids,
-                })
+            planned.append({
+                "edit": part_request_edit,
+                "json": part_request_json,
+                "merged": merged,
+                "new_seller_group_ids": new_seller_group_ids,
+                "change": change,
+            })
 
         # Phase 2: every doc passed; write. A doc's slot is kept once its write succeeds.
         for item in planned:
             part_request_edit = item["edit"]
             merged = item["merged"]
             new_seller_group_ids = item["new_seller_group_ids"]
+            change = item["change"]
             edited_part_request = partRequestRepository.edit_part_request(
-                part_request_edit.id, item["json"])
+                part_request_edit.id, item["json"], **({"push": {"change_log": change}} if change else {}))
             edited_ids.append(str(edited_part_request["_id"]))
             written_reach = item["json"].get("reach") or {}
             slot = (merged.creatorGroup, written_reach.get("day"), part_request_edit.id)
             if slot in reserved:
                 reserved.remove(slot)
+
+            if change:
+                # Before the new-seller fanout, which is not wrapped: its failure must not skip the flags.
+                _flag_and_notify_change(edited_part_request, change)
 
             if new_seller_group_ids:
                 from app.services import notification_fanout
@@ -1591,8 +1877,9 @@ def join_seller_to_part_request(parent_request_id: str | None, new_seller_group_
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                                 detail="The request is missing information")
 
+        # A part the buyer removed takes no new sellers (nor a reach slot).
         part_requests_documents = list(partRequestRepository.find(
-            {"specific_order_uid": parent_request_id}, None))
+            {"specific_order_uid": parent_request_id, "removed": {"$exists": False}}, None))
 
         part_requests: List[PartRequest] = []
         if len(part_requests_documents) > 0:
@@ -1871,14 +2158,15 @@ def send_seller_reminder(part_request_id: str, pending_group_ids: List[str], sto
     return sent
 
 
-def close_part_request(part_request_id: str, uid: str) -> Dict[str, Any]:
-    """The buyer closes a request. A reopened one (a store canceled) had a pending 'choose' decision: settle it."""
-    from app.services import NotificationService, PickupCodeService
+def close_part_request(part_request_id: str, uid: str, group_id: str) -> Dict[str, Any]:
+    """The buyer closes a request. A reopened one (a store canceled) had a pending 'choose' decision: settle it.
+    `group_id` is the store the caller acts for (where the grant was checked); the request must be that store's."""
+    from app.services import NotificationService
 
     doc = partRequestRepository.find_one_by_id(part_request_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Part request not found")
-    if not PickupCodeService._user_in_group(uid, doc.get("creatorGroup")):
+    if str(doc.get("creatorGroup") or "") != group_id or not _user_in_group(uid, group_id):
         raise HTTPException(status_code=403, detail="Solo quien creó la solicitud puede cerrarla.")
     partRequestRepository.edit_part_request(
         part_request_id,

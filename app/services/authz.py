@@ -95,6 +95,14 @@ def can(uid: Optional[str], group_id: Optional[str], key: str, request: Optional
     return key in effective_grants(uid, group_id, request)
 
 
+def is_member(uid: Optional[str], group_id: Optional[str]) -> bool:
+    """The membership the grant check uses: the group's users or owner, the user's groups, or an active role."""
+    try:
+        return group_auth.user_belongs_to_group(uid, group_id)
+    except InvalidId:
+        return False
+
+
 def caller_uid(request: Request) -> str:
     user = getattr(request.state, "user", None)
     if not user or not user.get("uid"):

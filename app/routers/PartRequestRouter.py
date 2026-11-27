@@ -1,6 +1,7 @@
 from fastapi.responses import JSONResponse
-from fastapi import APIRouter, Body, status, Query
+from fastapi import APIRouter, Body, Depends, status, Query
 from app.services import PartRequestService as partRequestService
+from app.services import PartRemovalService as partRemovalService
 from app.utils.ResponseUtils import get_successful_response, get_unsuccessful_response, error_json_response
 from app.schemas.PartRequest import PartRequest, PartRequestEdit
 from typing import List, Dict, Any
@@ -298,10 +299,15 @@ def find_sibling_requests_with_offers(
 @partRequestRouter.put("", tags=["PartRequest"])
 @partRequestRouter.put("/", include_in_schema=False)
 def edit_part_request(
-    payload: List[PartRequestEdit]
+    payload: List[PartRequestEdit],
+    request: Request,
+    # The service also checks every part belongs to this store and the caller to it.
+    _group_id: str = Depends(authz.require_grant(grant_keys.REQUESTS_EDIT)),
 ):
     try:
-        edited_part_request = partRequestService.edit_part_request(payload)
+        # Who changed the part goes in last_change.
+        edited_part_request = partRequestService.edit_part_request(
+            payload, by=authz.caller_uid(request), group_id=_group_id)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(edited_part_request))
     except Exception as e:
         return error_json_response(e)
@@ -320,11 +326,32 @@ def join_seller_to_part_request(
 
 
 @partRequestRouter.post("/{part_request_id}/close", description="The buyer closes a request", tags=["PartRequest"])
-def close_part_request(request: Request, part_request_id: str):
+def close_part_request(
+    request: Request,
+    part_request_id: str,
+    # Closing a request edits it; the service also checks the request belongs to this store and the caller to it.
+    _group_id: str = Depends(authz.require_grant(grant_keys.REQUESTS_EDIT)),
+):
     try:
-        from app.services import authz
+        response = partRequestService.close_part_request(part_request_id, authz.caller_uid(request), _group_id)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
+    except Exception as e:
+        return error_json_response(e)
 
-        response = partRequestService.close_part_request(part_request_id, authz.caller_uid(request))
+
+@partRequestRouter.post(
+    "/{part_request_id}/remove",
+    description="The buyer removes one part; its offers are archived and the stores that quoted it are notified",
+    tags=["PartRequest"],
+)
+def remove_part_request(
+    request: Request,
+    part_request_id: str,
+    # Removing a part edits the request; the service also checks the part belongs to this store and the caller to it.
+    _group_id: str = Depends(authz.require_grant(grant_keys.REQUESTS_EDIT)),
+):
+    try:
+        response = partRemovalService.remove(part_request_id, authz.caller_uid(request), _group_id)
         return JSONResponse(status_code=status.HTTP_200_OK, content=get_successful_response(response))
     except Exception as e:
         return error_json_response(e)
