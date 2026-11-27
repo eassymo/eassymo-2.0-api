@@ -2,6 +2,7 @@ from app.config import database
 from app.schemas.Offer import Offer
 from typing import List, Dict, Any, Optional
 from bson import ObjectId
+from datetime import datetime
 from pymongo import ReturnDocument, ASCENDING, DESCENDING
 from app.schemas.Offer import OfferStatus
 
@@ -242,6 +243,26 @@ def get_ranked_offers(offer_ids: List[ObjectId], extra_status: Optional[List[Dic
 
 def count(filters):
     return database.db["Offers"].count_documents(filters)
+
+
+def live_offers_filter(request_id: str) -> Dict[str, Any]:
+    """Offers still standing on a part: not rejected by the buyer, not withdrawn by the store."""
+    return {"request_id": request_id,
+            "status": {"$nin": [OfferStatus.rejected.value, OfferStatus.no_inventory.value]}}
+
+
+def flag_before_change(request_id: str, at: datetime) -> int:
+    """The buyer changed the part: every live offer on it was made before that change."""
+    result = database.db["Offers"].update_many(
+        live_offers_filter(request_id), {"$set": {"before_change": True, "before_change_at": at}})
+    return result.modified_count
+
+
+def confirm_current(offer_id: str, at: datetime) -> bool:
+    """The store says its offer still stands after the buyer's change; False when the offer is gone."""
+    result = database.db["Offers"].update_one(
+        {"_id": ObjectId(offer_id)}, {"$set": {"before_change": False, "confirmed_current_at": at}})
+    return result.matched_count == 1
 
 
 def delete_many(filters: Dict[str, Any]):

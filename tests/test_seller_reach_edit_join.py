@@ -37,6 +37,14 @@ def _edit(doc_id, add=None, comment=None):
     return PartRequestEdit(id=doc_id, subscribedSellers=add, comment=comment, amount=1)
 
 
+BUYER_GROUP = "buyer-g"
+
+
+def _save(items):
+    """The buyer "u1" saves from the buyer's store, as the route does."""
+    return prs.edit_part_request(items, by="u1", group_id=BUYER_GROUP)
+
+
 class World:
     def __init__(self, repo, docs):
         self.repo = repo
@@ -44,7 +52,7 @@ class World:
         self.written = []
         self.write_mock = MagicMock(side_effect=self._write)
 
-    def _write(self, doc_id, data):
+    def _write(self, doc_id, data, push=None):
         self.written.append((doc_id, data))
         return {**self.docs[doc_id], **data}
 
@@ -52,6 +60,8 @@ class World:
         self.stack = ExitStack()
         p = self.stack.enter_context
         p(patch.object(reach, "repo", self.repo))
+        # A note change flags the part's offers; these docs have none (tests/test_part_request_edit_changes.py).
+        p(patch.object(prs.offerRepository, "find", return_value=[]))
         p(patch.object(prs.partRequestRepository, "find_by_id", side_effect=lambda i: [self.docs[i]]))
         p(patch.object(prs.partRequestRepository, "edit_part_request", self.write_mock))
         p(patch.object(prs.groupRepository, "find_by_id", return_value=None))
@@ -60,6 +70,7 @@ class World:
         p(patch.object(prs.SistemasCompatibilityService, "evaluate_bulk_for_car_part", side_effect=_all_compatible))
         p(patch.object(prs, "_now", return_value=NOW))
         p(patch("app.services.notification_fanout.fanout_part_request_to_new_sellers"))
+        p(patch.object(prs, "_user_in_group", side_effect=lambda uid, gid: uid == "u1" and gid == BUYER_GROUP))
         return self
 
     def __exit__(self, *exc):
@@ -75,7 +86,7 @@ def test_edit_growth_past_50_reserves_slot():
     repo = FakeReachRepo(wide_used=1)
     doc = _doc(A, 40, NORMAL)
     with World(repo, [doc]) as w:
-        prs.edit_part_request([_edit(A, add=_sellers(55, "n"))])
+        _save([_edit(A, add=_sellers(55, "n"))])
     assert w.written[0][1]["reach"] == {"tier": "wide", "day": DAY, "audience": 95}
     assert repo.ids[-1] == A
 
@@ -84,7 +95,7 @@ def test_edit_exhausted_growth_over_20_refused_nothing_written():
     repo = FakeReachRepo(wide_used=2)
     docs = [_doc(A, 10, {"tier": "capped", "day": DAY, "audience": 10}), _doc(B, 10, {"tier": "capped", "day": DAY, "audience": 10})]
     with World(repo, docs) as w, pytest.raises(SellerReachError) as exc:
-        prs.edit_part_request([_edit(A, add=_sellers(5, "n")), _edit(B, add=_sellers(30, "m"))])
+        _save([_edit(A, add=_sellers(5, "n")), _edit(B, add=_sellers(30, "m"))])
     assert exc.value.status_code == 409
     assert exc.value.data["request_id"] == B
     w.write_mock.assert_not_called()
@@ -95,7 +106,7 @@ def test_edit_refusal_releases_slot_reserved_earlier_in_call():
     docs = [_doc(A, 40, NORMAL), _doc(B, 10, {"tier": "capped", "day": DAY, "audience": 10})]
     # A takes the last slot (wide); B, now exhausted, grows past 20 and is refused.
     with World(repo, docs) as w, pytest.raises(SellerReachError):
-        prs.edit_part_request([_edit(A, add=_sellers(20, "n")), _edit(B, add=_sellers(30, "m"))])
+        _save([_edit(A, add=_sellers(20, "n")), _edit(B, add=_sellers(30, "m"))])
     w.write_mock.assert_not_called()
     assert repo.released == [A]
 
@@ -104,7 +115,7 @@ def test_edit_without_seller_change_never_refused():
     repo = FakeReachRepo(wide_used=2)
     doc = _doc(A, 30, {"tier": "capped", "day": DAY, "audience": 30})
     with World(repo, [doc]) as w:
-        prs.edit_part_request([_edit(A, comment="nuevo")])
+        _save([_edit(A, comment="nuevo")])
     assert w.written[0][1]["reach"]["tier"] == "capped"
 
 
@@ -112,7 +123,7 @@ def test_edit_uses_today_not_creation_day():
     repo = FakeReachRepo(wide_used=0)
     doc = _doc(A, 40, {"tier": "normal", "day": "2026-11-24", "audience": 40})
     with World(repo, [doc]) as w, patch.object(repo, "try_reserve_wide", wraps=repo.try_reserve_wide) as spy:
-        prs.edit_part_request([_edit(A, add=_sellers(20, "n"))])
+        _save([_edit(A, add=_sellers(20, "n"))])
     assert spy.call_args.args[1] == "2026-11-25"
     assert w.written[0][1]["reach"]["day"] == "2026-11-25"
 
@@ -121,7 +132,7 @@ def test_edit_legacy_wide_doc_never_limited_and_takes_no_slot():
     repo = FakeReachRepo(wide_used=2)
     doc = _doc(A, 60, None)
     with World(repo, [doc]) as w:
-        prs.edit_part_request([_edit(A, add=_sellers(30, "n"))])
+        _save([_edit(A, add=_sellers(30, "n"))])
     assert w.written[0][1]["reach"]["tier"] == "wide"
     assert repo.ids == ["x", "x"]
 
@@ -130,15 +141,29 @@ def test_edit_mostrador_skips_reach():
     repo = FakeReachRepo(wide_used=2)
     doc = _doc(A, 10, None, origin="mostrador")
     with World(repo, [doc]) as w:
-        prs.edit_part_request([_edit(A, add=_sellers(80, "n"))])
+        _save([_edit(A, add=_sellers(80, "n"))])
     assert "reach" not in w.written[0][1]
+
+
+def test_a_foreign_part_after_a_growing_one_reserves_no_slot():
+    """Every item is checked before any slot is taken or doc written."""
+    repo = FakeReachRepo(wide_used=0)
+    foreign = {**_doc(B, 40, NORMAL), "creatorGroup": "other-g"}
+    with World(repo, [_doc(A, 40, NORMAL), foreign]) as w:
+        with pytest.raises(HTTPException) as exc:
+            _save([_edit(A, add=_sellers(20, "n")), _edit(B, comment="nuevo")])
+    assert exc.value.status_code == 403
+    assert repo.ids == [] and repo.released == []
+    assert w.written == []
 
 
 def test_router_answers_409_with_code():
     repo = FakeReachRepo(wide_used=2)
     doc = _doc(A, 10, {"tier": "capped", "day": DAY, "audience": 10})
     with World(repo, [doc]):
-        resp = router.edit_part_request([_edit(A, add=_sellers(30, "n"))])
+        request = MagicMock()
+        request.state.user = {"uid": "u1"}
+        resp = router.edit_part_request([_edit(A, add=_sellers(30, "n"))], request, BUYER_GROUP)
     assert resp.status_code == 409
     assert json.loads(resp.body)["code"] == "seller_cap_exceeded"
 
@@ -322,7 +347,7 @@ def test_comment_only_edit_with_expansion_growth_not_refused_and_takes_no_slot()
     with World(repo, [doc]) as w, patch.object(
         prs, "expand_subscribed_sellers_with_accepted_comisionados", side_effect=lambda s, c=None: list(s) + extra
     ):
-        prs.edit_part_request([_edit(A, comment="nuevo")])
+        _save([_edit(A, comment="nuevo")])
     assert w.written[0][1]["reach"]["tier"] == "capped"
     assert repo.ids == ["x", "x"]
 
@@ -340,7 +365,7 @@ def test_write_failure_releases_only_unwritten_docs_slots():
 
     w.write_mock.side_effect = write
     with w, pytest.raises(Exception):
-        prs.edit_part_request([_edit(A, add=_sellers(20, "n")), _edit(B, add=_sellers(20, "m"))])
+        _save([_edit(A, add=_sellers(20, "n")), _edit(B, add=_sellers(20, "m"))])
     assert repo.released == [B]
     assert repo.ids == [A]
 
@@ -368,12 +393,12 @@ def test_adding_stores_stamps_last_widened_at():
     """The monitor's 30-minute wait to widen again restarts from here."""
     repo = FakeReachRepo(wide_used=0)
     with World(repo, [_doc(A, 10, NORMAL)]) as w:
-        prs.edit_part_request([_edit(A, add=_sellers(3, "n"))])
+        _save([_edit(A, add=_sellers(3, "n"))])
     assert w.written[0][1]["last_widened_at"] == NOW
 
 
 def test_an_edit_that_adds_no_store_leaves_last_widened_at_alone():
     repo = FakeReachRepo(wide_used=0)
     with World(repo, [_doc(A, 10, NORMAL)]) as w:
-        prs.edit_part_request([_edit(A, comment="nuevo")])
+        _save([_edit(A, comment="nuevo")])
     assert "last_widened_at" not in w.written[0][1]

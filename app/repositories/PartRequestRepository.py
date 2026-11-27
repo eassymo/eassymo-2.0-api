@@ -3,7 +3,7 @@ from app.config import database
 from bson import ObjectId
 from pymongo import ReturnDocument
 from datetime import datetime, timezone
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 
 from app.schemas.PartRequest import PartRequest, PartRequestStatus
 
@@ -100,11 +100,13 @@ def find_by_id(id: str):
 
 def find_sister_part_requests(specific_order_uid: str, status: Optional[str]):
 
+    # A part the buyer removed keeps its status, so it is left out by its `removed` record.
     filters = {"specific_order_uid": specific_order_uid}
 
     if status != None:
         filters["status"] = status
-        
+    filters["removed"] = {"$exists": False}
+
     return database.db["PartRequests"].find(filters, {"part": 1, "_id": 1})
 
 
@@ -261,11 +263,63 @@ def distinct_by_vehicle():
     ])
 
 
-def edit_part_request(id: str, data):
+def edit_part_request(id: str, data, push: Optional[dict] = None):
+    """`$set` the data; `push` appends to arrays in the same write (e.g. {"change_log": change})."""
     part_request_id = ObjectId(id)
+    update = {"$set": {**data}}
+    if push:
+        update["$push"] = push
     updated_part_request = database.db["PartRequests"].find_one_and_update(
-        {"_id": part_request_id}, {"$set": {**data}}, return_document=ReturnDocument.AFTER)
+        {"_id": part_request_id}, update, return_document=ReturnDocument.AFTER)
     return updated_part_request
+
+
+def claim_removal(id: str, uid: str, at: datetime, stale_before: datetime) -> bool:
+    """Mark the part as being removed by `uid`, only if no one removed it or is removing it now. A claim older than
+    `stale_before` (its request died midway) can be taken over."""
+    claimed = database.db["PartRequests"].find_one_and_update(
+        {
+            "_id": ObjectId(id),
+            "removed": {"$exists": False},
+            "$or": [{"removing": {"$exists": False}}, {"removing.at": {"$lt": stale_before}}],
+        },
+        {"$set": {"removing": {"by": uid, "at": at}}},
+    )
+    return claimed is not None
+
+
+def release_removal(id: str, uid: str, at: datetime) -> None:
+    """Drop this request's claim after a failed removal, so a retry can run at once."""
+    database.db["PartRequests"].update_one(
+        {"_id": ObjectId(id), "removing.by": uid, "removing.at": at}, {"$unset": {"removing": ""}})
+
+
+def _request_filter(part: dict) -> Optional[dict]:
+    """The parts of `part`'s request as the buyer's edit screen lists them: by order uid; a part without one, by parent
+    uid among the parts without one. None when the part has neither (it is a request on its own). One parent batch may
+    span several orders: each order is its own request."""
+    if part.get("specific_order_uid"):
+        return {"specific_order_uid": part["specific_order_uid"]}
+    if part.get("parent_request_uid"):
+        return {"parent_request_uid": part["parent_request_uid"], "specific_order_uid": {"$in": [None, ""]}}
+    return None
+
+
+def count_live_others(part: dict, stale_before: datetime) -> Tuple[int, int]:
+    """(live, free): the other live parts of `part`'s request (any status, active, not removed), and how many of them
+    no one is removing now (no claim, or one older than `stale_before`)."""
+    request = _request_filter(part)
+    if request is None:
+        return 0, 0
+    live = {"creatorGroup": part.get("creatorGroup"), **request, "_id": {"$ne": ObjectId(str(part["_id"]))},
+            "isActive": {"$ne": False}, "removed": {"$exists": False}}
+    collection = database.db["PartRequests"]
+    live_count = collection.count_documents(live)
+    if not live_count:
+        return 0, 0
+    free_count = collection.count_documents(
+        {**live, "$or": [{"removing": {"$exists": False}}, {"removing.at": {"$lt": stale_before}}]})
+    return live_count, free_count
 
 
 def count(filters) -> int:

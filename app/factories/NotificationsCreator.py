@@ -46,9 +46,11 @@ def structured_notification(
 
 # ── Copy helpers ─────────────────────────────────────────────────────────────
 
-def _money(price: Optional[float]) -> str:
+def _money(price: Optional[float], *, cents: bool = False) -> str:
     if price is None:
         return ""
+    if cents:
+        return f"${float(price):,.2f}"
     return f"${int(price):,}" if float(price).is_integer() else f"${price:,.2f}"
 
 
@@ -109,6 +111,74 @@ def create_part_request_reminder_notification(
         action={"label": "Cotizar", "href": navigate_to_url},
         decision_key=f"request:{request_id}:quote:{owner_group}" if request_id else None,
         owner=owner, owner_group=owner_group, visible_roles=visible_roles,
+        navigate_to_url=navigate_to_url, meta_data=meta_data,
+    )
+
+
+def create_part_removed_notification(
+    store_name: str,
+    part_name: str,
+    owner: str,
+    owner_group: str,
+    navigate_to_url: str,
+    meta_data: Dict[str, Any],
+    *,
+    offer_count: int,
+    price: Optional[float] = None,
+    vehicle: str = "",
+) -> Notification:
+    """The buyer removed a part this store quoted; its offers on it were discarded."""
+    if offer_count > 1:
+        body = f"Tus {offer_count} ofertas se descartaron"
+    elif price is not None:
+        body = f"Tu oferta de {_money(price, cents=True)} se descartó"
+    else:
+        body = "Tu oferta se descartó"
+    return structured_notification(
+        type=NotificationType.PART_REMOVED,
+        title=f"{display_name(store_name)} quitó {sentence_case(part_name)}",
+        body=body,
+        side="sell", vehicle=vehicle,
+        action={"label": "Ver solicitud", "href": navigate_to_url},
+        owner=owner, owner_group=owner_group,
+        navigate_to_url=navigate_to_url, meta_data=meta_data,
+    )
+
+
+CHANGE_LABELS = {
+    "amount": "la cantidad",
+    "unitOfMeasure": "la unidad",
+    "position": "la posición",
+    "comments": "la nota",
+}
+
+
+def change_sentence(fields: List[str]) -> str:
+    """["position", "comments"] -> "Cambió la posición y la nota." """
+    labels = [CHANGE_LABELS[field] for field in fields]
+    joined = labels[0] if len(labels) == 1 else f"{', '.join(labels[:-1])} y {labels[-1]}"
+    return f"Cambió {joined}."
+
+
+def create_part_changed_notification(
+    store_name: str,
+    part_name: str,
+    owner: str,
+    owner_group: str,
+    navigate_to_url: str,
+    meta_data: Dict[str, Any],
+    *,
+    fields: List[str],
+    vehicle: str = "",
+) -> Notification:
+    """The buyer changed a part this store quoted; its offer was made before the change."""
+    return structured_notification(
+        type=NotificationType.PART_CHANGED,
+        title=f"{display_name(store_name)} cambió {sentence_case(part_name)}",
+        body=f"{change_sentence(fields)} Revisa tu oferta.",
+        side="sell", vehicle=vehicle,
+        action={"label": "Revisar oferta", "href": navigate_to_url},
+        owner=owner, owner_group=owner_group,
         navigate_to_url=navigate_to_url, meta_data=meta_data,
     )
 

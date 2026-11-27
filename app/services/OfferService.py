@@ -204,8 +204,10 @@ def find_by_request_id_and_group(request: Request, part_request_id: str, group_i
         if len(found_offers_dicts) == 0:
             return []
 
+        # The schema has no before_change (a default would write it on insert); pass the stored flag through.
         found_offers: List[Dict[str, any]] = [
-            Offer(**offer_data).toJson() for offer_data in found_offers_dicts]
+            {**Offer(**offer_data).toJson(), "before_change": bool(offer_data.get("before_change"))}
+            for offer_data in found_offers_dicts]
 
         follower_group_ids = {
             str(follower.get('_id')) for follower in followers if follower.get('_id')
@@ -438,6 +440,8 @@ def edit_offer(offer_uid: str, payload: Offer):
 
         offer_json = payload.toJson()
         offer_json.pop("_id")
+        # An edited offer is the store's answer to any change the buyer made to the part.
+        offer_json["before_change"] = False
         edited_offer = offerRepository.edit_offer(offer_uid, offer_json)
         if edited_offer is None:
             # The store withdrew it (moved to OffersArchive) while this editor was still open.

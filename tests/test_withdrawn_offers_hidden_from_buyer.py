@@ -3,6 +3,7 @@ the buyer's offer lists leave it out. The seller's own screens still get it (the
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
 from bson import ObjectId
 
 from app.services import OfferService as offer_service
@@ -66,14 +67,21 @@ def test_asking_for_a_status_explicitly_is_honored():
     assert _attach(owner=None, status="No_Inventory") == ["FRITEC"]
 
 
-def test_vehicle_view_passes_the_owner_group_through():
+@pytest.mark.parametrize("viewer, asked, scoped_to", [
+    (("uid", BUYER, True), SELLER, SELLER),  # the buyer's store: as asked
+    (("uid", BUYER, True), None, None),
+    (("uid", SELLER, False), None, SELLER),  # another store: always its own, whatever it asks
+    (("uid", SELLER, False), CANCELED_SELLER, SELLER),
+])
+def test_vehicle_view_scopes_offers_to_the_callers_store(viewer, asked, scoped_to):
     request = SimpleNamespace(state=SimpleNamespace(_state={"user": {"uid": "uid"}}))
     cursor = MagicMock()
     cursor.sort.return_value.limit.return_value = []
     with patch("app.config.database.db", {"PartRequests": MagicMock(find=MagicMock(return_value=cursor))}), \
+         patch.object(service, "_viewer", return_value=viewer), \
          patch.object(service, "__attach_offers_to_part_requests", return_value=[]) as attach:
-        service.find_vehicle_requests_with_offers(request, "veh", BUYER, SELLER, None, [])
-    assert attach.call_args.kwargs.get("offer_owner_group") == SELLER
+        service.find_vehicle_requests_with_offers(request, "veh", BUYER, asked, None, [])
+    assert attach.call_args.kwargs.get("offer_owner_group") == scoped_to
 
 
 def _offer_viewer(group_id):
