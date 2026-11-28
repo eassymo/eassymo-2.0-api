@@ -56,7 +56,7 @@ GRANT_SECTIONS: Dict[str, List[Section]] = {
     ],
     g.REQUESTS_CREATE: [_app("Menú: Crear solicitud (/configure-request)")],
     g.STORE_EDIT_PROFILE: [
-        _app("Menú: Configurar tienda (/shop-creator-v3)"),
+        _app("Menú: Configurar tienda (/shop-creator-v4)"),
         _app("Mi cuenta: Mi tienda (/profile/my-store)"),
     ],
     g.TEAM_VIEW: [_app("Mi cuenta: Mi equipo (/my-team)")],
