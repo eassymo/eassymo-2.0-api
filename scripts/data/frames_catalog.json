@@ -2,9 +2,9 @@
  {
   "code": "C.WG.1",
   "name": "Configurar tienda",
-  "description": "Datos del grupo: nombre, dirección, contacto",
+  "description": "Crear tienda: ubicación, elegir tu tienda, activar y conectar tu red",
   "pov": "ambos",
-  "route": "/shop-creator-v3?uid={uid}&type=manual",
+  "route": "/shop-creator-v4?uid={uid}&type=manual",
   "sample": null,
   "element": "Página completa",
   "steps": null,
