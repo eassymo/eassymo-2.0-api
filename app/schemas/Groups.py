@@ -7,9 +7,11 @@ from app.schemas.GeoJsonLocation import GeoJson
 from app.schemas.Review import ReputationSummary
 
 
-class GroupType(Enum):
-    CAR_SHOP = 2
-    PARTS_STORE = 1
+class GroupRole(Enum):
+    """Group `type` / `group_store_type` / `group_role`. Census `Entity_Type` uses the opposite
+    numbers (1 = Refaccionaria, 2 = Taller): convert with app.utils.store_type."""
+    BUYER = 1   # Taller
+    SELLER = 2  # Refaccionaria
 
 
 class GroupSchema(BaseModel):

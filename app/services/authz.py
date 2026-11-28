@@ -25,6 +25,7 @@ from app.repositories import GrantRepository
 from app.repositories import GroupRepository as groupRepository
 from app.repositories import RolesRepository
 from app.repositories import UserRolesRepository as userRolesRepository
+from app.utils.store_type import group_type_to_census_type
 
 _CACHE_ATTR = "_grants_cache"
 
@@ -160,8 +161,9 @@ def role_fits_group(group_id: str, role_value: str) -> Tuple[Optional[dict], str
         return None, "La tienda seleccionada no es válida."
     if not group:
         return None, "La tienda no existe"
+    # Role entity_types use census numbers (1 Refaccionaria, 2 Taller); group type is 1 buyer / 2 seller.
     entity_types = [str(t) for t in (role.get("entity_types") or [])]
-    if entity_types and str(group.get("type")) not in entity_types:
+    if entity_types and str(group_type_to_census_type(group.get("type"))) not in entity_types:
         return None, "El rol no corresponde al tipo de negocio"
     return role, ""
 

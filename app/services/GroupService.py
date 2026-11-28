@@ -6,6 +6,7 @@ from app.repositories import PartRequestInviteRepository as partRequestInviteRep
 from app.repositories import PartRequestRepository as partRequestRepository
 from app.schemas.Groups import GroupSchema
 from app.schemas.Census import CensusSchema
+from app.utils.store_type import group_type_to_census_type
 from app.schemas.Lists import ListsSchema
 from app.schemas.Users import UserSchema
 from app.schemas.RequestInvites import RequestInviteStatus
@@ -135,7 +136,7 @@ def create_group(
             Entity_Location_State=group.state,
             Entity_Address_Short=group.address,
             Entity_Name=group.name,
-            Entity_Type=group.type,
+            Entity_Type=group_type_to_census_type(group.type),
             Entity_Visible="Y",
             Entity_Status="Y",
             group_reference_id=created_group_id,

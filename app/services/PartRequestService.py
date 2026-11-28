@@ -19,7 +19,7 @@ from app.utils.datetime_utils import serialize_datetime
 from app.repositories import RequestStatusByGroupRepository as requestStatusByGroupRepository
 from app.repositories import ListsRepository as listRepository
 from app.repositories import CommissionerInviteRepository as commissionerInviteRepository
-from app.schemas.Groups import GroupType, GroupSchema
+from app.schemas.Groups import GroupRole, GroupSchema
 from app.schemas.Offer import Offer
 from fastapi import HTTPException, Request, status
 from fastapi.encoders import jsonable_encoder
@@ -708,7 +708,7 @@ def find_grouped(
         print(part_requests)
 
         found_offers = __find_offers_for_requests(
-            part_requests, group_id if role == GroupType.CAR_SHOP.value else None)
+            part_requests, group_id if role == GroupRole.SELLER.value else None)
 
         __format_offers_with_found_requests(
             requests=part_requests, offers=found_offers, group_id=group_id)
@@ -752,7 +752,7 @@ def find_unquoted_for_seller(group_id: str, limit: int = 200):
     seller's group hasn't answered with any offer, "sin stock" included. Newest first, capped
     at `limit`; `total` counts them all so the dashboard headline is the real number.
     """
-    filters = __format_grouped_filters(group_id, str(GroupType.CAR_SHOP.value), None, None, None, None, None)
+    filters = __format_grouped_filters(group_id, str(GroupRole.SELLER.value), None, None, None, None, None)
     filters["status"] = PartRequestStatus.CREATED.value
     filters["$and"].append({"creatorGroup": {"$ne": group_id}})
 
@@ -794,7 +794,7 @@ def get_buyer_route(part_request_id: str, seller_group_id: str) -> Dict[str, Any
     location data (closed requests still count as visible)."""
     if not ObjectId.is_valid(part_request_id):
         raise HTTPException(status_code=404, detail="Request not found")
-    filters = __format_grouped_filters(seller_group_id, str(GroupType.CAR_SHOP.value), None, None, None, None, None)
+    filters = __format_grouped_filters(seller_group_id, str(GroupRole.SELLER.value), None, None, None, None, None)
     filters["$and"].append({"_id": ObjectId(part_request_id)})
     if not partRequestRepository.find_open_ids(filters):
         raise HTTPException(status_code=404, detail="Request not found")
@@ -973,14 +973,14 @@ def __format_grouped_filters(
         ]
     }
     if group_id is not None:
-        if current_group_role == GroupType.CAR_SHOP.value:
+        if current_group_role == GroupRole.SELLER.value:
             filters["$and"].append({
                 "$or": [
                     {"subscribedSellers": group_id},
                     {"subscribedFollowers": group_id},
                 ]
             })
-        if current_group_role == GroupType.PARTS_STORE.value:
+        if current_group_role == GroupRole.BUYER.value:
             filters["$and"].append({"creatorGroup": group_id})
 
     if creatorGroup is not None:

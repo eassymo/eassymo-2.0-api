@@ -117,13 +117,15 @@ def test_team_invite_requires_team_invite(granted, status):
 
 # ── team.assign_roles ───────────────────────────────────────────────────────
 
+# A cajero (seller) role for refaccionarias: entity_types use census numbers (1 = Refaccionaria),
+# and a Refaccionaria group has type 2 (SELLER).
 ROLE = {"value": "r_cajero", "grants": [g.OFFERS_CREATE], "assignable_by_group_admins": True, "entity_types": ["1"]}
 
 
 @pytest.fixture
 def assignable_role():
     with patch.object(authz.RolesRepository, "find_by_value", return_value=ROLE), \
-         patch.object(authz.groupRepository, "find_by_id", return_value={"_id": GID, "type": 1}), \
+         patch.object(authz.groupRepository, "find_by_id", return_value={"_id": GID, "type": 2}), \
          patch.object(authz.group_auth, "is_group_owner", return_value=False), \
          patch("app.dependencies.group_auth.is_group_owner", return_value=False):
         yield

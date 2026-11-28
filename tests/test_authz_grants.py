@@ -39,7 +39,8 @@ def env():
         rr.find_by_values.side_effect = lambda vals: [ROLES[v] for v in vals if v in ROLES]
         rr.find_by_value.side_effect = lambda v: ROLES.get(v)
         gr.active_keys.return_value = set(ACTIVE)
-        grp.find_by_id.return_value = {"_id": GID, "type": 1}
+        # Group type 2 = SELLER (Refaccionaria): fits "adm", whose entity_types ["1"] is census Refaccionaria.
+        grp.find_by_id.return_value = {"_id": GID, "type": 2}
         yield SimpleNamespace(ga=ga, ur=ur, rr=rr, gr=gr, grp=grp)
 
 
@@ -192,7 +193,8 @@ def test_invite_cannot_escalate(env):
 
 def test_wrong_entity_type_denied(env):
     env.ga.is_group_owner.return_value = True
-    env.grp.find_by_id.return_value = {"_id": GID, "type": 2}
+    # A Taller (group type 1, BUYER) cannot take a Refaccionaria-only role.
+    env.grp.find_by_id.return_value = {"_id": GID, "type": 1}
     assert authz.can_assign_role("o", GID, "adm")[0] is False
 
 
